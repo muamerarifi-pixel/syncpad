@@ -180,3 +180,27 @@ test('extractExcerpt removes HTML tags and image markdown', () => {
   assert.ok(excerpt.includes('Notice here Screenshot'));
 });
 
+test('sanitizeImageUrl allows safe web images and base64 image data URLs, blocks XSS', async () => {
+  const { sanitizeImageUrl } = await import('../public/js/markdown.js');
+  
+  assert.strictEqual(sanitizeImageUrl('https://example.com/photo.jpg'), 'https://example.com/photo.jpg');
+  assert.strictEqual(sanitizeImageUrl('/assets/icon.png'), '/assets/icon.png');
+  assert.strictEqual(sanitizeImageUrl('data:image/webp;base64,UklGRkAAAABXRUJQVlA4IDQAAADwAQCdASoBAAEAAQAcJaACdLoAAP7/2QAA'), 'data:image/webp;base64,UklGRkAAAABXRUJQVlA4IDQAAADwAQCdASoBAAEAAQAcJaACdLoAAP7/2QAA');
+  assert.strictEqual(sanitizeImageUrl('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
+  
+  // Malicious URLs must be neutralized
+  assert.strictEqual(sanitizeImageUrl('javascript:alert(1)'), '#unsafe-image-url');
+  assert.strictEqual(sanitizeImageUrl('data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=='), '#unsafe-image-url');
+});
+
+test('parseInline renders image data URL with figure, zoomable attribute, and caption', () => {
+  const md = '![Diagram Caption](data:image/webp;base64,UklGRg==)';
+  const html = parseInline(md);
+  assert.ok(html.includes('<figure class="image-figure">'));
+  assert.ok(html.includes('src="data:image/webp;base64,UklGRg=="'));
+  assert.ok(html.includes('alt="Diagram Caption"'));
+  assert.ok(html.includes('data-zoomable="true"'));
+  assert.ok(html.includes('<figcaption class="image-caption">Diagram Caption</figcaption>'));
+});
+
+

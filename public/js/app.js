@@ -24,6 +24,12 @@ import {
   showToast
 } from './ui.js';
 import { extractFirstTitle } from './markdown.js';
+import {
+  compressImage,
+  formatBytes,
+  insertImageMarkdown,
+  LightboxViewer
+} from './images.js';
 
 class SyncPadApp {
   constructor() {
@@ -34,6 +40,7 @@ class SyncPadApp {
     this.viewMode = 'split'; // 'split' | 'edit' | 'preview'
     this.saveDebounceTimer = null;
     this.theme = 'dark';
+    this.stagedImageData = null;
 
     // DOM Elements
     this.dom = {
@@ -53,6 +60,7 @@ class SyncPadApp {
       editorPane: document.getElementById('editor-pane'),
       previewPane: document.getElementById('preview-pane'),
       editorContainer: document.getElementById('editor-container'),
+      editorDropZone: document.getElementById('editor-drop-zone'),
       
       // Editor Actions
       pinNoteBtn: document.getElementById('btn-pin-note'),
@@ -83,11 +91,35 @@ class SyncPadApp {
       joinRoomBtn: document.getElementById('btn-join-room'),
       createNewRoomBtn: document.getElementById('btn-create-new-room'),
       peerPresenceBadge: document.getElementById('peer-presence-badge'),
+
+      // Image Attachment & Lightbox
+      insertImageBtn: document.getElementById('btn-insert-image'),
+      imageModal: document.getElementById('image-modal'),
+      closeImageModalBtn: document.getElementById('btn-close-image-modal'),
+      tabImageUpload: document.getElementById('tab-btn-image-upload'),
+      tabImageUrl: document.getElementById('tab-btn-image-url'),
+      paneImageUpload: document.getElementById('tab-pane-image-upload'),
+      paneImageUrl: document.getElementById('tab-pane-image-url'),
+      imageDropArea: document.getElementById('image-drop-area'),
+      inputImageFile: document.getElementById('input-image-file'),
+      imagePreviewWrapper: document.getElementById('image-preview-wrapper'),
+      imagePreviewThumb: document.getElementById('image-preview-thumb'),
+      imagePreviewName: document.getElementById('image-preview-name'),
+      imagePreviewSize: document.getElementById('image-preview-size'),
+      clearImageFileBtn: document.getElementById('btn-clear-image-file'),
+      inputImageCaption: document.getElementById('input-image-caption'),
+      confirmInsertFileBtn: document.getElementById('btn-confirm-insert-file'),
+      inputImageWebUrl: document.getElementById('input-image-web-url'),
+      inputImageWebCaption: document.getElementById('input-image-web-caption'),
+      webImagePreviewContainer: document.getElementById('web-image-preview-container'),
+      webImagePreviewImg: document.getElementById('web-image-preview-img'),
+      confirmInsertUrlBtn: document.getElementById('btn-confirm-insert-url'),
       
       // Theme
       themeToggleBtn: document.getElementById('btn-toggle-theme')
     };
 
+    this.lightbox = new LightboxViewer();
     window.__syncpadApp = this;
   }
 
@@ -554,6 +586,132 @@ class SyncPadApp {
     }
   }
 
+  // Image modal controls
+  openImageModal() {
+    if (this.dom.imageModal) {
+      this.dom.imageModal.classList.add('open');
+      this.switchImageTab('upload');
+      this.resetImageModal();
+      setTimeout(() => {
+        if (this.dom.imageDropArea) this.dom.imageDropArea.focus();
+      }, 50);
+    }
+  }
+
+  closeImageModal() {
+    if (this.dom.imageModal) {
+      this.dom.imageModal.classList.remove('open');
+      this.resetImageModal();
+    }
+  }
+
+  resetImageModal() {
+    this.stagedImageData = null;
+    if (this.dom.inputImageFile) this.dom.inputImageFile.value = '';
+    if (this.dom.imagePreviewWrapper) this.dom.imagePreviewWrapper.style.display = 'none';
+    if (this.dom.imageDropArea) this.dom.imageDropArea.style.display = 'flex';
+    if (this.dom.inputImageCaption) this.dom.inputImageCaption.value = '';
+    if (this.dom.confirmInsertFileBtn) this.dom.confirmInsertFileBtn.disabled = true;
+
+    if (this.dom.inputImageWebUrl) this.dom.inputImageWebUrl.value = '';
+    if (this.dom.inputImageWebCaption) this.dom.inputImageWebCaption.value = '';
+    if (this.dom.webImagePreviewContainer) this.dom.webImagePreviewContainer.style.display = 'none';
+    if (this.dom.confirmInsertUrlBtn) this.dom.confirmInsertUrlBtn.disabled = true;
+  }
+
+  switchImageTab(tabName) {
+    if (!this.dom.tabImageUpload || !this.dom.tabImageUrl) return;
+    const isUpload = tabName === 'upload';
+
+    this.dom.tabImageUpload.classList.toggle('active', isUpload);
+    this.dom.tabImageUrl.classList.toggle('active', !isUpload);
+
+    if (this.dom.paneImageUpload) {
+      this.dom.paneImageUpload.style.display = isUpload ? 'flex' : 'none';
+    }
+    if (this.dom.paneImageUrl) {
+      this.dom.paneImageUrl.style.display = !isUpload ? 'flex' : 'none';
+    }
+  }
+
+  async stageImageFile(file) {
+    if (!file || !file.type || !file.type.startsWith('image/')) {
+      showToast('Please select a valid picture file', 'warning');
+      return;
+    }
+
+    try {
+      showToast('Optimizing picture...', 'info', 1000);
+      const processed = await compressImage(file);
+      this.stagedImageData = processed;
+
+      if (this.dom.imagePreviewThumb) this.dom.imagePreviewThumb.src = processed.dataUrl;
+      if (this.dom.imagePreviewName) this.dom.imagePreviewName.textContent = file.name || 'picture.webp';
+      if (this.dom.imagePreviewSize) this.dom.imagePreviewSize.textContent = `${formatBytes(processed.size)} (optimized)`;
+      if (this.dom.imagePreviewWrapper) this.dom.imagePreviewWrapper.style.display = 'flex';
+      if (this.dom.imageDropArea) this.dom.imageDropArea.style.display = 'none';
+      if (this.dom.confirmInsertFileBtn) this.dom.confirmInsertFileBtn.disabled = false;
+
+      // Suggest caption from file name without extension if caption is blank
+      if (this.dom.inputImageCaption && !this.dom.inputImageCaption.value.trim()) {
+        const baseName = (file.name || 'Picture').replace(/\.[^/.]+$/, '');
+        this.dom.inputImageCaption.value = baseName;
+      }
+    } catch (err) {
+      console.error('Error staging image:', err);
+      showToast('Failed to process picture', 'error');
+    }
+  }
+
+  async attachStagedImage() {
+    if (!this.stagedImageData) return;
+    if (!this.activeNote) {
+      await this.createNewNote();
+    }
+
+    const caption = (this.dom.inputImageCaption?.value.trim()) || this.stagedImageData.name || 'Picture';
+    insertImageMarkdown(this.dom.noteContentTextarea, caption, this.stagedImageData.dataUrl);
+    this.closeImageModal();
+    showToast('Picture attached to note! 📸', 'success', 2200);
+  }
+
+  async attachWebImage() {
+    const url = this.dom.inputImageWebUrl?.value.trim();
+    if (!url) return;
+
+    if (!this.activeNote) {
+      await this.createNewNote();
+    }
+
+    const caption = this.dom.inputImageWebCaption?.value.trim() || 'Picture';
+    insertImageMarkdown(this.dom.noteContentTextarea, caption, url);
+    this.closeImageModal();
+    showToast('Picture attached to note! 📸', 'success', 2200);
+  }
+
+  async processAndInsertFiles(fileList) {
+    const imageFiles = Array.from(fileList || []).filter(f => f.type && f.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+
+    if (!this.activeNote) {
+      await this.createNewNote();
+    }
+
+    showToast(`Attaching ${imageFiles.length} picture(s)...`, 'info', 1500);
+
+    for (const file of imageFiles) {
+      try {
+        const processed = await compressImage(file);
+        const baseName = (file.name || 'Picture').replace(/\.[^/.]+$/, '');
+        insertImageMarkdown(this.dom.noteContentTextarea, baseName, processed.dataUrl);
+      } catch (err) {
+        console.error('Failed to attach image:', file.name, err);
+      }
+    }
+
+    showToast(`Attached ${imageFiles.length} picture(s)! 📸`, 'success', 2500);
+  }
+
   bindEvents() {
     // Mobile sidebar toggle
     if (this.dom.sidebarToggleBtn) {
@@ -729,6 +887,147 @@ class SyncPadApp {
         showToast(`Created new sync room: ${newCode}`, 'success', 2500);
       });
     }
+
+    // Image Modal Triggers
+    if (this.dom.insertImageBtn) {
+      this.dom.insertImageBtn.addEventListener('click', () => this.openImageModal());
+    }
+    if (this.dom.closeImageModalBtn) {
+      this.dom.closeImageModalBtn.addEventListener('click', () => this.closeImageModal());
+    }
+    if (this.dom.imageModal) {
+      this.dom.imageModal.addEventListener('click', (e) => {
+        if (e.target === this.dom.imageModal) this.closeImageModal();
+      });
+    }
+
+    // Image Modal Tabs
+    if (this.dom.tabImageUpload) {
+      this.dom.tabImageUpload.addEventListener('click', () => this.switchImageTab('upload'));
+    }
+    if (this.dom.tabImageUrl) {
+      this.dom.tabImageUrl.addEventListener('click', () => this.switchImageTab('url'));
+    }
+
+    // Image File Selection & Drop Area in Modal
+    if (this.dom.imageDropArea && this.dom.inputImageFile) {
+      this.dom.imageDropArea.addEventListener('click', () => this.dom.inputImageFile.click());
+      this.dom.imageDropArea.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          this.dom.inputImageFile.click();
+        }
+      });
+
+      this.dom.imageDropArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        this.dom.imageDropArea.classList.add('dragover');
+      });
+      this.dom.imageDropArea.addEventListener('dragleave', () => {
+        this.dom.imageDropArea.classList.remove('dragover');
+      });
+      this.dom.imageDropArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        this.dom.imageDropArea.classList.remove('dragover');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+          this.stageImageFile(e.dataTransfer.files[0]);
+        }
+      });
+
+      this.dom.inputImageFile.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length) {
+          this.stageImageFile(e.target.files[0]);
+        }
+      });
+    }
+
+    if (this.dom.clearImageFileBtn) {
+      this.dom.clearImageFileBtn.addEventListener('click', () => this.resetImageModal());
+    }
+
+    if (this.dom.confirmInsertFileBtn) {
+      this.dom.confirmInsertFileBtn.addEventListener('click', () => this.attachStagedImage());
+    }
+
+    // Web URL Image Input
+    if (this.dom.inputImageWebUrl) {
+      this.dom.inputImageWebUrl.addEventListener('input', () => {
+        const val = this.dom.inputImageWebUrl.value.trim();
+        const isValid = /^(https?:|\/)/i.test(val);
+        if (this.dom.confirmInsertUrlBtn) {
+          this.dom.confirmInsertUrlBtn.disabled = !isValid;
+        }
+
+        if (this.dom.webImagePreviewContainer && this.dom.webImagePreviewImg) {
+          if (isValid) {
+            this.dom.webImagePreviewImg.src = val;
+            this.dom.webImagePreviewContainer.style.display = 'flex';
+          } else {
+            this.dom.webImagePreviewContainer.style.display = 'none';
+          }
+        }
+      });
+    }
+
+    if (this.dom.confirmInsertUrlBtn) {
+      this.dom.confirmInsertUrlBtn.addEventListener('click', () => this.attachWebImage());
+    }
+
+    // Direct Drag-and-Drop on Editor Pane
+    const editorPane = this.dom.editorPane;
+    if (editorPane) {
+      ['dragenter', 'dragover'].forEach((eventName) => {
+        editorPane.addEventListener(eventName, (e) => {
+          if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+            e.preventDefault();
+            e.stopPropagation();
+            editorPane.classList.add('drag-active');
+          }
+        });
+      });
+
+      ['dragleave', 'dragend'].forEach((eventName) => {
+        editorPane.addEventListener(eventName, (e) => {
+          if (e.target === editorPane || !editorPane.contains(e.relatedTarget)) {
+            editorPane.classList.remove('drag-active');
+          }
+        });
+      });
+
+      editorPane.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        editorPane.classList.remove('drag-active');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+          this.processAndInsertFiles(e.dataTransfer.files);
+        }
+      });
+    }
+
+    // Direct Clipboard Image Paste in Note Textarea
+    if (this.dom.noteContentTextarea) {
+      this.dom.noteContentTextarea.addEventListener('paste', async (e) => {
+        if (!e.clipboardData || !e.clipboardData.items) return;
+        const items = Array.from(e.clipboardData.items);
+        const imageItems = items.filter((it) => it.type && it.type.startsWith('image/'));
+
+        if (imageItems.length > 0) {
+          e.preventDefault();
+          const files = imageItems.map((it) => it.getAsFile()).filter(Boolean);
+          await this.processAndInsertFiles(files);
+        }
+      });
+    }
+
+    // Markdown Preview Image Click -> Lightbox Viewer
+    if (this.dom.markdownPreview) {
+      this.dom.markdownPreview.addEventListener('click', (e) => {
+        const img = e.target.closest('img.markdown-image');
+        if (img && img.src && !img.src.includes('#unsafe')) {
+          this.lightbox.open(img.src, img.alt || '');
+        }
+      });
+    }
   }
 
   exportMarkdownFile() {
@@ -776,10 +1075,19 @@ class SyncPadApp {
         return;
       }
 
+      // Ctrl+Shift+I / Cmd+Shift+I: Attach Picture
+      if (isCmdOrCtrl && e.shiftKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        this.openImageModal();
+        return;
+      }
+
       // Escape: Close modals
       if (e.key === 'Escape') {
         this.closeRoomModal();
         this.closeMobileSidebar();
+        this.closeImageModal();
+        this.lightbox.close();
       }
     });
   }
@@ -804,6 +1112,7 @@ class SyncPadApp {
       task: () => insertMarkdownSyntax(textarea, '- [ ] ', '', 'task item'),
       table: () => insertMarkdownSyntax(textarea, '\n| Column 1 | Column 2 |\n| --- | --- |\n| Item 1 | Item 2 |\n', '', ''),
       link: () => insertMarkdownSyntax(textarea, '[', '](https://example.com)', 'link text'),
+      image: () => this.openImageModal(),
       hr: () => insertMarkdownSyntax(textarea, '\n---\n', '', '')
     };
 

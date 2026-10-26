@@ -1212,3 +1212,327 @@ button {
     display: none;
   }
 }
+
+/* ==========================================================================
+   IMAGE ATTACHMENTS, DROP ZONE, MODAL & LIGHTBOX
+   ========================================================================== */
+
+/* Markdown Images in Preview */
+.markdown-body figure.image-figure {
+  margin: 1.4em 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.markdown-body img.markdown-image {
+  max-width: 100%;
+  max-height: 520px;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--border-color);
+  cursor: zoom-in;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.markdown-body img.markdown-image:hover {
+  transform: scale(1.01);
+  box-shadow: var(--shadow-lg);
+}
+
+.markdown-body figcaption.image-caption {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Editor Drop Zone */
+.editor-pane {
+  position: relative;
+}
+
+.editor-drop-zone {
+  position: absolute;
+  inset: 12px;
+  border: 2px dashed var(--accent-primary);
+  background-color: var(--accent-primary-subtle);
+  border-radius: 12px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 25;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+  transition: all var(--transition-fast);
+}
+
+.editor-pane.drag-active .editor-drop-zone {
+  display: flex;
+}
+
+.drop-zone-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  padding: 16px 24px;
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  color: var(--accent-primary);
+  font-weight: 600;
+  font-size: 14px;
+  animation: pulse-drop 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse-drop {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+/* Image Modal Tabs */
+.modal-tab-group {
+  display: flex;
+  background-color: var(--bg-main);
+  border-radius: 8px;
+  padding: 4px;
+  gap: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.modal-tab {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  color: var(--text-muted);
+  text-align: center;
+  transition: all var(--transition-fast);
+}
+
+.modal-tab.active {
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  box-shadow: var(--shadow-sm);
+}
+
+.modal-tab-pane {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-tab-pane.active {
+  display: flex;
+}
+
+/* Image Drop Area in Modal */
+.image-drop-area {
+  border: 2px dashed var(--border-color);
+  border-radius: 10px;
+  padding: 28px 16px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background-color: var(--bg-main);
+  transition: all var(--transition-fast);
+}
+
+.image-drop-area:hover, .image-drop-area.dragover {
+  border-color: var(--accent-primary);
+  background-color: var(--accent-primary-subtle);
+}
+
+.drop-icon {
+  color: var(--accent-primary);
+  margin-bottom: 8px;
+}
+
+.drop-text-primary {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+
+.drop-text-secondary {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.image-preview-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background-color: var(--bg-main);
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.image-preview-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+
+.image-preview-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.image-preview-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.image-preview-size {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.btn-clear-image {
+  font-size: 18px;
+  color: var(--text-muted);
+  padding: 4px;
+  line-height: 1;
+  align-self: flex-start;
+}
+
+.btn-clear-image:hover {
+  color: var(--accent-danger);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 14px;
+  background-color: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--text-main);
+  transition: border-color var(--transition-fast);
+}
+
+.form-input:focus {
+  border-color: var(--accent-primary);
+}
+
+.modal-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tip-text {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.web-image-preview {
+  margin-top: 10px;
+  max-height: 160px;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-main);
+}
+
+.web-image-preview img {
+  max-width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+}
+
+/* Lightbox Modal */
+.lightbox-backdrop {
+  background-color: rgba(0, 0, 0, 0.88);
+  backdrop-filter: blur(8px);
+  z-index: 150;
+}
+
+.lightbox-container {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.lightbox-image {
+  max-width: 90vw;
+  max-height: 78vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+}
+
+.lightbox-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background-color: rgba(17, 24, 39, 0.85);
+  padding: 8px 16px;
+  border-radius: 20px;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.lightbox-caption {
+  font-size: 13px;
+  color: #f1f5f9;
+}
+
+.lightbox-close-btn {
+  position: absolute;
+  top: -40px;
+  right: 0;
+  color: #ffffff;
+  font-size: 28px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  transition: background var(--transition-fast);
+}
+
+.lightbox-close-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}

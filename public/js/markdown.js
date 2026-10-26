@@ -25,6 +25,21 @@ export function sanitizeUrl(url) {
   return '#unsafe-url';
 }
 
+// Sanitize Image URL allowing safe web protocols and image-only data URIs
+export function sanitizeImageUrl(url) {
+  if (!url) return '';
+  const trimmed = url.trim();
+  // Allow safe web protocols or relative paths
+  if (/^(?:https?:|\/|\.\/|\.\.\/)/i.test(trimmed)) {
+    return trimmed;
+  }
+  // Allow safe base64 image data URIs (png, jpeg, webp, gif, svg+xml, bmp, avif)
+  if (/^data:image\/(?:png|jpeg|jpg|webp|gif|svg\+xml|bmp|avif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    return trimmed;
+  }
+  return '#unsafe-image-url';
+}
+
 /**
  * Parse Markdown to HTML
  * @param {string} markdown - Raw markdown string
@@ -342,8 +357,10 @@ export function parseInline(text) {
   // Restore images
   str = str.replace(/@@IMG_(\d+)@@/g, (match, idx) => {
     const { alt, url } = images[parseInt(idx, 10)];
-    const safeUrl = sanitizeUrl(url);
-    return `<img src="${safeUrl}" alt="${alt}" loading="lazy" />`;
+    const safeUrl = sanitizeImageUrl(url);
+    const safeAlt = escapeHtml(alt);
+    const captionHtml = safeAlt ? `<figcaption class="image-caption">${safeAlt}</figcaption>` : '';
+    return `<figure class="image-figure"><img src="${safeUrl}" alt="${safeAlt}" loading="lazy" class="markdown-image" data-zoomable="true" />${captionHtml}</figure>`;
   });
 
   return str;
