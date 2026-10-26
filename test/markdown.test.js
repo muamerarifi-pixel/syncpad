@@ -251,6 +251,30 @@ test('parseMarkdown correctly parses URLs with parentheses', () => {
   assert.ok(html.includes('href="https://en.wikipedia.org/wiki/React_(software)"'));
 });
 
+test('parseInline avoids double-escaping in image alt and caption text', () => {
+  const md = '![Tom & Jerry "Cartoons"](https://example.com/cat-mouse.png)';
+  const html = parseMarkdown(md);
+  assert.ok(html.includes('alt="Tom &amp; Jerry &quot;Cartoons&quot;"'));
+  assert.ok(!html.includes('&amp;amp;'));
+  assert.ok(!html.includes('&amp;quot;'));
+  assert.ok(html.includes('<figcaption class="image-caption">Tom &amp; Jerry &quot;Cartoons&quot;</figcaption>'));
+});
+
+test('parseMarkdown supports CommonMark angle-bracketed URLs with spaces', () => {
+  const md = '[My Whitepaper](<https://example.com/docs/annual report 2026.pdf>) and ![Chart](<https://example.com/chart v1.png>)';
+  const html = parseMarkdown(md);
+  assert.ok(html.includes('href="https://example.com/docs/annual report 2026.pdf"'));
+  assert.ok(html.includes('src="https://example.com/chart v1.png"'));
+});
+
+test('extractExcerpt cleanly strips URLs with parentheses without leaving stray text', () => {
+  const md = '# Title\n\n![Wiki Photo](https://en.wikipedia.org/wiki/File:Sample_(1).jpg) Some text afterwards';
+  const excerpt = extractExcerpt(md);
+  assert.equal(excerpt, 'Title Wiki Photo Some text afterwards');
+  assert.ok(!excerpt.includes('.jpg)'));
+});
+
+
 
 
 

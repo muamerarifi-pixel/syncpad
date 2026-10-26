@@ -882,14 +882,18 @@ class SyncPadApp {
   }
 
   // Image modal controls
-  openImageModal() {
+  openImageModal(defaultTab = 'upload') {
     if (this.dom.imageModal) {
       this.dom.imageModal.classList.add('open');
-      this.switchImageTab('upload');
       this.resetImageModal();
+      this.switchImageTab(defaultTab);
       setTimeout(() => {
-        if (this.dom.imageDropArea) this.dom.imageDropArea.focus();
-      }, 50);
+        if (defaultTab === 'url' && this.dom.inputImageWebUrl) {
+          this.dom.inputImageWebUrl.focus();
+        } else if (this.dom.imageDropArea) {
+          this.dom.imageDropArea.focus();
+        }
+      }, 60);
     }
   }
 
@@ -1070,10 +1074,20 @@ class SyncPadApp {
   }
 
   async inspectWebUrl() {
-    const rawVal = this.dom.inputImageWebUrl?.value.trim() || '';
+    let rawVal = this.dom.inputImageWebUrl?.value.trim() || '';
     if (!rawVal) {
       this.resetWebUrlPreview();
       return;
+    }
+
+    // Strip wrapping quotes or brackets from copy-paste
+    rawVal = rawVal.replace(/^<|>$/g, '').replace(/^['"]|['"]$/g, '').trim();
+
+    // Auto-prefix https:// if missing protocol and looks like a domain
+    if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//i.test(rawVal) && !rawVal.startsWith('data:image/')) {
+      if (rawVal.includes('.') || rawVal.includes(':')) {
+        rawVal = 'https://' + rawVal;
+      }
     }
 
     // Validate URL syntax and protocol
@@ -1114,34 +1128,38 @@ class SyncPadApp {
         img.onload = () => finish(true);
         img.onerror = () => finish(false);
         img.src = url;
-        setTimeout(() => finish(false), 2500);
+        setTimeout(() => finish(false), 2000);
       });
     };
 
-    // 1. Try direct image load first
-    const directImg = await tryDirectImageLoad(rawVal);
-    if (directImg) {
-      this.stagedWebImageUrl = rawVal;
-      this.renderWebImagePreview(rawVal);
-      this.showWebUrlStatus('success', '✓ Picture loaded successfully');
+    const isKnownImageExt = /\.(jpe?g|png|gif|webp|svg|avif|bmp|ico)(\?.*)?$/i.test(parsedUrl.pathname);
 
-      // Auto-suggest caption from filename
-      if (this.dom.inputImageWebCaption && !this.dom.inputImageWebCaption.value.trim()) {
-        const pathPart = parsedUrl.pathname.split('/').filter(Boolean).pop() || '';
-        const namePart = pathPart.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-        if (namePart) this.dom.inputImageWebCaption.value = namePart;
-      }
+    // 1. If known image extension or data image, try direct image load first
+    if (isKnownImageExt || isDataImg) {
+      const directImg = await tryDirectImageLoad(rawVal);
+      if (directImg) {
+        this.stagedWebImageUrl = rawVal;
+        this.renderWebImagePreview(rawVal);
+        this.showWebUrlStatus('success', '✓ Picture loaded successfully');
 
-      if (this.dom.confirmInsertUrlBtn) {
-        this.dom.confirmInsertUrlBtn.disabled = false;
-        this.dom.confirmInsertUrlBtn.textContent = 'Insert Picture';
+        // Auto-suggest caption from filename
+        if (this.dom.inputImageWebCaption && !this.dom.inputImageWebCaption.value.trim()) {
+          const pathPart = parsedUrl.pathname.split('/').filter(Boolean).pop() || '';
+          const namePart = pathPart.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+          if (namePart) this.dom.inputImageWebCaption.value = namePart;
+        }
+
+        if (this.dom.confirmInsertUrlBtn) {
+          this.dom.confirmInsertUrlBtn.disabled = false;
+          this.dom.confirmInsertUrlBtn.textContent = 'Insert Picture';
+        }
+        if (this.dom.btnSaveWebImage) this.dom.btnSaveWebImage.style.display = 'inline-flex';
+        if (this.dom.btnInsertWebBookmark) this.dom.btnInsertWebBookmark.style.display = 'none';
+        return;
       }
-      if (this.dom.btnSaveWebImage) this.dom.btnSaveWebImage.style.display = 'inline-flex';
-      if (this.dom.btnInsertWebBookmark) this.dom.btnInsertWebBookmark.style.display = 'none';
-      return;
     }
 
-    // 2. Direct load failed or it's a website page -> query /api/link-metadata
+    // 2. Query /api/link-metadata for website OpenGraph cards or direct images
     try {
       const metaResp = await fetch(`/api/link-metadata?url=${encodeURIComponent(rawVal)}`);
       if (metaResp.ok) {
@@ -1206,7 +1224,7 @@ class SyncPadApp {
     if (proxyImg) {
       this.stagedWebImageUrl = rawVal;
       this.renderWebImagePreview(proxyUrl);
-      this.showWebUrlStatus('success', '✓ Picture loaded via proxy');
+      this.showWebUrlStatus('success', '✓ Picture loaded via secure proxy');
       if (this.dom.confirmInsertUrlBtn) {
         this.dom.confirmInsertUrlBtn.disabled = false;
         this.dom.confirmInsertUrlBtn.textContent = 'Insert Picture';
@@ -1215,43 +1233,67 @@ class SyncPadApp {
       return;
     }
 
-    // 4. Failed
-    this.showWebUrlStatus('error', '⚠️ Unable to load image or website preview. Please verify the URL.');
-    this.disableWebUrlActions();
+    // 4. Graceful Fallback: The link is valid, but the upstream site blocked scraping (e.g. 403 or captcha)
+    // Never trap or block the user; allow inserting as link or bookmark
+    const fallbackTitle = parsedUrl.hostname.replace(/^www\./i, '') + (parsedUrl.pathname !== '/' && parsedUrl.pathname.length > 1 ? parsedUrl.pathname : '');
+    if (this.dom.inputImageWebCaption && !this.dom.inputImageWebCaption.value.trim()) {
+      this.dom.inputImageWebCaption.value = fallbackTitle;
+    }
+    this.showWebUrlStatus('success', `✓ Link verified (${parsedUrl.hostname})`);
+    if (this.dom.confirmInsertUrlBtn) {
+      this.dom.confirmInsertUrlBtn.disabled = false;
+      this.dom.confirmInsertUrlBtn.textContent = 'Insert Markdown Link';
+    }
+    if (this.dom.btnInsertWebBookmark) {
+      this.dom.btnInsertWebBookmark.style.display = 'inline-flex';
+    }
   }
 
   async attachWebImage() {
-    const rawUrl = this.dom.inputImageWebUrl?.value.trim();
+    let rawUrl = this.dom.inputImageWebUrl?.value.trim();
     if (!rawUrl) return;
+
+    rawUrl = rawUrl.replace(/^<|>$/g, '').replace(/^['"]|['"]$/g, '').trim();
+    if (!/^https?:\/\//i.test(rawUrl) && !/^data:image\//i.test(rawUrl)) {
+      rawUrl = 'https://' + rawUrl;
+    }
 
     if (!this.activeNote) {
       await this.createNewNote();
     }
 
-    const caption = this.dom.inputImageWebCaption?.value.trim() || (this.stagedWebMetadata && this.stagedWebMetadata.title) || 'Picture';
+    const caption = (this.dom.inputImageWebCaption?.value.trim()) ||
+                    (this.stagedWebMetadata && this.stagedWebMetadata.title) ||
+                    'Link';
 
     // If it's a webpage with an image, insert linked image: [![caption](imgUrl)](pageUrl)
     if (this.stagedWebMetadata && !this.stagedWebMetadata.isImage && this.stagedWebImageUrl) {
       insertImageMarkdown(this.dom.noteContentTextarea, caption, this.stagedWebImageUrl, rawUrl);
+      showToast('Linked picture inserted! 🔗', 'success', 2200);
     } else if (this.stagedWebImageUrl) {
       // Direct image
       insertImageMarkdown(this.dom.noteContentTextarea, caption, this.stagedWebImageUrl);
+      showToast('Picture attached to note! 📸', 'success', 2200);
     } else {
       // General link without image
+      const cleanCaption = caption.replace(/[\[\]]/g, '').trim() || rawUrl;
+      const cleanUrl = rawUrl.replace(/ /g, '%20');
+      const linkTag = `\n\n[${cleanCaption}](${cleanUrl})\n\n`;
       const textarea = this.dom.noteContentTextarea;
       if (textarea) {
-        const linkTag = `\n\n[${caption}](${rawUrl})\n\n`;
         const start = textarea.selectionStart !== undefined ? textarea.selectionStart : textarea.value.length;
         const end = textarea.selectionEnd !== undefined ? textarea.selectionEnd : start;
         textarea.value = textarea.value.substring(0, start) + linkTag + textarea.value.substring(end);
-        textarea.setSelectionRange(start + linkTag.length, start + linkTag.length);
+        const newPos = start + linkTag.length;
+        textarea.setSelectionRange(newPos, newPos);
         textarea.focus();
         textarea.dispatchEvent(new Event('input', { bubbles: true }));
       }
+      showToast('Link inserted into note! 🔗', 'success', 2200);
     }
 
+    await this.saveActiveNote(true);
     this.closeImageModal();
-    showToast('Attached to note! 📸', 'success', 2200);
   }
 
   async saveWebImageToNote() {
@@ -1308,20 +1350,42 @@ class SyncPadApp {
     }
   }
 
-  insertWebBookmark() {
+  async insertWebBookmark() {
     const meta = this.stagedWebMetadata;
-    const url = this.dom.inputImageWebUrl?.value.trim() || '';
+    let url = this.dom.inputImageWebUrl?.value.trim() || '';
     if (!url) return;
 
-    const title = this.dom.inputImageWebCaption?.value.trim() || (meta && meta.title) || url;
+    url = url.replace(/^<|>$/g, '').replace(/^['"]|['"]$/g, '').trim();
+    if (!/^https?:\/\//i.test(url) && !url.startsWith('data:image/')) {
+      url = 'https://' + url;
+    }
+
+    if (!this.activeNote) {
+      await this.createNewNote();
+    }
+
+    const rawTitle = this.dom.inputImageWebCaption?.value.trim() || (meta && meta.title) || url;
+    const title = rawTitle.replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim();
     const desc = (meta && meta.description) || '';
     const img = this.stagedWebImageUrl || (meta && meta.image) || '';
+    const cleanUrl = url.replace(/ /g, '%20');
+
+    let descBlock = '';
+    if (desc) {
+      descBlock = desc
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean)
+        .map(l => '> ' + l)
+        .join('\n');
+    }
 
     let mdSnippet = '';
     if (img) {
-      mdSnippet = `\n\n[![${title}](${img})](${url})\n\n> [**${title}**](${url})${desc ? '\n> ' + desc : ''}\n\n`;
+      const cleanImg = img.replace(/ /g, '%20');
+      mdSnippet = `\n\n[![${title}](${cleanImg})](${cleanUrl})\n\n> [**${title}**](${cleanUrl})${descBlock ? '\n' + descBlock : ''}\n\n`;
     } else {
-      mdSnippet = `\n\n[**${title}**](${url})${desc ? '\n\n> ' + desc : ''}\n\n`;
+      mdSnippet = `\n\n> [**${title}**](${cleanUrl})${descBlock ? '\n' + descBlock : ''}\n\n`;
     }
 
     const textarea = this.dom.noteContentTextarea;
@@ -1337,6 +1401,7 @@ class SyncPadApp {
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
+    await this.saveActiveNote(true);
     this.closeImageModal();
     showToast('Website bookmark inserted! 🔗', 'success', 2200);
   }
@@ -1747,6 +1812,22 @@ class SyncPadApp {
         editorPane.classList.remove('drag-active');
         if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
           this.processAndInsertFiles(e.dataTransfer.files);
+          return;
+        }
+
+        // Web drag-and-drop: image URL or link dropped from external tab or web
+        if (e.dataTransfer) {
+          const rawUri = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+          if (rawUri && /^https?:\/\//i.test(rawUri.trim())) {
+            const uri = rawUri.trim();
+            if (/\.(jpe?g|png|gif|webp|svg|avif|bmp)(\?.*)?$/i.test(uri)) {
+              insertImageMarkdown(this.dom.noteContentTextarea, 'Image', uri);
+              showToast('Web image dropped! 📸', 'success', 2000);
+            } else {
+              insertMarkdownSyntax(this.dom.noteContentTextarea, '[', `](${uri})`, 'Link');
+              showToast('Web link dropped! 🔗', 'success', 2000);
+            }
+          }
         }
       });
     }
@@ -1858,6 +1939,16 @@ class SyncPadApp {
       ol: () => insertMarkdownSyntax(textarea, '1. ', '', 'first item'),
       task: () => insertMarkdownSyntax(textarea, '- [ ] ', '', 'task item'),
       link: async () => {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const selected = textarea.value.substring(start, end).trim();
+
+        // If selected text is already a URL, wrap it with [Link](url)
+        if (/^https?:\/\//i.test(selected)) {
+          insertMarkdownSyntax(textarea, '[Link](', ')', '');
+          return;
+        }
+
         let clipboardUrl = '';
         if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
           try {
@@ -1867,8 +1958,18 @@ class SyncPadApp {
             }
           } catch (_) {}
         }
-        const targetUrl = clipboardUrl || 'https://example.com';
-        insertMarkdownSyntax(textarea, '[', `](${targetUrl})`, 'link text');
+
+        if (clipboardUrl) {
+          const label = selected || 'link';
+          insertMarkdownSyntax(textarea, `[${label}](`, `)`, clipboardUrl);
+          return;
+        }
+
+        // If no clipboard URL, open Web URL modal with selected text as caption
+        this.openImageModal('url');
+        if (selected && this.dom.inputImageWebCaption) {
+          this.dom.inputImageWebCaption.value = selected;
+        }
       },
       image: () => this.openImageModal(),
       hr: () => insertMarkdownSyntax(textarea, '\n---\n', '', '')

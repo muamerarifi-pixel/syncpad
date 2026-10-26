@@ -318,7 +318,8 @@ export function parseInline(text) {
 
   // Extract images to placeholders to protect URLs from inline regex formatting
   const images = [];
-  str = str.replace(/!\[([^\]]*)\]\(((?:[^\s()]|\([^\s()]*\))+)\)/g, (match, alt, url) => {
+  str = str.replace(/!\[([^\]]*)\]\((?:(?:<|&lt;)([^>\r\n]+?)(?:>|&gt;)|((?:[^\s()]|\([^\s()]*\))+))\)/g, (match, alt, urlAngle, urlBare) => {
+    const url = urlAngle || urlBare;
     const placeholder = `@@IMG_${images.length}@@`;
     images.push({ alt, url });
     return placeholder;
@@ -326,7 +327,8 @@ export function parseInline(text) {
 
   // Extract links to placeholders with boundary tags so labels can receive formatting
   const links = [];
-  str = str.replace(/\[([^\]]+)\]\(((?:[^\s()]|\([^\s()]*\))+)\)/g, (match, label, url) => {
+  str = str.replace(/\[([^\]]+)\]\((?:(?:<|&lt;)([^>\r\n]+?)(?:>|&gt;)|((?:[^\s()]|\([^\s()]*\))+))\)/g, (match, label, urlAngle, urlBare) => {
+    const url = urlAngle || urlBare;
     const idx = links.length;
     links.push({ url });
     return `@@LSTART_${idx}@@${label}@@LEND_${idx}@@`;
@@ -358,11 +360,11 @@ export function parseInline(text) {
     return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${formattedLabel}</a>`;
   });
 
-  // Restore images
+  // Restore images (alt is already HTML-escaped by initial escapeHtml call)
   str = str.replace(/@@IMG_(\d+)@@/g, (match, idx) => {
     const { alt, url } = images[parseInt(idx, 10)];
     const safeUrl = sanitizeImageUrl(url);
-    const safeAlt = escapeHtml(alt);
+    const safeAlt = alt || '';
     const captionHtml = safeAlt ? `<figcaption class="image-caption">${safeAlt}</figcaption>` : '';
     return `<figure class="image-figure"><img src="${safeUrl}" alt="${safeAlt}" loading="lazy" class="markdown-image" data-zoomable="true" referrerpolicy="no-referrer" onerror="this.classList.add('img-load-error')" />${captionHtml}</figure>`;
   });
@@ -406,10 +408,10 @@ export function extractExcerpt(text, maxLength = 100) {
   // Strip code blocks first
   let clean = text.replace(/```[\s\S]*?```/g, ' ');
   // Strip images leaving alt text
-  clean = clean.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+  clean = clean.replace(/!\[([^\]]*)\]\((?:<[^>]+>|(?:[^\s()]|\([^\s()]*\))+)\)/g, '$1');
   // Preserve content of inline code and links
   clean = clean.replace(/`([^`]+)`/g, '$1');
-  clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  clean = clean.replace(/\[([^\]]+)\]\((?:<[^>]+>|(?:[^\s()]|\([^\s()]*\))+)\)/g, '$1');
   // Strip HTML tags
   clean = clean.replace(/<[^>]+>/g, '');
   // Strip headers, formatting chars

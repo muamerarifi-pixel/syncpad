@@ -341,3 +341,43 @@ test('Worker /api/proxy rejects missing and SSRF targets', async () => {
   assert.equal(res2.status, 403);
 });
 
+test('isPrivateOrLocalHost blocks bracketed IPv6, mapped IPv4, and link-local ranges', async () => {
+  const { isPrivateOrLocalHost } = await import('../worker.js');
+  assert.equal(isPrivateOrLocalHost('[::1]'), true);
+  assert.equal(isPrivateOrLocalHost('[::]'), true);
+  assert.equal(isPrivateOrLocalHost('[::ffff:127.0.0.1]'), true);
+  assert.equal(isPrivateOrLocalHost('[fe80::1]'), true);
+  assert.equal(isPrivateOrLocalHost('100.64.0.1'), true);
+  assert.equal(isPrivateOrLocalHost('google.com'), false);
+  assert.equal(isPrivateOrLocalHost('github.com'), false);
+});
+
+test('decodeHtmlEntities decodes hexadecimal, decimal, and named entities', async () => {
+  const { decodeHtmlEntities } = await import('../worker.js');
+  const raw = "Tom&#x27;s &quot;Pro&quot; Blog &amp; Notes &apos;Special&apos; &mdash; &#8212; &#x1F680;";
+  const decoded = decodeHtmlEntities(raw);
+  assert.equal(decoded, 'Tom\'s "Pro" Blog & Notes \'Special\' — — 🚀');
+});
+
+test('extractHtmlMetadata preserves contractions, quotes, and attributes in any order without truncation', async () => {
+  const { extractHtmlMetadata } = await import('../worker.js');
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta property="og:title" content="SyncPad - What's New in v2.0" />
+      <meta content="It's the world's most responsive real-time note editor." name="description" />
+      <meta name="twitter:title" content="Don't miss our latest updates!" />
+      <meta content="Bob's Tech Corner" property="og:site_name" />
+      <meta property='og:image' content='https://example.com/cover%20photo.jpg' />
+    </head>
+    </html>
+  `;
+  const meta = extractHtmlMetadata(html, 'https://example.com/article');
+  assert.equal(meta.title, "SyncPad - What's New in v2.0");
+  assert.equal(meta.description, "It's the world's most responsive real-time note editor.");
+  assert.equal(meta.siteName, "Bob's Tech Corner");
+  assert.equal(meta.image, 'https://example.com/cover%20photo.jpg');
+});
+
+

@@ -365,13 +365,16 @@ function getMemoryRoom(roomCode) {
  */
 export function isPrivateOrLocalHost(hostname) {
   if (!hostname) return true;
-  const host = hostname.toLowerCase().trim();
-  
+  const raw = hostname.toLowerCase().trim();
+  const host = raw.replace(/^\[|\]$/g, '');
+
   if (
     host === 'localhost' ||
     host === '127.0.0.1' ||
     host === '0.0.0.0' ||
     host === '::1' ||
+    host === '::' ||
+    host === '0:0:0:0:0:0:0:1' ||
     host.endsWith('.localhost') ||
     host.endsWith('.local') ||
     host.endsWith('.internal') ||
@@ -381,7 +384,15 @@ export function isPrivateOrLocalHost(hostname) {
     return true;
   }
 
-  // IPv4 check: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 (link-local)
+  // IPv6 mapped IPv4 or special ranges
+  if (host.startsWith('::ffff:')) {
+    return isPrivateOrLocalHost(host.substring(7));
+  }
+  if (host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) {
+    return true;
+  }
+
+  // IPv4 check: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 (link-local), 100.64.0.0/10
   const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4Match) {
     const a = parseInt(ipv4Match[1], 10);
@@ -390,6 +401,7 @@ export function isPrivateOrLocalHost(hostname) {
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
     if (a === 169 && b === 254) return true; // cloud metadata / link-local
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
   }
 
   return false;
@@ -405,10 +417,60 @@ export function decodeHtmlEntities(str) {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&mdash;/g, '—')
+    .replace(/&ndash;/g, '–')
+    .replace(/&hellip;/g, '…')
+    .replace(/&laquo;/g, '«')
+    .replace(/&raquo;/g, '»')
+    .replace(/&copy;/g, '©')
+    .replace(/&reg;/g, '®')
+    .replace(/&trade;/g, '™')
     .replace(/&#x2F;/gi, '/')
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
+      try { return String.fromCodePoint(parseInt(hex, 16)); } catch (_) { return _; }
+    })
+    .replace(/&#(\d+);/g, (_, dec) => {
+      try { return String.fromCodePoint(parseInt(dec, 10)); } catch (_) { return _; }
+    })
     .trim();
+}
+
+/**
+ * Safe fetch following HTTP redirects with per-hop SSRF validation
+ */
+export async function safeFetchWithRedirects(targetUrl, options = {}, maxRedirects = 4) {
+  let currentUrl = targetUrl;
+  let redirects = 0;
+
+  while (redirects <= maxRedirects) {
+    const parsed = new URL(currentUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol) || isPrivateOrLocalHost(parsed.hostname)) {
+      throw new Error('Access to private or restricted network address is forbidden');
+    }
+
+    const fetchOpts = {
+      ...options,
+      redirect: 'manual'
+    };
+
+    const res = await fetch(currentUrl, fetchOpts);
+
+    if (res.status >= 301 && res.status <= 308) {
+      const location = res.headers.get('location');
+      if (!location) return res;
+
+      const nextUrl = new URL(location, currentUrl).href;
+      currentUrl = nextUrl;
+      redirects++;
+      continue;
+    }
+
+    return res;
+  }
+
+  throw new Error('Too many redirects');
 }
 
 /**
@@ -426,55 +488,58 @@ export function extractHtmlMetadata(html, targetUrl) {
   try {
     const baseUrl = new URL(targetUrl);
     result.siteName = baseUrl.hostname.replace(/^www\./i, '');
-    result.favicon = `https://${baseUrl.hostname}/favicon.ico`;
+    result.favicon = `${baseUrl.origin}/favicon.ico`;
 
-    // 1. Title (og:title -> twitter:title -> <title>)
-    const ogTitleMatch = html.match(/<meta\s+[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i) ||
-                         html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
-    const twTitleMatch = html.match(/<meta\s+[^>]*name=["']twitter:title["'][^>]*content=["']([^"']+)["']/i) ||
-                         html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:title["']/i);
-    const titleTagMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-
-    if (ogTitleMatch && ogTitleMatch[1]) {
-      result.title = decodeHtmlEntities(ogTitleMatch[1]);
-    } else if (twTitleMatch && twTitleMatch[1]) {
-      result.title = decodeHtmlEntities(twTitleMatch[1]);
-    } else if (titleTagMatch && titleTagMatch[1]) {
-      result.title = decodeHtmlEntities(titleTagMatch[1]);
+    // Parse all <meta> tags into key-value attribute maps
+    const metaRegex = /<meta\s+([^>]+)>/gi;
+    let metaMatch;
+    const metas = [];
+    while ((metaMatch = metaRegex.exec(html)) !== null) {
+      const attrStr = metaMatch[1];
+      const attrs = {};
+      const attrRegex = /([a-zA-Z0-9_:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+      let aMatch;
+      while ((aMatch = attrRegex.exec(attrStr)) !== null) {
+        const k = aMatch[1].toLowerCase();
+        const v = aMatch[2] !== undefined ? aMatch[2] : (aMatch[3] !== undefined ? aMatch[3] : aMatch[4]);
+        attrs[k] = v;
+      }
+      metas.push(attrs);
     }
 
-    // 2. Description (og:description -> twitter:description -> meta description)
-    const ogDescMatch = html.match(/<meta\s+[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i) ||
-                        html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i);
-    const twDescMatch = html.match(/<meta\s+[^>]*name=["']twitter:description["'][^>]*content=["']([^"']+)["']/i) ||
-                        html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:description["']/i);
-    const metaDescMatch = html.match(/<meta\s+[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i) ||
-                          html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']description["']/i);
+    // Helper to find meta tag by property or name
+    const findMeta = (keys) => {
+      for (const m of metas) {
+        const prop = (m.property || m.name || '').toLowerCase();
+        if (keys.includes(prop) && m.content) {
+          return decodeHtmlEntities(m.content);
+        }
+      }
+      return '';
+    };
 
-    if (ogDescMatch && ogDescMatch[1]) {
-      result.description = decodeHtmlEntities(ogDescMatch[1]);
-    } else if (twDescMatch && twDescMatch[1]) {
-      result.description = decodeHtmlEntities(twDescMatch[1]);
-    } else if (metaDescMatch && metaDescMatch[1]) {
-      result.description = decodeHtmlEntities(metaDescMatch[1]);
+    // 1. Title (og:title -> twitter:title -> <meta name="title"> -> <title>)
+    let title = findMeta(['og:title', 'twitter:title', 'title']);
+    if (!title) {
+      const titleTagMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      if (titleTagMatch && titleTagMatch[1]) {
+        title = decodeHtmlEntities(titleTagMatch[1].replace(/<[^>]+>/g, '').trim());
+      }
     }
+    result.title = title;
+
+    // 2. Description
+    result.description = findMeta(['og:description', 'twitter:description', 'description']);
 
     // 3. Image (og:image -> twitter:image -> link image_src)
-    const ogImgMatch = html.match(/<meta\s+[^>]*property=["']og:image(?::url)?["'][^>]*content=["']([^"']+)["']/i) ||
-                       html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:image(?::url)?["']/i);
-    const twImgMatch = html.match(/<meta\s+[^>]*name=["']twitter:image(?::src)?["'][^>]*content=["']([^"']+)["']/i) ||
-                       html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:image(?::src)?["']/i);
-    const linkImgMatch = html.match(/<link\s+[^>]*rel=["']image_src["'][^>]*href=["']([^"']+)["']/i);
-
-    let rawImg = '';
-    if (ogImgMatch && ogImgMatch[1]) {
-      rawImg = ogImgMatch[1].trim();
-    } else if (twImgMatch && twImgMatch[1]) {
-      rawImg = twImgMatch[1].trim();
-    } else if (linkImgMatch && linkImgMatch[1]) {
-      rawImg = linkImgMatch[1].trim();
+    let rawImg = findMeta(['og:image', 'og:image:url', 'twitter:image', 'twitter:image:src']);
+    if (!rawImg) {
+      const linkImgMatch = html.match(/<link\s+[^>]*rel=["']image_src["'][^>]*href=["']([^"']+)["']/i) ||
+                           html.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']image_src["']/i);
+      if (linkImgMatch && linkImgMatch[1]) {
+        rawImg = linkImgMatch[1].trim();
+      }
     }
-
     if (rawImg) {
       try {
         result.image = new URL(rawImg, targetUrl).href;
@@ -484,13 +549,14 @@ export function extractHtmlMetadata(html, targetUrl) {
     }
 
     // 4. Site Name
-    const siteNameMatch = html.match(/<meta\s+[^>]*property=["']og:site_name["'][^>]*content=["']([^"']+)["']/i);
-    if (siteNameMatch && siteNameMatch[1]) {
-      result.siteName = decodeHtmlEntities(siteNameMatch[1].trim());
+    const siteName = findMeta(['og:site_name', 'application-name']);
+    if (siteName) {
+      result.siteName = siteName;
     }
 
-    // 5. Favicon
-    const iconMatch = html.match(/<link\s+[^>]*rel=["'](?:shortcut\s+)?icon["'][^>]*href=["']([^"']+)["']/i);
+    // 5. Favicon from <link rel="icon">
+    const iconMatch = html.match(/<link\s+[^>]*rel=["'](?:shortcut\s+)?icon["'][^>]*href=["']([^"']+)["']/i) ||
+                      html.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut\s+)?icon["']/i);
     if (iconMatch && iconMatch[1]) {
       try {
         result.favicon = new URL(iconMatch[1].trim(), targetUrl).href;
@@ -574,7 +640,7 @@ export default {
           });
         }
 
-        // If target is on same host and ASSETS is available, fetch via ASSETS
+        // If target is on same host and ASSETS is available, resolve via ASSETS
         if (env && env.ASSETS && parsedTarget.hostname === url.hostname) {
           const assetRes = await env.ASSETS.fetch(new Request(parsedTarget));
           const contentType = (assetRes.headers.get('content-type') || '').toLowerCase();
@@ -596,6 +662,25 @@ export default {
                 'Access-Control-Allow-Origin': '*'
               }
             });
+          } else if (assetRes.ok) {
+            const text = await assetRes.text();
+            const sample = text.slice(0, 524288);
+            const meta = extractHtmlMetadata(sample, targetUrl);
+            return new Response(JSON.stringify({
+              status: 'ok',
+              url: targetUrl,
+              isImage: false,
+              title: meta.title || parsedTarget.hostname,
+              description: meta.description || '',
+              image: meta.image || '',
+              siteName: meta.siteName || parsedTarget.hostname.replace(/^www\./i, ''),
+              favicon: meta.favicon || ''
+            }), {
+              headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              }
+            });
           }
         }
 
@@ -603,14 +688,13 @@ export default {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 7500);
 
-          const upstreamRes = await fetch(targetUrl, {
+          const upstreamRes = await safeFetchWithRedirects(targetUrl, {
             signal: controller.signal,
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/*,*/*;q=0.8',
               'Accept-Language': 'en-US,en;q=0.9'
-            },
-            redirect: 'follow'
+            }
           });
           clearTimeout(timeoutId);
 
@@ -738,6 +822,7 @@ export default {
           headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
           headers.set('Cache-Control', 'public, max-age=86400, s-maxage=86400');
           headers.set('X-Content-Type-Options', 'nosniff');
+          headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
           return new Response(assetRes.body, { status: assetRes.status, headers });
         }
 
@@ -745,14 +830,13 @@ export default {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-          const upstreamRes = await fetch(targetUrl, {
+          const upstreamRes = await safeFetchWithRedirects(targetUrl, {
             signal: controller.signal,
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
               'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
               'Accept-Language': 'en-US,en;q=0.9'
-            },
-            redirect: 'follow'
+            }
           });
           clearTimeout(timeoutId);
 
@@ -769,6 +853,19 @@ export default {
             });
           }
 
+          const rawContentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
+          
+          // Disallow proxying raw HTML or JS scripts as executable pages
+          if (rawContentType.includes('text/html') || rawContentType.includes('application/javascript') || rawContentType.includes('text/javascript')) {
+            return new Response(JSON.stringify({ error: 'Direct proxying of HTML or script execution is not permitted' }), {
+              status: 403,
+              headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              }
+            });
+          }
+
           const contentType = upstreamRes.headers.get('content-type') || 'application/octet-stream';
           const headers = new Headers();
           headers.set('Content-Type', contentType);
@@ -776,6 +873,7 @@ export default {
           headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
           headers.set('Cache-Control', 'public, max-age=86400, s-maxage=86400');
           headers.set('X-Content-Type-Options', 'nosniff');
+          headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
 
           return new Response(upstreamRes.body, {
             status: 200,

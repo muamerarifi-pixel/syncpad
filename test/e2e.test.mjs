@@ -32,8 +32,13 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url.pathname === '/api/link-metadata') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     const target = url.searchParams.get('url') || '';
+    if (target.includes('blocked-site.com')) {
+      res.writeHead(403, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: 'Upstream website returned 403', status: 403 }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     if (target.includes('github.com')) {
       res.end(JSON.stringify({
         status: 'ok',
@@ -56,6 +61,12 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url.pathname === '/api/proxy') {
+    const target = url.searchParams.get('url') || '';
+    if (target.includes('blocked-site.com')) {
+      res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ error: 'Upstream returned 502' }));
+      return;
+    }
     res.writeHead(200, {
       'Content-Type': 'image/svg+xml',
       'Access-Control-Allow-Origin': '*'
@@ -431,7 +442,7 @@ async function main() {
         const bookmarkVisible = btnBookmark && btnBookmark.style.display !== 'none';
 
         // Insert as Bookmark
-        app.insertWebBookmark();
+        await app.insertWebBookmark();
 
         const content = app.dom.noteContentTextarea.value;
         const hasBookmark = content.includes('SyncPad GitHub Repository') && content.includes('github.com/muamerarifi-pixel/syncpad');
@@ -483,7 +494,77 @@ async function main() {
       throw new Error('Invalid URL handling failed: ' + JSON.stringify(invalidUrlTest));
     }
 
-    // TEST 11: Console Errors check
+    // TEST 11: Web URL Graceful Fallback (upstream 403 or bot-blocked sites remain insertable)
+    const gracefulFallbackTest = await evaluate(`
+      (async () => {
+        const app = window.__syncpadApp;
+        app.openImageModal('url');
+
+        const inputUrl = document.getElementById('input-image-web-url');
+        inputUrl.value = 'https://blocked-site.com/protected/article';
+        await app.inspectWebUrl();
+
+        const statusEl = document.getElementById('web-url-status');
+        const confirmBtn = document.getElementById('btn-confirm-insert-url');
+        const btnBookmark = document.getElementById('btn-insert-web-bookmark');
+
+        const isVerified = statusEl && statusEl.textContent.includes('blocked-site.com');
+        const btnEnabled = confirmBtn && !confirmBtn.disabled;
+        const bookmarkEnabled = btnBookmark && btnBookmark.style.display !== 'none';
+
+        let attachError = null;
+        try {
+          await app.attachWebImage();
+        } catch (e) {
+          attachError = e.message;
+        }
+
+        const content = app.dom.noteContentTextarea.value;
+        const hasFallbackLink = content.includes('blocked-site.com/protected/article');
+
+        return {
+          isVerified,
+          btnEnabled,
+          bookmarkEnabled,
+          attachError,
+          hasFallbackLink
+        };
+      })()
+    `);
+    console.log('✓ Web URL Graceful Fallback test:', gracefulFallbackTest);
+    if (!gracefulFallbackTest.btnEnabled || !gracefulFallbackTest.hasFallbackLink) {
+      throw new Error('Graceful URL fallback test failed: ' + JSON.stringify(gracefulFallbackTest));
+    }
+
+    // TEST 12: Drag-and-Drop Web Link onto Editor Pane
+    const webDropTest = await evaluate(`
+      (async () => {
+        const app = window.__syncpadApp;
+        const editorPane = document.getElementById('editor-pane');
+
+        const dt = new DataTransfer();
+        dt.setData('text/uri-list', 'https://example.com/dropped-resource');
+
+        const dropEvt = new DragEvent('drop', {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer: dt
+        });
+
+        editorPane.dispatchEvent(dropEvt);
+
+        const content = app.dom.noteContentTextarea.value;
+        return {
+          hasDroppedLink: content.includes('https://example.com/dropped-resource')
+        };
+      })()
+    `);
+    console.log('✓ Web Link Drag & Drop test:', webDropTest);
+    if (!webDropTest.hasDroppedLink) {
+      throw new Error('Web link drag & drop test failed: ' + JSON.stringify(webDropTest));
+    }
+
+    // TEST 13: Console Errors check
     console.log('Console errors encountered:', consoleErrors);
     if (consoleErrors.length > 0) {
       throw new Error('Console errors encountered during testing: ' + consoleErrors.join('; '));

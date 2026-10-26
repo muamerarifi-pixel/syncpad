@@ -19,7 +19,7 @@ export async function compressImage(file, options = {}) {
   const quality = options.quality !== undefined ? options.quality : 0.82;
 
   // SVG images do not need canvas rasterization
-  if (file.type === 'image/svg+xml') {
+  if (file.type && file.type.startsWith('image/svg+xml')) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -37,7 +37,7 @@ export async function compressImage(file, options = {}) {
   }
 
   // Small GIFs (< 400KB) preserve animation
-  if (file.type === 'image/gif' && file.size < 400 * 1024) {
+  if (file.type && file.type.startsWith('image/gif') && file.size < 400 * 1024) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -121,10 +121,12 @@ export function formatBytes(bytes) {
  * Insert an image Markdown tag into the given textarea at cursor or end
  */
 export function insertImageMarkdown(textarea, alt, url, linkUrl = null) {
-  if (!textarea) return;
+  if (!textarea || !url) return;
 
-  const cleanAlt = (alt || 'Image').replace(/[\[\]]/g, '').trim();
-  const markdownTag = linkUrl ? `\n\n[![${cleanAlt}](${url})](${linkUrl})\n\n` : `\n\n![${cleanAlt}](${url})\n\n`;
+  const cleanAlt = (alt || 'Image').replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim();
+  const cleanUrl = url.trim().replace(/ /g, '%20');
+  const cleanLinkUrl = linkUrl ? linkUrl.trim().replace(/ /g, '%20') : null;
+  const markdownTag = cleanLinkUrl ? `\n\n[![${cleanAlt}](${cleanUrl})](${cleanLinkUrl})\n\n` : `\n\n![${cleanAlt}](${cleanUrl})\n\n`;
 
   const start = textarea.selectionStart !== undefined ? textarea.selectionStart : textarea.value.length;
   const end = textarea.selectionEnd !== undefined ? textarea.selectionEnd : start;
