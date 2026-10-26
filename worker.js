@@ -574,6 +574,31 @@ export default {
           });
         }
 
+        // If target is on same host and ASSETS is available, fetch via ASSETS
+        if (env && env.ASSETS && parsedTarget.hostname === url.hostname) {
+          const assetRes = await env.ASSETS.fetch(new Request(parsedTarget));
+          const contentType = (assetRes.headers.get('content-type') || '').toLowerCase();
+          if (contentType.startsWith('image/')) {
+            const pathname = parsedTarget.pathname;
+            const fileName = pathname.substring(pathname.lastIndexOf('/') + 1) || 'image';
+            return new Response(JSON.stringify({
+              status: 'ok',
+              url: targetUrl,
+              isImage: true,
+              title: fileName,
+              description: '',
+              image: targetUrl,
+              siteName: parsedTarget.hostname.replace(/^www\./i, ''),
+              contentType
+            }), {
+              headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              }
+            });
+          }
+        }
+
         try {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 7500);
@@ -703,6 +728,17 @@ export default {
               'Access-Control-Allow-Origin': '*'
             }
           });
+        }
+
+        // If target is on same host and ASSETS is available, fetch via ASSETS directly
+        if (env && env.ASSETS && parsedTarget.hostname === url.hostname) {
+          const assetRes = await env.ASSETS.fetch(new Request(parsedTarget));
+          const headers = new Headers(assetRes.headers);
+          headers.set('Access-Control-Allow-Origin', '*');
+          headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+          headers.set('Cache-Control', 'public, max-age=86400, s-maxage=86400');
+          headers.set('X-Content-Type-Options', 'nosniff');
+          return new Response(assetRes.body, { status: assetRes.status, headers });
         }
 
         try {
