@@ -5,6 +5,7 @@ import {
   parseInline,
   escapeHtml,
   sanitizeUrl,
+  sanitizeImageUrl,
   getWordStats,
   extractExcerpt,
   extractFirstTitle
@@ -202,5 +203,29 @@ test('parseInline renders image data URL with figure, zoomable attribute, and ca
   assert.ok(html.includes('data-zoomable="true"'));
   assert.ok(html.includes('<figcaption class="image-caption">Diagram Caption</figcaption>'));
 });
+
+test('sanitizeImageUrl and parseMarkdown support attachment: protocols', () => {
+  assert.equal(sanitizeImageUrl('attachment:img-44570'), 'attachment:img-44570');
+  const html = parseMarkdown('![44570](attachment:img-44570)');
+  assert.ok(html.includes('src="attachment:img-44570"'));
+  assert.ok(html.includes('alt="44570"'));
+});
+
+test('extractAndMigrateNoteImages migrates raw base64 data URLs to clean attachment tags', async () => {
+  const { extractAndMigrateNoteImages } = await import('../public/js/images.js');
+  const note = {
+    title: 'Untitled Note',
+    content: '![44570](data:image/webp;base64,UklGRmyOAABXRUJQVl4WAOAAAAAgAAAAbQIAdwUA==)'
+  };
+
+  const modified = extractAndMigrateNoteImages(note);
+  assert.equal(modified, true);
+  assert.equal(note.images.length, 1);
+  assert.equal(note.images[0].name, '44570');
+  assert.ok(note.images[0].dataUrl.startsWith('data:image/webp'));
+  assert.ok(note.content.includes('attachment:img-1'));
+  assert.ok(!note.content.includes('UklGRm'));
+});
+
 
 

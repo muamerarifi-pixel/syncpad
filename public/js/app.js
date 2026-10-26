@@ -28,6 +28,10 @@ import {
   compressImage,
   formatBytes,
   insertImageMarkdown,
+  insertImagePlaceholder,
+  copyImageDataUrlToClipboard,
+  renderAttachedImagesStrip,
+  extractAndMigrateNoteImages,
   LightboxViewer
 } from './images.js';
 import { generateQRCodeSVG } from './qr.js';
@@ -127,6 +131,7 @@ class SyncPadApp {
       btnToggleTools: document.getElementById('btn-toggle-tools'),
       markdownToolbar: document.getElementById('markdown-toolbar'),
       detectedLinksBar: document.getElementById('detected-links-bar'),
+      attachedImagesStrip: document.getElementById('attached-images-strip'),
       modalQrCode: document.getElementById('modal-qr-code'),
 
       // Mobile Bottom Dock
@@ -290,7 +295,7 @@ class SyncPadApp {
     });
 
     if (mode === 'preview' && this.activeNote) {
-      renderPreview(this.dom.noteContentTextarea.value, this.dom.markdownPreview);
+      renderPreview(this.dom.noteContentTextarea.value, this.dom.markdownPreview, this.activeNote.images || []);
     }
   }
 
@@ -380,6 +385,12 @@ class SyncPadApp {
   populateEditor(note, resetSelection = false) {
     if (!this.dom.noteTitleInput || !this.dom.noteContentTextarea) return;
 
+    // Auto-migrate any raw base64 data URLs from existing notes to clean attachment objects
+    const migrated = extractAndMigrateNoteImages(note);
+    if (migrated) {
+      saveNote(note, true).catch(console.warn);
+    }
+
     const isContentFocused = document.activeElement === this.dom.noteContentTextarea;
     const isTitleFocused = document.activeElement === this.dom.noteTitleInput;
     const selStart = this.dom.noteContentTextarea.selectionStart;
@@ -418,11 +429,14 @@ class SyncPadApp {
     // Update stats
     updateWordStats(note.content || '');
 
-    // Update preview
-    renderPreview(note.content || '', this.dom.markdownPreview);
+    // Update preview with images
+    renderPreview(note.content || '', this.dom.markdownPreview, note.images || []);
 
     // Update detected links bar for 1-tap open / copy
     this.updateDetectedLinks(note.content || '');
+
+    // Update visual attached images strip (thumbnails & 1-tap copy!)
+    this.updateAttachedImagesUI();
 
     if (resetSelection) {
       this.dom.noteContentTextarea.scrollTop = 0;
@@ -533,11 +547,16 @@ class SyncPadApp {
     const contentValue = this.dom.noteContentTextarea ? this.dom.noteContentTextarea.value : '';
 
     // Live update preview & stats immediately
-    if (this.dom.markdownPreview) renderPreview(contentValue, this.dom.markdownPreview);
+    if (this.dom.markdownPreview) {
+      renderPreview(contentValue, this.dom.markdownPreview, this.activeNote ? this.activeNote.images : []);
+    }
     updateWordStats(contentValue);
 
     // Live update detected links bar for 1-tap open / copy
     this.updateDetectedLinks(contentValue);
+
+    // Live update attached images strip
+    this.updateAttachedImagesUI();
 
     if (!this.activeNote) {
       // Auto-create note on typing when no note was selected
@@ -936,9 +955,25 @@ class SyncPadApp {
     if (!this.activeNote) {
       await this.createNewNote();
     }
+    if (!Array.isArray(this.activeNote.images)) {
+      this.activeNote.images = [];
+    }
 
     const caption = (this.dom.inputImageCaption?.value.trim()) || this.stagedImageData.name || 'Picture';
-    insertImageMarkdown(this.dom.noteContentTextarea, caption, this.stagedImageData.dataUrl);
+    const imageId = 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+
+    this.activeNote.images.push({
+      id: imageId,
+      name: caption,
+      dataUrl: this.stagedImageData.dataUrl,
+      size: this.stagedImageData.size,
+      createdAt: Date.now()
+    });
+
+    insertImagePlaceholder(this.dom.noteContentTextarea, caption, imageId);
+    this.updateAttachedImagesUI();
+    await this.saveActiveNote(true);
+
     this.closeImageModal();
     showToast('Picture attached to note! 📸', 'success', 2200);
   }
@@ -964,6 +999,9 @@ class SyncPadApp {
     if (!this.activeNote) {
       await this.createNewNote();
     }
+    if (!Array.isArray(this.activeNote.images)) {
+      this.activeNote.images = [];
+    }
 
     showToast(`Attaching ${imageFiles.length} picture(s)...`, 'info', 1500);
 
@@ -971,13 +1009,69 @@ class SyncPadApp {
       try {
         const processed = await compressImage(file);
         const baseName = (file.name || 'Picture').replace(/\.[^/.]+$/, '');
-        insertImageMarkdown(this.dom.noteContentTextarea, baseName, processed.dataUrl);
+        const imageId = 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+
+        this.activeNote.images.push({
+          id: imageId,
+          name: baseName,
+          dataUrl: processed.dataUrl,
+          size: processed.size,
+          createdAt: Date.now()
+        });
+
+        // Insert clean placeholder into textarea instead of dumping 48,000 raw base64 chars!
+        insertImagePlaceholder(this.dom.noteContentTextarea, baseName, imageId);
       } catch (err) {
         console.error('Failed to attach image:', file.name, err);
       }
     }
 
+    this.updateAttachedImagesUI();
+    await this.saveActiveNote(true);
     showToast(`Attached ${imageFiles.length} picture(s)! 📸`, 'success', 2500);
+  }
+
+  updateAttachedImagesUI() {
+    if (!this.dom.attachedImagesStrip) return;
+    const images = (this.activeNote && Array.isArray(this.activeNote.images)) ? this.activeNote.images : [];
+    renderAttachedImagesStrip({
+      container: this.dom.attachedImagesStrip,
+      images,
+      onCopyImage: async (dataUrl) => {
+        try {
+          await copyImageDataUrlToClipboard(dataUrl);
+        } catch (err) {
+          console.warn('Clipboard image write failed:', err);
+          showToast('Failed to copy image to clipboard', 'error');
+        }
+      },
+      onDownloadImage: (dataUrl, name) => {
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        const ext = dataUrl.startsWith('data:image/webp') ? 'webp' : 'png';
+        a.download = `${(name || 'syncpad-image').replace(/[^a-z0-9_-]/gi, '_')}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast('Image download started', 'info', 1800);
+      },
+      onZoomImage: (dataUrl, name) => {
+        this.lightbox.open(dataUrl, name);
+      },
+      onRemoveImage: async (id) => {
+        if (!this.activeNote || !this.activeNote.images) return;
+        this.activeNote.images = this.activeNote.images.filter((img) => img.id !== id);
+        if (this.dom.noteContentTextarea) {
+          const val = this.dom.noteContentTextarea.value;
+          const clean = val.replace(new RegExp(`!?\\[[^\\]]*\\]\\(attachment:${id}\\)`, 'g'), '');
+          this.dom.noteContentTextarea.value = clean.trim();
+          await this.handleEditorInput();
+        }
+        this.updateAttachedImagesUI();
+        await this.saveActiveNote(true);
+        showToast('Picture removed', 'info', 1800);
+      }
+    });
   }
 
   bindEvents() {

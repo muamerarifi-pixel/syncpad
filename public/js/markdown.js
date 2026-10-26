@@ -33,6 +33,10 @@ export function sanitizeImageUrl(url) {
   if (/^(?:https?:|\/|\.\/|\.\.\/)/i.test(trimmed)) {
     return trimmed;
   }
+  // Allow local attachment references
+  if (/^attachment:[A-Za-z0-9_.-]+$/i.test(trimmed)) {
+    return trimmed;
+  }
   // Allow safe base64 image data URIs (png, jpeg, webp, gif, svg+xml, bmp, avif)
   if (/^data:image\/(?:png|jpeg|jpg|webp|gif|svg\+xml|bmp|avif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
     return trimmed;

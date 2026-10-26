@@ -255,9 +255,24 @@ export function updateWordStats(content) {
 /**
  * Render Markdown Preview
  */
-export function renderPreview(content, previewElem) {
+export function renderPreview(content, previewElem, images = []) {
   if (!previewElem) return;
-  const html = parseMarkdown(content || '*No content yet. Start typing to see live preview…*');
+  let html = parseMarkdown(content || '*No content yet. Start typing to see live preview…*');
+
+  // Resolve attachment: references if images exist
+  if (Array.isArray(images) && images.length > 0) {
+    images.forEach(img => {
+      if (img.id && img.dataUrl) {
+        html = html.replaceAll(`src="attachment:${img.id}"`, `src="${img.dataUrl}"`);
+        html = html.replaceAll(`src="attachment:${encodeURIComponent(img.id)}"`, `src="${img.dataUrl}"`);
+      }
+      if (img.name && img.dataUrl) {
+        html = html.replaceAll(`src="attachment:${img.name}"`, `src="${img.dataUrl}"`);
+        html = html.replaceAll(`src="attachment:${encodeURIComponent(img.name)}"`, `src="${img.dataUrl}"`);
+      }
+    });
+  }
+
   previewElem.innerHTML = html;
 
   // Bind copy buttons inside code blocks
