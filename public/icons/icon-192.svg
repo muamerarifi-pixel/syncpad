@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="syncpadGrad192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="168" height="168" rx="40" fill="url(#syncpadGrad192)"/>
+  <path d="M62 48 h46 l28 28 v68 a6 6 0 0 1 -6 6 h-68 a6 6 0 0 1 -6 -6 v-90 a6 6 0 0 1 6 -6 z" fill="#ffffff" fill-opacity="0.15"/>
+  <g fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M66 88 a34 34 0 0 1 56 -9"/>
+    <polyline points="122 66 124 81 109 82"/>
+    <path d="M126 106 a34 34 0 0 1 -56 9"/>
+    <polyline points="70 128 68 113 83 112"/>
+  </g>
+  <path d="M 88 88 C 90 82, 102 82, 104 88 C 106 94, 86 98, 88 104 C 90 110, 102 110, 104 104" 
+        fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

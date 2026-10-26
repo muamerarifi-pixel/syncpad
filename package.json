@@ -1,0 +1,27 @@
+{
+  "name": "syncpad",
+  "version": "1.0.0",
+  "description": "Distraction-free, real-time cross-device Notes & Markdown Editor PWA deployed on Cloudflare Workers",
+  "type": "module",
+  "main": "worker.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "markdown",
+    "editor",
+    "real-time",
+    "pwa",
+    "cloudflare-workers",
+    "durable-objects",
+    "websockets",
+    "offline-first"
+  ],
+  "author": "Muamer Arifi",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.100.0"
+  }
+}

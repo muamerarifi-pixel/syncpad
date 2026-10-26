@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="syncpadGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="syncpadGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#60a5fa" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.8"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background rounded rect -->
+  <rect x="32" y="32" width="448" height="448" rx="104" fill="url(#syncpadGrad)" filter="url(#shadow)"/>
+
+  <!-- Subtle inner document icon -->
+  <path d="M168 128 h120 l72 72 v184 a16 16 0 0 1 -16 16 h-176 a16 16 0 0 1 -16 -16 v-240 a16 16 0 0 1 16 -16 z" fill="#ffffff" fill-opacity="0.15"/>
+
+  <!-- Sync circular arrows loop -->
+  <g fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Top arc -->
+    <path d="M180 236 a90 90 0 0 1 148 -24"/>
+    <polyline points="328 176 332 216 292 220"/>
+    
+    <!-- Bottom arc -->
+    <path d="M332 284 a90 90 0 0 1 -148 24"/>
+    <polyline points="184 344 180 304 220 300"/>
+  </g>
+
+  <!-- Central 'S' monogram -->
+  <path d="M 235 235 C 240 220, 272 220, 277 235 C 282 250, 230 262, 235 277 C 240 292, 272 292, 277 277" 
+        fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
