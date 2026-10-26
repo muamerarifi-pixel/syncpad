@@ -12,7 +12,11 @@ build/
 .cache/
 *.log
 
-# OS & Editor
+# Test & Scratch Profiles
+scratch-chrome-profile/
+tmp-*/
+tmp-profile/
+
 .DS_Store
 Thumbs.db
 .vscode/

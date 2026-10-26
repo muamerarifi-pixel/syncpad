@@ -30,6 +30,7 @@ import {
   insertImageMarkdown,
   LightboxViewer
 } from './images.js';
+import { generateQRCodeSVG } from './qr.js';
 
 class SyncPadApp {
   constructor() {
@@ -116,7 +117,25 @@ class SyncPadApp {
       confirmInsertUrlBtn: document.getElementById('btn-confirm-insert-url'),
       
       // Theme
-      themeToggleBtn: document.getElementById('btn-toggle-theme')
+      themeToggleBtn: document.getElementById('btn-toggle-theme'),
+
+      // 1-Tap Ribbon & Mobile Dock Elements
+      btnQuickPaste: document.getElementById('btn-quick-paste'),
+      btnQuickPhoto: document.getElementById('btn-quick-photo'),
+      inputQuickPhoto: document.getElementById('input-quick-photo'),
+      copyMdLabel: document.getElementById('btn-copy-md-label'),
+      btnToggleTools: document.getElementById('btn-toggle-tools'),
+      markdownToolbar: document.getElementById('markdown-toolbar'),
+      detectedLinksBar: document.getElementById('detected-links-bar'),
+      modalQrCode: document.getElementById('modal-qr-code'),
+
+      // Mobile Bottom Dock
+      mobileDock: document.getElementById('mobile-bottom-dock'),
+      mBtnNewNote: document.getElementById('m-btn-new-note'),
+      mBtnQuickPaste: document.getElementById('m-btn-quick-paste'),
+      mBtnQuickPhoto: document.getElementById('m-btn-quick-photo'),
+      mBtnQuickCopy: document.getElementById('m-btn-quick-copy'),
+      mBtnRoom: document.getElementById('m-btn-room')
     };
 
     this.lightbox = new LightboxViewer();
@@ -129,6 +148,17 @@ class SyncPadApp {
     this.bindEvents();
     this.bindKeyboardShortcuts();
     this.bindMarkdownToolbar();
+
+    // Initialize formatting toolbar visibility
+    try {
+      const savedToolbar = localStorage.getItem('syncpad_show_toolbar');
+      if (savedToolbar === 'false' && this.dom.markdownToolbar) {
+        this.dom.markdownToolbar.classList.add('hidden');
+        if (this.dom.btnToggleTools) this.dom.btnToggleTools.classList.remove('active');
+      } else if (this.dom.btnToggleTools) {
+        this.dom.btnToggleTools.classList.add('active');
+      }
+    } catch (_) {}
 
     // 2. Safely initialize theme & view mode
     try {
@@ -288,6 +318,11 @@ class SyncPadApp {
       const count = Math.max(1, peerCount || 1);
       this.dom.peerPresenceBadge.textContent = `${count} ${count === 1 ? 'device' : 'devices'} active`;
     }
+
+    // Refresh QR code if room modal is open
+    if (this.dom.roomModal && this.dom.roomModal.classList.contains('open')) {
+      this.renderQRCode();
+    }
   }
 
   async refreshNotesList() {
@@ -385,6 +420,9 @@ class SyncPadApp {
 
     // Update preview
     renderPreview(note.content || '', this.dom.markdownPreview);
+
+    // Update detected links bar for 1-tap open / copy
+    this.updateDetectedLinks(note.content || '');
 
     if (resetSelection) {
       this.dom.noteContentTextarea.scrollTop = 0;
@@ -498,6 +536,9 @@ class SyncPadApp {
     if (this.dom.markdownPreview) renderPreview(contentValue, this.dom.markdownPreview);
     updateWordStats(contentValue);
 
+    // Live update detected links bar for 1-tap open / copy
+    this.updateDetectedLinks(contentValue);
+
     if (!this.activeNote) {
       // Auto-create note on typing when no note was selected
       const newNote = {
@@ -577,6 +618,7 @@ class SyncPadApp {
     if (this.dom.roomModal) {
       this.dom.roomModal.classList.add('open');
       if (this.dom.joinRoomInput) this.dom.joinRoomInput.value = '';
+      this.renderQRCode();
     }
   }
 
@@ -584,6 +626,232 @@ class SyncPadApp {
     if (this.dom.roomModal) {
       this.dom.roomModal.classList.remove('open');
     }
+  }
+
+  renderQRCode() {
+    if (!this.dom.modalQrCode) return;
+    const room = this.roomCode || 'DISCONNECTED';
+    const fullRoomUrl = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(room)}`;
+    try {
+      const svg = generateQRCodeSVG(fullRoomUrl, 176);
+      this.dom.modalQrCode.innerHTML = svg;
+    } catch (err) {
+      console.warn('QR code generation error:', err);
+    }
+  }
+
+  // 1-Tap Quick Actions
+  async handleQuickPaste() {
+    // 1. Try reading clipboard items directly (handles images copied from screenshot tools or right-click copy)
+    if (navigator.clipboard && typeof navigator.clipboard.read === 'function') {
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          const imageType = item.types.find((t) => t.startsWith('image/'));
+          if (imageType) {
+            const blob = await item.getType(imageType);
+            const ext = imageType.split('/')[1] || 'png';
+            const file = new File([blob], `clipboard-image-${Date.now()}.${ext}`, { type: imageType });
+            await this.processAndInsertFiles([file]);
+            return;
+          }
+        }
+      } catch (_) {
+        // Clipboard read permission for images might not be granted; fall through to readText
+      }
+    }
+
+    // 2. Try reading clipboard text (links, markdown, plain text)
+    if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim().length > 0) {
+          if (!this.activeNote) {
+            await this.createNewNote();
+          }
+          const textarea = this.dom.noteContentTextarea;
+          const current = textarea.value;
+          const separator = (!current || current.endsWith('\n\n')) ? '' : (current.endsWith('\n') ? '\n' : '\n\n');
+          textarea.value = current + separator + text;
+
+          await this.handleEditorInput();
+          textarea.scrollTop = textarea.scrollHeight;
+          textarea.focus();
+          showToast('Pasted from clipboard! 📋', 'success', 2000);
+          return;
+        } else {
+          showToast('Clipboard is empty', 'info', 2000);
+          return;
+        }
+      } catch (err) {
+        console.warn('Clipboard readText failed:', err);
+      }
+    }
+
+    // 3. Fallback: prompt user to paste
+    if (this.dom.noteContentTextarea) {
+      this.dom.noteContentTextarea.focus();
+    }
+    showToast('Clipboard access denied. Tap or press Ctrl+V to paste', 'info', 2500);
+  }
+
+  async handleQuickCopyAll() {
+    if (!this.activeNote || !this.dom.noteContentTextarea) {
+      showToast('No note selected to copy', 'info');
+      return;
+    }
+
+    const content = this.dom.noteContentTextarea.value || this.activeNote.content || '';
+    if (!content.trim()) {
+      showToast('Note is empty', 'info');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(content);
+
+      // Visual feedback on ribbon button
+      if (this.dom.copyMdLabel) {
+        const origText = this.dom.copyMdLabel.textContent;
+        this.dom.copyMdLabel.textContent = 'Copied! ✓';
+        if (this.dom.copyMdBtn) this.dom.copyMdBtn.classList.add('copied');
+        setTimeout(() => {
+          this.dom.copyMdLabel.textContent = origText;
+          if (this.dom.copyMdBtn) this.dom.copyMdBtn.classList.remove('copied');
+        }, 1800);
+      }
+
+      // Visual feedback on mobile dock button
+      if (this.dom.mBtnQuickCopy) {
+        const span = this.dom.mBtnQuickCopy.querySelector('span');
+        if (span) {
+          const origText = span.textContent;
+          span.textContent = 'Copied! ✓';
+          this.dom.mBtnQuickCopy.classList.add('copied');
+          setTimeout(() => {
+            span.textContent = origText;
+            this.dom.mBtnQuickCopy.classList.remove('copied');
+          }, 1800);
+        }
+      }
+
+      showToast('All content copied to clipboard! 📋', 'success', 2000);
+    } catch (err) {
+      console.error('Copy failed:', err);
+      showToast('Failed to copy to clipboard', 'error');
+    }
+  }
+
+  handleQuickPhoto() {
+    if (this.dom.inputQuickPhoto) {
+      this.dom.inputQuickPhoto.value = '';
+      this.dom.inputQuickPhoto.click();
+    } else if (this.dom.inputImageFile) {
+      this.dom.inputImageFile.value = '';
+      this.dom.inputImageFile.click();
+    } else {
+      this.openImageModal();
+    }
+  }
+
+  toggleMarkdownToolbar() {
+    if (!this.dom.markdownToolbar) return;
+    const isHidden = this.dom.markdownToolbar.classList.toggle('hidden');
+    if (this.dom.btnToggleTools) {
+      this.dom.btnToggleTools.classList.toggle('active', !isHidden);
+      this.dom.btnToggleTools.title = isHidden ? 'Show formatting toolbar' : 'Hide formatting toolbar';
+    }
+    try {
+      localStorage.setItem('syncpad_show_toolbar', isHidden ? 'false' : 'true');
+    } catch (_) {}
+  }
+
+  updateDetectedLinks(content) {
+    if (!this.dom.detectedLinksBar) return;
+    if (!content || typeof content !== 'string') {
+      this.dom.detectedLinksBar.style.display = 'none';
+      this.dom.detectedLinksBar.innerHTML = '';
+      return;
+    }
+
+    const urlRegex = /(https?:\/\/[^\s)\]>"'<>]+)/gi;
+    const matches = content.match(urlRegex);
+
+    if (!matches || matches.length === 0) {
+      this.dom.detectedLinksBar.style.display = 'none';
+      this.dom.detectedLinksBar.innerHTML = '';
+      return;
+    }
+
+    const uniqueUrls = Array.from(new Set(matches)).slice(0, 4);
+
+    this.dom.detectedLinksBar.innerHTML = '';
+    uniqueUrls.forEach((url) => {
+      let domain = url;
+      try {
+        const parsed = new URL(url);
+        domain = parsed.hostname + (parsed.pathname !== '/' && parsed.pathname.length > 1 ? parsed.pathname.slice(0, 16) + (parsed.pathname.length > 16 ? '…' : '') : '');
+      } catch (_) {}
+
+      const chip = document.createElement('div');
+      chip.className = 'detected-link-chip';
+
+      const domainSpan = document.createElement('span');
+      domainSpan.className = 'detected-link-domain';
+      domainSpan.innerHTML = `
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="flex-shrink:0">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        </svg>
+        <span>${this.escapeText(domain)}</span>
+      `;
+
+      const actionsDiv = document.createElement('div');
+      actionsDiv.className = 'link-chip-actions';
+
+      const openBtn = document.createElement('a');
+      openBtn.className = 'link-chip-btn';
+      openBtn.href = url;
+      openBtn.target = '_blank';
+      openBtn.rel = 'noopener noreferrer';
+      openBtn.textContent = 'Open ↗';
+
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'link-chip-btn';
+      copyBtn.type = 'button';
+      copyBtn.textContent = 'Copy 📋';
+      copyBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(url);
+          copyBtn.textContent = 'Copied! ✓';
+          setTimeout(() => { copyBtn.textContent = 'Copy 📋'; }, 1500);
+        } catch (_) {
+          showToast('Failed to copy link', 'error');
+        }
+      });
+
+      actionsDiv.appendChild(openBtn);
+      actionsDiv.appendChild(copyBtn);
+      chip.appendChild(domainSpan);
+      chip.appendChild(actionsDiv);
+      this.dom.detectedLinksBar.appendChild(chip);
+    });
+
+    this.dom.detectedLinksBar.style.display = 'flex';
+  }
+
+  escapeText(str) {
+    return String(str || '').replace(/[&<>"']/g, (m) => {
+      switch (m) {
+        case '&': return '&amp;';
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '"': return '&quot;';
+        case "'": return '&#39;';
+        default: return m;
+      }
+    });
   }
 
   // Image modal controls
@@ -813,19 +1081,46 @@ class SyncPadApp {
     if (this.dom.exportMdBtn) {
       this.dom.exportMdBtn.addEventListener('click', () => this.exportMarkdownFile());
     }
-    if (this.dom.copyMdBtn) {
-      this.dom.copyMdBtn.addEventListener('click', async () => {
-        if (!this.activeNote) {
-          showToast('No note selected to copy', 'info');
-          return;
-        }
-        try {
-          await navigator.clipboard.writeText(this.activeNote.content || '');
-          showToast('Markdown copied to clipboard!', 'success', 2000);
-        } catch (_) {
-          showToast('Failed to copy', 'error');
+
+    // 1-Tap Quick Actions (Ribbon & Mobile Dock)
+    if (this.dom.btnQuickPaste) {
+      this.dom.btnQuickPaste.addEventListener('click', () => this.handleQuickPaste());
+    }
+    if (this.dom.mBtnQuickPaste) {
+      this.dom.mBtnQuickPaste.addEventListener('click', () => this.handleQuickPaste());
+    }
+
+    if (this.dom.btnQuickPhoto) {
+      this.dom.btnQuickPhoto.addEventListener('click', () => this.handleQuickPhoto());
+    }
+    if (this.dom.mBtnQuickPhoto) {
+      this.dom.mBtnQuickPhoto.addEventListener('click', () => this.handleQuickPhoto());
+    }
+    if (this.dom.inputQuickPhoto) {
+      this.dom.inputQuickPhoto.addEventListener('change', async (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          await this.processAndInsertFiles(e.target.files);
+          e.target.value = '';
         }
       });
+    }
+
+    if (this.dom.copyMdBtn) {
+      this.dom.copyMdBtn.addEventListener('click', () => this.handleQuickCopyAll());
+    }
+    if (this.dom.mBtnQuickCopy) {
+      this.dom.mBtnQuickCopy.addEventListener('click', () => this.handleQuickCopyAll());
+    }
+
+    if (this.dom.btnToggleTools) {
+      this.dom.btnToggleTools.addEventListener('click', () => this.toggleMarkdownToolbar());
+    }
+
+    if (this.dom.mBtnNewNote) {
+      this.dom.mBtnNewNote.addEventListener('click', () => this.createNewNote());
+    }
+    if (this.dom.mBtnRoom) {
+      this.dom.mBtnRoom.addEventListener('click', () => this.openRoomModal());
     }
 
     // Room Modal

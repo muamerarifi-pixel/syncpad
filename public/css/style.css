@@ -130,18 +130,22 @@ button {
   gap: 10px;
 }
 
-.brand-logo {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+.brand-logo-premium {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #090d16;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #ffffff;
-  font-weight: 700;
-  font-size: 18px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+.brand-logo-premium:hover {
+  transform: scale(1.04);
 }
 
 .brand-name {
@@ -150,15 +154,27 @@ button {
   letter-spacing: -0.5px;
 }
 
-.brand-badge {
-  font-size: 10px;
+.brand-badge-live {
+  font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 2px 6px;
+  letter-spacing: 0.8px;
+  padding: 2px 7px;
   border-radius: 4px;
-  background-color: var(--accent-primary-subtle);
-  color: var(--accent-primary);
-  font-weight: 600;
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.brand-badge-live::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: #10b981;
+  box-shadow: 0 0 6px #10b981;
 }
 
 /* Search Box */
@@ -546,14 +562,152 @@ button {
   box-shadow: var(--shadow-sm);
 }
 
-/* EDITOR TOP BAR */
+/* EDITOR TOP BAR & COMMAND RIBBON */
 .editor-top-bar {
   padding: 12px 24px;
   background-color: var(--bg-surface);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+
+.editor-action-ribbon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+
+.ribbon-primary-actions {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ribbon-secondary-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-ribbon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all var(--transition-fast);
+  user-select: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.btn-ribbon-primary {
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+}
+
+.btn-ribbon-primary:hover {
+  background: linear-gradient(135deg, #1d4ed8, #2563eb);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-ribbon-primary:active {
+  transform: translateY(0);
+}
+
+.btn-ribbon-secondary {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-main);
+  border-color: var(--border-color);
+}
+
+.btn-ribbon-secondary:hover {
+  background-color: var(--bg-surface-active);
+  border-color: var(--text-dim);
+}
+
+.btn-ribbon-secondary.copied {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--accent-success);
+  border-color: var(--accent-success);
+}
+
+/* Smart Detected Links Bar */
+.detected-links-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 10px;
+  background-color: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  animation: fadeIn 0.2s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.detected-link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-main);
+  max-width: 100%;
+}
+
+.detected-link-domain {
+  color: var(--accent-primary);
+  font-weight: 600;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.link-chip-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.link-chip-btn {
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  background-color: var(--bg-surface-hover);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.link-chip-btn:hover {
+  background-color: var(--accent-primary);
+  color: #ffffff;
+  border-color: var(--accent-primary);
 }
 
 .editor-title-row {
@@ -565,23 +719,18 @@ button {
 
 .note-title-input {
   flex: 1;
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--text-main);
   border: none;
   background: transparent;
   outline: none;
   padding: 4px 0;
+  letter-spacing: -0.3px;
 }
 
 .note-title-input::placeholder {
   color: var(--text-dim);
-}
-
-.editor-actions-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .btn-pin.active {
@@ -1536,3 +1685,138 @@ button {
 .lightbox-close-btn:hover {
   background: rgba(255, 255, 255, 0.3);
 }
+
+/* ==========================================================================
+   MOBILE BOTTOM ACTION DOCK, QR CODE PAIRING & TOOLBAR TOGGLE
+   ========================================================================== */
+
+/* QR Pairing Box in Room Modal */
+.qr-pairing-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px;
+  background-color: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  margin-top: 14px;
+  text-align: center;
+}
+
+.modal-qr-code {
+  width: 176px;
+  height: 176px;
+  background: #ffffff;
+  padding: 8px;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.modal-qr-code svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.qr-scan-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 10px;
+  letter-spacing: -0.1px;
+}
+
+/* Toolbar hidden state */
+.markdown-toolbar.hidden {
+  display: none !important;
+}
+
+#btn-toggle-tools.active {
+  background-color: var(--bg-surface-hover);
+  color: var(--accent-primary);
+}
+
+/* Mobile Bottom Action Dock */
+.mobile-bottom-dock {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .mobile-bottom-dock {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 58px;
+    background-color: var(--bg-surface);
+    border-top: 1px solid var(--border-color);
+    z-index: 50;
+    align-items: center;
+    justify-content: space-around;
+    padding: 0 4px;
+    backdrop-filter: blur(16px);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.28);
+  }
+
+  .editor-status-bar {
+    margin-bottom: 58px;
+  }
+
+  .dock-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    min-width: 52px;
+    transition: all var(--transition-fast);
+    text-decoration: none;
+    touch-action: manipulation;
+  }
+
+  .dock-btn svg {
+    width: 20px;
+    height: 20px;
+    stroke: currentColor;
+    transition: transform var(--transition-fast);
+  }
+
+  .dock-btn:active {
+    transform: scale(0.94);
+  }
+
+  .dock-btn:hover, .dock-btn:focus-visible {
+    color: var(--text-main);
+    background-color: var(--bg-surface-hover);
+  }
+
+  .dock-btn-highlight {
+    background: linear-gradient(135deg, var(--accent-primary), #6366f1) !important;
+    color: #ffffff !important;
+    border-radius: 12px;
+    padding: 6px 14px;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+    font-weight: 700;
+  }
+
+  .dock-btn-highlight svg {
+    stroke: #ffffff;
+  }
+
+  .dock-btn.copied {
+    color: var(--accent-success) !important;
+  }
+}
+
