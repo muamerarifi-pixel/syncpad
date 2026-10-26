@@ -114,6 +114,7 @@ export function getAllNotes() {
  * Retrieve a note by ID
  */
 export function getNote(id) {
+  if (!id) return Promise.resolve(null);
   return runTransaction('notes', 'readonly', (store) => {
     return new Promise((resolve, reject) => {
       const request = store.get(id);
@@ -127,11 +128,13 @@ export function getNote(id) {
  * Save or update a note locally and optionally add to sync queue
  */
 export async function saveNote(note, enqueue = true) {
+  if (!note) return null;
   const now = new Date().toISOString();
-  const existing = await getNote(note.id);
+  const id = note.id || generateId('note');
+  const existing = note.id ? await getNote(note.id) : null;
 
   const cleanNote = {
-    id: note.id || generateId('note'),
+    id,
     title: note.title ? note.title.trim() : 'Untitled Note',
     content: note.content || '',
     tags: Array.isArray(note.tags) ? Array.from(new Set(note.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))) : [],
@@ -208,6 +211,7 @@ export async function applyRemoteNote(remoteNote) {
  * Delete a note (soft-delete tombstone for sync)
  */
 export async function deleteNote(id, enqueue = true) {
+  if (!id) return null;
   const existing = await getNote(id);
   const now = new Date().toISOString();
 
@@ -278,6 +282,7 @@ export function clearPendingSyncItems(itemKeys) {
  * Settings helpers
  */
 export function getSetting(key, defaultValue = null) {
+  if (!key) return Promise.resolve(defaultValue);
   return runTransaction('settings', 'readonly', (store) => {
     return new Promise((resolve, reject) => {
       const request = store.get(key);
@@ -294,6 +299,7 @@ export function getSetting(key, defaultValue = null) {
 }
 
 export function setSetting(key, value) {
+  if (!key) return Promise.resolve();
   return runTransaction('settings', 'readwrite', (store) => {
     store.put({ key, value });
   });

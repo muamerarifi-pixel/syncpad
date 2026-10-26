@@ -87,20 +87,50 @@ class SyncPadApp {
       // Theme
       themeToggleBtn: document.getElementById('btn-toggle-theme')
     };
+
+    window.__syncpadApp = this;
   }
 
   async init() {
-    await initDB();
-    await this.initTheme();
-    await this.initViewMode();
+    // 1. Unconditionally bind DOM events, keyboard shortcuts, and toolbar first
+    // so all buttons and UI interactions are responsive immediately
+    this.bindEvents();
+    this.bindKeyboardShortcuts();
+    this.bindMarkdownToolbar();
 
-    // Initialize room sync
-    const roomCode = await syncManager.init();
-    this.updateRoomUI(roomCode, syncManager.status, syncManager.peerCount);
+    // 2. Safely initialize theme & view mode
+    try {
+      await this.initTheme();
+    } catch (err) {
+      console.warn('initTheme error:', err);
+    }
+
+    try {
+      await this.initViewMode();
+    } catch (err) {
+      console.warn('initViewMode error:', err);
+    }
+
+    // 3. Safely initialize IndexedDB
+    try {
+      await initDB();
+    } catch (err) {
+      console.error('initDB error:', err);
+      showToast('IndexedDB storage initialization warning', 'warning');
+    }
+
+    // 4. Initialize room sync
+    let roomCode = null;
+    try {
+      roomCode = await syncManager.init();
+      this.updateRoomUI(roomCode, syncManager.status, syncManager.peerCount);
+    } catch (err) {
+      console.error('syncManager.init error:', err);
+    }
 
     // Setup sync manager event handlers
-    syncManager.on('statusChange', ({ status, roomCode, peerCount }) => {
-      this.updateRoomUI(roomCode, status, peerCount);
+    syncManager.on('statusChange', ({ status, roomCode: rCode, peerCount }) => {
+      this.updateRoomUI(rCode || this.roomCode, status, peerCount);
     });
 
     syncManager.on('presence', ({ count }) => {
@@ -108,45 +138,54 @@ class SyncPadApp {
     });
 
     syncManager.on('remoteNoteChange', async ({ note, action }) => {
-      await this.refreshNotesList();
-      // If the currently open note was modified remotely, update editor
-      if (this.activeNote && this.activeNote.id === note.id) {
-        if (action === 'delete') {
-          showToast('The current note was deleted from another device', 'warning');
-          await this.selectFirstAvailableNote();
-        } else {
-          this.activeNote = note;
-          this.populateEditor(note, false);
-          showToast(`Note synced from connected device`, 'info', 2000);
+      try {
+        await this.refreshNotesList();
+        // If the currently open note was modified remotely, update editor
+        if (this.activeNote && this.activeNote.id === note.id) {
+          if (action === 'delete') {
+            showToast('The current note was deleted from another device', 'warning');
+            await this.selectFirstAvailableNote();
+          } else {
+            this.activeNote = note;
+            this.populateEditor(note, false);
+            showToast('Note synced from connected device', 'info', 2000);
+          }
         }
+      } catch (err) {
+        console.error('remoteNoteChange handler error:', err);
       }
     });
 
     syncManager.on('roomSynced', async () => {
-      await this.refreshNotesList();
-      if (!this.activeNote) {
-        await this.selectFirstAvailableNote();
+      try {
+        await this.refreshNotesList();
+        if (!this.activeNote) {
+          await this.selectFirstAvailableNote();
+        }
+        showToast('All notes synchronized with room', 'success', 2200);
+      } catch (err) {
+        console.error('roomSynced handler error:', err);
       }
-      showToast('All notes synchronized with room', 'success', 2200);
     });
 
-    // Load notes
-    await this.refreshNotesList();
+    // 5. Load notes
+    try {
+      await this.refreshNotesList();
 
-    // If no notes exist and user didn't join an existing room from URL, create local welcome note
-    if (this.allNotes.length === 0) {
-      if (!syncManager.isJoinedFromUrl) {
-        await this.createWelcomeNote(false);
+      if (this.allNotes.length === 0) {
+        if (!syncManager.isJoinedFromUrl) {
+          await this.createWelcomeNote(false);
+        } else {
+          await this.createNewNote();
+        }
+      } else {
+        const lastNoteId = await getSetting('activeNoteId');
+        const found = this.allNotes.find((n) => n.id === lastNoteId);
+        await this.selectNote(found ? found.id : this.allNotes[0].id);
       }
-    } else {
-      const lastNoteId = await getSetting('activeNoteId');
-      const found = this.allNotes.find((n) => n.id === lastNoteId);
-      await this.selectNote(found ? found.id : this.allNotes[0].id);
+    } catch (err) {
+      console.error('Notes loading error in init:', err);
     }
-
-    this.bindEvents();
-    this.bindKeyboardShortcuts();
-    this.bindMarkdownToolbar();
   }
 
   async initTheme() {
@@ -419,15 +458,29 @@ class SyncPadApp {
     }
   }
 
-  handleEditorInput() {
-    if (!this.activeNote) return;
-
-    const titleValue = this.dom.noteTitleInput.value;
-    const contentValue = this.dom.noteContentTextarea.value;
+  async handleEditorInput() {
+    const titleValue = this.dom.noteTitleInput ? this.dom.noteTitleInput.value : '';
+    const contentValue = this.dom.noteContentTextarea ? this.dom.noteContentTextarea.value : '';
 
     // Live update preview & stats immediately
-    renderPreview(contentValue, this.dom.markdownPreview);
+    if (this.dom.markdownPreview) renderPreview(contentValue, this.dom.markdownPreview);
     updateWordStats(contentValue);
+
+    if (!this.activeNote) {
+      // Auto-create note on typing when no note was selected
+      const newNote = {
+        title: titleValue.trim() || extractFirstTitle(contentValue, 'Untitled Note'),
+        content: contentValue,
+        tags: this.activeTag ? [this.activeTag] : [],
+        pinned: false
+      };
+      const saved = await saveNote(newNote, true);
+      this.activeNote = saved;
+      await setSetting('activeNoteId', saved.id);
+      syncManager.broadcastNoteUpdate(saved);
+      await this.refreshNotesList();
+      return;
+    }
 
     // Debounced save (250ms)
     clearTimeout(this.saveDebounceTimer);
@@ -558,11 +611,13 @@ class SyncPadApp {
     if (this.dom.pinNoteBtn) {
       this.dom.pinNoteBtn.addEventListener('click', () => {
         if (this.activeNote) this.togglePinNote(this.activeNote.id);
+        else showToast('Please select or create a note first', 'info');
       });
     }
     if (this.dom.deleteCurrentNoteBtn) {
       this.dom.deleteCurrentNoteBtn.addEventListener('click', () => {
         if (this.activeNote) this.confirmDeleteNote(this.activeNote.id);
+        else showToast('Please select or create a note first', 'info');
       });
     }
 
@@ -602,9 +657,12 @@ class SyncPadApp {
     }
     if (this.dom.copyMdBtn) {
       this.dom.copyMdBtn.addEventListener('click', async () => {
-        if (!this.activeNote) return;
+        if (!this.activeNote) {
+          showToast('No note selected to copy', 'info');
+          return;
+        }
         try {
-          await navigator.clipboard.writeText(this.activeNote.content);
+          await navigator.clipboard.writeText(this.activeNote.content || '');
           showToast('Markdown copied to clipboard!', 'success', 2000);
         } catch (_) {
           showToast('Failed to copy', 'error');
@@ -674,9 +732,12 @@ class SyncPadApp {
   }
 
   exportMarkdownFile() {
-    if (!this.activeNote) return;
+    if (!this.activeNote) {
+      showToast('No note selected to export', 'info');
+      return;
+    }
     const filename = `${(this.activeNote.title || 'untitled').replace(/[^a-z0-9_-]/gi, '_')}.md`;
-    const blob = new Blob([this.activeNote.content], { type: 'text/markdown;charset=utf-8' });
+    const blob = new Blob([this.activeNote.content || ''], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -747,11 +808,15 @@ class SyncPadApp {
     };
 
     toolbar.querySelectorAll('button[data-format]').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         e.preventDefault();
+        if (!this.activeNote) {
+          await this.createNewNote();
+        }
         const action = btn.getAttribute('data-format');
         if (actions[action]) {
           actions[action]();
+          this.handleEditorInput();
         }
       });
     });
@@ -768,9 +833,15 @@ if ('serviceWorker' in navigator && window.location.protocol.startsWith('http'))
 }
 
 // Bootstrap
-window.addEventListener('DOMContentLoaded', () => {
+function startApp() {
   const app = new SyncPadApp();
   app.init().catch((err) => {
     console.error('Failed to initialize SyncPad:', err);
   });
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startApp);
+} else {
+  startApp();
+}
