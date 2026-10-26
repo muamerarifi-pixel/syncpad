@@ -33,6 +33,7 @@ class SyncManager {
     this.pingInterval = null;
     this.listeners = new Map(); // event -> Set of callbacks
     this.isFlushing = false;
+    this.isJoinedFromUrl = false;
 
     // Monitor browser online/offline events
     window.addEventListener('online', () => {
@@ -115,6 +116,7 @@ class SyncManager {
     }
 
     if (roomFromUrl) {
+      this.isJoinedFromUrl = true;
       this.roomCode = this.sanitizeRoomCode(roomFromUrl);
       await setSetting('roomCode', this.roomCode);
     } else {
@@ -180,6 +182,11 @@ class SyncManager {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
+    if (!host) {
+      console.warn('No host available for WebSocket connection');
+      return;
+    }
+
     const wsUrl = `${protocol}//${host}/api/room/${encodeURIComponent(this.roomCode)}/ws?deviceId=${encodeURIComponent(this.deviceId)}`;
 
     try {
@@ -189,20 +196,23 @@ class SyncManager {
         this.reconnectAttempts = 0;
         this.notifyStatus(SyncStatus.CONNECTED);
 
-        // Send JOIN announcement
+        const localNotes = await getAllNotes();
+
+        // Send JOIN announcement with local notes (to seed empty rooms)
         this.send({
           type: 'JOIN',
           roomCode: this.roomCode,
           deviceId: this.deviceId,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          notes: localNotes
         });
 
         // Request initial full room sync
-        const localNotes = await getAllNotes();
         this.send({
           type: 'ROOM_SYNC_REQUEST',
           roomCode: this.roomCode,
           deviceId: this.deviceId,
+          notes: localNotes,
           knownNotes: localNotes.map((n) => ({ id: n.id, updatedAt: n.updatedAt, version: n.version }))
         });
 
@@ -239,7 +249,6 @@ class SyncManager {
 
       this.ws.onerror = (err) => {
         console.warn('WebSocket error, falling back to reconnect/REST:', err);
-        // If WebSocket fails (e.g. static dev server or blocked WS), fallback to REST sync
         this.fallbackRestSync();
       };
     } catch (err) {
@@ -285,7 +294,6 @@ class SyncManager {
     });
 
     if (!sent) {
-      // If offline or WS closed, the note is already in IndexedDB sync_queue!
       this.notifyStatus(navigator.onLine ? SyncStatus.DISCONNECTED : SyncStatus.OFFLINE);
     }
   }
@@ -293,13 +301,14 @@ class SyncManager {
   /**
    * Broadcast note deletion to all peers in room
    */
-  broadcastNoteDelete(noteId, updatedAt) {
+  broadcastNoteDelete(noteId, updatedAt, version) {
     this.send({
       type: 'NOTE_DELETE',
       roomCode: this.roomCode,
       deviceId: this.deviceId,
       noteId,
-      updatedAt
+      updatedAt,
+      version
     });
   }
 
@@ -332,6 +341,7 @@ class SyncManager {
         const tombstone = {
           id: msg.noteId,
           updatedAt: msg.updatedAt || new Date().toISOString(),
+          version: msg.version || 1,
           isDeleted: true
         };
         const { applied } = await applyRemoteNote(tombstone);
@@ -343,16 +353,20 @@ class SyncManager {
 
       case 'ROOM_SYNC_RESPONSE': {
         // Bulk sync received from server or peer
+        let updatedAny = false;
         if (Array.isArray(msg.notes)) {
-          let updatedAny = false;
           for (const remoteNote of msg.notes) {
             const { applied } = await applyRemoteNote(remoteNote);
             if (applied) updatedAny = true;
           }
-          if (updatedAny) {
-            this.emit('roomSynced', { count: msg.notes.length });
+        }
+        if (Array.isArray(msg.deletedNotes)) {
+          for (const tombstone of msg.deletedNotes) {
+            const { applied } = await applyRemoteNote(tombstone);
+            if (applied) updatedAny = true;
           }
         }
+        this.emit('roomSynced', { count: (msg.notes ? msg.notes.length : 0) });
         break;
       }
 
@@ -396,33 +410,36 @@ class SyncManager {
       }
 
       this.notifyStatus(SyncStatus.SYNCING);
-      const processedIds = [];
+
+      // Coalesce pending queue items by noteId: keep the latest state/action per noteId
+      const latestPerNote = new Map();
+      const allItemIds = items.map((i) => i.id);
 
       for (const item of items) {
+        latestPerNote.set(item.noteId, item);
+      }
+
+      for (const item of latestPerNote.values()) {
         if (item.action === 'UPSERT') {
-          const success = this.send({
+          this.send({
             type: 'NOTE_UPDATE',
             roomCode: this.roomCode,
             deviceId: this.deviceId,
             note: item.data
           });
-          if (success) processedIds.push(item.id);
         } else if (item.action === 'DELETE') {
-          const success = this.send({
+          this.send({
             type: 'NOTE_DELETE',
             roomCode: this.roomCode,
             deviceId: this.deviceId,
             noteId: item.noteId,
-            updatedAt: item.data?.updatedAt
+            updatedAt: item.data?.updatedAt,
+            version: item.data?.version
           });
-          if (success) processedIds.push(item.id);
         }
       }
 
-      if (processedIds.length > 0) {
-        await clearPendingSyncItems(processedIds);
-      }
-
+      await clearPendingSyncItems(allItemIds);
       this.notifyStatus(SyncStatus.CONNECTED);
     } catch (err) {
       console.error('Error flushing sync queue:', err);
@@ -453,14 +470,21 @@ class SyncManager {
 
       if (response.ok) {
         const data = await response.json();
-        if (data && Array.isArray(data.notes)) {
-          for (const note of data.notes) {
-            await applyRemoteNote(note);
+        if (data) {
+          if (Array.isArray(data.notes)) {
+            for (const note of data.notes) {
+              await applyRemoteNote(note);
+            }
+          }
+          if (Array.isArray(data.deletedNotes)) {
+            for (const tombstone of data.deletedNotes) {
+              await applyRemoteNote(tombstone);
+            }
           }
           if (pending.length > 0) {
             await clearPendingSyncItems(pending.map((p) => p.id));
           }
-          this.emit('roomSynced', { count: data.notes.length });
+          this.emit('roomSynced', { count: data.notes ? data.notes.length : 0 });
         }
       }
     } catch (_) {

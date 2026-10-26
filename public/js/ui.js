@@ -161,7 +161,9 @@ export function renderNotesList({
     `;
   }
 
+  const previousScrollTop = container.scrollTop;
   container.innerHTML = html;
+  container.scrollTop = previousScrollTop;
 
   // Bind clicks
   container.querySelectorAll('.note-card').forEach((card) => {
@@ -261,7 +263,8 @@ export function renderPreview(content, previewElem) {
   // Bind copy buttons inside code blocks
   previewElem.querySelectorAll('.copy-code-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const code = btn.getAttribute('data-code');
+      const codeBlock = btn.closest('.code-block-wrapper')?.querySelector('code');
+      const code = codeBlock ? codeBlock.textContent : btn.getAttribute('data-code');
       if (code) {
         try {
           await navigator.clipboard.writeText(code);

@@ -133,9 +133,11 @@ class SyncPadApp {
     // Load notes
     await this.refreshNotesList();
 
-    // If no notes exist, create starter welcome note
+    // If no notes exist and user didn't join an existing room from URL, create local welcome note
     if (this.allNotes.length === 0) {
-      await this.createWelcomeNote();
+      if (!syncManager.isJoinedFromUrl) {
+        await this.createWelcomeNote(false);
+      }
     } else {
       const lastNoteId = await getSetting('activeNoteId');
       const found = this.allNotes.find((n) => n.id === lastNoteId);
@@ -272,8 +274,31 @@ class SyncPadApp {
   populateEditor(note, resetSelection = false) {
     if (!this.dom.noteTitleInput || !this.dom.noteContentTextarea) return;
 
+    const isContentFocused = document.activeElement === this.dom.noteContentTextarea;
+    const isTitleFocused = document.activeElement === this.dom.noteTitleInput;
+    const selStart = this.dom.noteContentTextarea.selectionStart;
+    const selEnd = this.dom.noteContentTextarea.selectionEnd;
+    const titleStart = this.dom.noteTitleInput.selectionStart;
+    const titleEnd = this.dom.noteTitleInput.selectionEnd;
+
     this.dom.noteTitleInput.value = note.title || '';
     this.dom.noteContentTextarea.value = note.content || '';
+
+    if (isContentFocused && !resetSelection) {
+      const len = (note.content || '').length;
+      this.dom.noteContentTextarea.setSelectionRange(
+        Math.min(selStart, len),
+        Math.min(selEnd, len)
+      );
+    }
+
+    if (isTitleFocused && !resetSelection) {
+      const len = (note.title || '').length;
+      this.dom.noteTitleInput.setSelectionRange(
+        Math.min(titleStart, len),
+        Math.min(titleEnd, len)
+      );
+    }
 
     // Update tags
     this.renderNoteTagsEditor(note.tags || []);
@@ -384,7 +409,7 @@ class SyncPadApp {
     if (!confirmed) return;
 
     const tombstone = await deleteNote(id, true);
-    syncManager.broadcastNoteDelete(id, tombstone.updatedAt);
+    syncManager.broadcastNoteDelete(id, tombstone.updatedAt, tombstone.version);
     showToast('Note deleted', 'info', 2000);
 
     await this.refreshNotesList();
@@ -436,7 +461,7 @@ class SyncPadApp {
     await this.refreshNotesList();
   }
 
-  async createWelcomeNote() {
+  async createWelcomeNote(broadcast = false) {
     const welcome = {
       title: 'Welcome to SyncPad! 🚀',
       tags: ['guide', 'welcome'],
@@ -444,8 +469,10 @@ class SyncPadApp {
       content: `# Welcome to SyncPad 🚀\n\nA distraction-free, real-time cross-device **Markdown Editor & Notes PWA** deployed on Cloudflare Workers.\n\n### ⚡ Zero-Friction Multi-Device Sync\n1. Look at the room code in the top header (e.g. \`${this.roomCode}\`).\n2. Click the room badge to copy your invite link.\n3. Open that link on your phone, tablet, or another browser.\n4. **Type here — and watch it sync across all your devices in real-time!**\n\n---\n\n### 📋 Rich Markdown Features\n\n- [x] Real-time bidirectional WebSocket synchronization\n- [x] Offline-first IndexedDB persistence with auto-sync queue\n- [x] Distraction-free split, edit, and preview modes\n- [x] Tag filtering & instant search\n- [x] Dark and Light theme toggle\n\n### 💻 Code Syntax & Copy\n\`\`\`javascript\n// Real-time synchronization event listener\nsyncManager.on('remoteNoteChange', ({ note }) => {\n  console.log('Real-time sync update received:', note.title);\n});\n\`\`\`\n\n### 📊 Feature Overview\n| Feature | Description | Status |\n| :--- | :--- | :--- |\n| **Real-Time Sync** | WebSockets via Cloudflare Workers | 🟢 Active |\n| **Offline-First** | IndexedDB with sync queue | 🟢 Active |\n| **PWA Installable** | Works offline anytime, anywhere | 🟢 Active |\n\n> "Simplicity is the prerequisite for reliability."\n\nStart typing below or create a new note with **Ctrl+N**! ✨`
     };
 
-    const saved = await saveNote(welcome, true);
-    syncManager.broadcastNoteUpdate(saved);
+    const saved = await saveNote(welcome, broadcast);
+    if (broadcast) {
+      syncManager.broadcastNoteUpdate(saved);
+    }
     await this.selectNote(saved.id);
   }
 

@@ -38,7 +38,7 @@ export function parseMarkdown(markdown) {
 
   // Extract code blocks first to protect them from inline parsing
   const codeBlocks = [];
-  text = text.replace(/```([a-zA-Z0-9_\-\+]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+  text = text.replace(/```([a-zA-Z0-9_\-\+]*)[ \t]*\n([\s\S]*?)```/g, (match, lang, code) => {
     const placeholder = `@@CODEBLOCK${codeBlocks.length}@@`;
     codeBlocks.push({ lang: lang.trim().toLowerCase() || 'text', code });
     return placeholder;
@@ -56,16 +56,17 @@ export function parseMarkdown(markdown) {
   const lines = text.split('\n');
   const result = [];
   let inList = false;
-  let listType = null; // 'ul' | 'ol'
+  let listType = null; // 'task' | 'ul' | 'ol'
   let inTable = false;
   let tableHeaders = [];
   let tableRows = [];
+  let hasSeparator = false;
   let inBlockquote = false;
   let blockquoteLines = [];
 
   function closeList() {
     if (inList) {
-      result.push(`</${listType}>`);
+      result.push(listType === 'ol' ? '</ol>' : '</ul>');
       inList = false;
       listType = null;
     }
@@ -82,30 +83,40 @@ export function parseMarkdown(markdown) {
 
   function closeTable() {
     if (inTable) {
-      let tableHtml = '<div class="table-container"><table>';
-      if (tableHeaders.length > 0) {
-        tableHtml += '<thead><tr>';
-        for (const h of tableHeaders) {
-          tableHtml += `<th>${parseInline(h)}</th>`;
-        }
-        tableHtml += '</tr></thead>';
-      }
-      if (tableRows.length > 0) {
-        tableHtml += '<tbody>';
-        for (const row of tableRows) {
-          tableHtml += '<tr>';
-          for (const cell of row) {
-            tableHtml += `<td>${parseInline(cell)}</td>`;
+      if (hasSeparator) {
+        let tableHtml = '<div class="table-container"><table>';
+        if (tableHeaders.length > 0) {
+          tableHtml += '<thead><tr>';
+          for (const h of tableHeaders) {
+            tableHtml += `<th>${parseInline(h)}</th>`;
           }
-          tableHtml += '</tr>';
+          tableHtml += '</tr></thead>';
         }
-        tableHtml += '</tbody>';
+        if (tableRows.length > 0) {
+          tableHtml += '<tbody>';
+          for (const row of tableRows) {
+            tableHtml += '<tr>';
+            for (const cell of row) {
+              tableHtml += `<td>${parseInline(cell)}</td>`;
+            }
+            tableHtml += '</tr>';
+          }
+          tableHtml += '</tbody>';
+        }
+        tableHtml += '</table></div>';
+        result.push(tableHtml);
+      } else {
+        if (tableHeaders.length > 0) {
+          result.push(`<p>${parseInline('| ' + tableHeaders.join(' | ') + ' |')}</p>`);
+        }
+        for (const row of tableRows) {
+          result.push(`<p>${parseInline('| ' + row.join(' | ') + ' |')}</p>`);
+        }
       }
-      tableHtml += '</table></div>';
-      result.push(tableHtml);
       inTable = false;
       tableHeaders = [];
       tableRows = [];
+      hasSeparator = false;
     }
   }
 
@@ -114,7 +125,7 @@ export function parseMarkdown(markdown) {
     const trimmed = line.trim();
 
     // Check code block placeholder
-    const codeBlockMatch = line.match(/^@@CODEBLOCK(\d+)@@$/);
+    const codeBlockMatch = trimmed.match(/^@@CODEBLOCK(\d+)@@$/);
     if (codeBlockMatch) {
       closeList();
       closeBlockquote();
@@ -155,7 +166,8 @@ export function parseMarkdown(markdown) {
       closeTable();
       const level = headingMatch[1].length;
       const content = headingMatch[2].trim();
-      const slug = content.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
+      const cleanHeading = content.replace(/@@INLINECODE(\d+)@@/g, (m, id) => inlineCodes[parseInt(id, 10)] || '');
+      const slug = cleanHeading.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
       result.push(`<h${level} id="${slug}">${parseInline(content)}</h${level}>`);
       continue;
     }
@@ -179,9 +191,9 @@ export function parseMarkdown(markdown) {
       const rawCells = trimmed.slice(1, -1).split('|').map(c => c.trim());
       
       // Check if separator row (| --- | --- |)
-      const isSeparator = rawCells.every(c => /^:?-+:?$/.test(c));
-      if (isSeparator) {
-        // Just separator, continue
+      const isSep = rawCells.length > 0 && rawCells.every(c => /^:?-+:?$/.test(c));
+      if (isSep) {
+        hasSeparator = true;
         continue;
       }
 
@@ -201,10 +213,10 @@ export function parseMarkdown(markdown) {
     if (taskMatch) {
       closeBlockquote();
       closeTable();
-      if (!inList || listType !== 'ul') {
+      if (!inList || listType !== 'task') {
         closeList();
         inList = true;
-        listType = 'ul';
+        listType = 'task';
         result.push('<ul class="task-list">');
       }
       const checked = taskMatch[2].toLowerCase() === 'x';
@@ -285,16 +297,20 @@ export function parseInline(text) {
   // Escape HTML first
   let str = escapeHtml(text);
 
-  // Images: ![alt](url)
+  // Extract images to placeholders to protect URLs from inline regex formatting
+  const images = [];
   str = str.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
-    const safeUrl = sanitizeUrl(url);
-    return `<img src="${safeUrl}" alt="${alt}" loading="lazy" />`;
+    const placeholder = `@@IMG_${images.length}@@`;
+    images.push({ alt, url });
+    return placeholder;
   });
 
-  // Links: [text](url)
+  // Extract links to placeholders with boundary tags so labels can receive formatting
+  const links = [];
   str = str.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) => {
-    const safeUrl = sanitizeUrl(url);
-    return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    const idx = links.length;
+    links.push({ url });
+    return `@@LSTART_${idx}@@${label}@@LEND_${idx}@@`;
   });
 
   // Bold + Italic: ***text*** or ___text___
@@ -305,15 +321,30 @@ export function parseInline(text) {
   str = str.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   str = str.replace(/__([^_]+)__/g, '<strong>$1</strong>');
 
-  // Italic: *text* or _text_
-  str = str.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  str = str.replace(/_([^_]+)_/g, '<em>$1</em>');
+  // Italic: *text* (non-whitespace boundary)
+  str = str.replace(/\*([^*\s](?:.*?[^*\s])?)\*/g, '<em>$1</em>');
+  // Italic: _text_ (ensure not within snake_case identifier)
+  str = str.replace(/(^|[\s([{"'<])_([^_]+)_(?=[\s.,!?:;)\]}"'>]|$)/g, '$1<em>$2</em>');
 
   // Strikethrough: ~~text~~
   str = str.replace(/~~([^~]+)~~/g, '<del>$1</del>');
 
   // Highlight: ==text==
   str = str.replace(/==([^=]+)==/g, '<mark>$1</mark>');
+
+  // Restore links
+  str = str.replace(/@@LSTART_(\d+)@@([\s\S]*?)@@LEND_\1@@/g, (match, idx, formattedLabel) => {
+    const link = links[parseInt(idx, 10)];
+    const safeUrl = sanitizeUrl(link.url);
+    return `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${formattedLabel}</a>`;
+  });
+
+  // Restore images
+  str = str.replace(/@@IMG_(\d+)@@/g, (match, idx) => {
+    const { alt, url } = images[parseInt(idx, 10)];
+    const safeUrl = sanitizeUrl(url);
+    return `<img src="${safeUrl}" alt="${alt}" loading="lazy" />`;
+  });
 
   return str;
 }
@@ -353,9 +384,13 @@ export function extractExcerpt(text, maxLength = 100) {
   if (!text) return '';
   // Strip code blocks first
   let clean = text.replace(/```[\s\S]*?```/g, ' ');
+  // Strip images leaving alt text
+  clean = clean.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
   // Preserve content of inline code and links
   clean = clean.replace(/`([^`]+)`/g, '$1');
   clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  // Strip HTML tags
+  clean = clean.replace(/<[^>]+>/g, '');
   // Strip headers, formatting chars
   clean = clean
     .replace(/^#{1,6}\s+/gm, '')

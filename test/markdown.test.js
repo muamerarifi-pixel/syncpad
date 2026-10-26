@@ -135,3 +135,48 @@ test('getWordStats handles edge cases including unicode and extra whitespace', (
   assert.equal(getWordStats(unicode).words, 4);
 });
 
+test('parseInline preserves URLs containing underscores and queries without tag corruption', () => {
+  const md = '[Cloudflare Docs](https://developers.cloudflare.com/workers/runtime-apis/web_socket_pair?tab=overview_1)';
+  const html = parseInline(md);
+  assert.ok(html.includes('href="https://developers.cloudflare.com/workers/runtime-apis/web_socket_pair?tab=overview_1"'));
+  assert.ok(!html.includes('<em>socket</em>'));
+  assert.ok(!html.includes('<em>1</em>'));
+});
+
+test('parseInline preserves image URLs containing underscores', () => {
+  const md = '![Diagram](https://example.com/assets/arch_diagram_v1.png)';
+  const html = parseInline(md);
+  assert.ok(html.includes('src="https://example.com/assets/arch_diagram_v1.png"'));
+  assert.ok(!html.includes('<em>diagram</em>'));
+});
+
+test('parseInline does not italicize intraword underscores', () => {
+  const md = 'The variable my_user_profile_id is integer.';
+  const html = parseInline(md);
+  assert.ok(html.includes('my_user_profile_id'));
+  assert.ok(!html.includes('<em>user</em>'));
+});
+
+test('parseMarkdown cleanly separates task list from regular unordered list', () => {
+  const md = '- [x] Task completed\n- Regular bullet item';
+  const html = parseMarkdown(md);
+  assert.ok(html.includes('<ul class="task-list">'));
+  assert.ok(html.includes('</ul>\n<ul>'));
+});
+
+test('parseMarkdown handles malformed tables without separator as regular paragraphs', () => {
+  const md = '| Just some pipe text | without separator |\nRegular line';
+  const html = parseMarkdown(md);
+  assert.ok(!html.includes('<table>'));
+  assert.ok(html.includes('<p>| Just some pipe text | without separator |</p>'));
+});
+
+test('extractExcerpt removes HTML tags and image markdown', () => {
+  const md = '# Header\n<div class="note">Notice <b>here</b></div>\n![Screenshot](https://example.com/img.png)';
+  const excerpt = extractExcerpt(md, 100);
+  assert.ok(!excerpt.includes('<div'));
+  assert.ok(!excerpt.includes('<b>'));
+  assert.ok(!excerpt.includes('https://'));
+  assert.ok(excerpt.includes('Notice here Screenshot'));
+});
+

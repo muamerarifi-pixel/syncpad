@@ -164,34 +164,40 @@ export async function applyRemoteNote(remoteNote) {
 
   const local = await getNote(remoteNote.id);
 
+  const sanitizedRemote = {
+    ...remoteNote,
+    tags: Array.isArray(remoteNote.tags) ? remoteNote.tags : [],
+    pinned: Boolean(remoteNote.pinned)
+  };
+
   // If local does not exist, insert remote note
   if (!local) {
-    if (remoteNote.isDeleted) {
+    if (sanitizedRemote.isDeleted) {
       // Remote already deleted and we don't have it, nothing to do
-      return { applied: true, note: remoteNote };
+      return { applied: true, note: sanitizedRemote };
     }
     await runTransaction('notes', 'readwrite', (store) => {
-      store.put(remoteNote);
+      store.put(sanitizedRemote);
     });
-    return { applied: true, note: remoteNote };
+    return { applied: true, note: sanitizedRemote };
   }
 
   // Conflict resolution: Last-Write-Wins (LWW) based on UTC timestamp & version
   const localTime = new Date(local.updatedAt || 0).getTime();
-  const remoteTime = new Date(remoteNote.updatedAt || 0).getTime();
+  const remoteTime = new Date(sanitizedRemote.updatedAt || 0).getTime();
 
   let remoteWins = false;
   if (remoteTime > localTime) {
     remoteWins = true;
   } else if (remoteTime === localTime) {
-    remoteWins = (remoteNote.version || 0) >= (local.version || 0);
+    remoteWins = (sanitizedRemote.version || 0) >= (local.version || 0);
   }
 
   if (remoteWins) {
     await runTransaction('notes', 'readwrite', (store) => {
-      store.put(remoteNote);
+      store.put(sanitizedRemote);
     });
-    return { applied: true, note: remoteNote };
+    return { applied: true, note: sanitizedRemote };
   }
 
   // Local was newer than remote; local wins, keep local note
@@ -313,14 +319,15 @@ export async function searchNotes(query = '', activeTag = null) {
   const q = query.trim().toLowerCase();
 
   return all.filter((note) => {
-    if (activeTag && !note.tags.includes(activeTag.toLowerCase())) {
+    const tags = Array.isArray(note.tags) ? note.tags : [];
+    if (activeTag && !tags.some((t) => t.toLowerCase() === activeTag.toLowerCase())) {
       return false;
     }
     if (!q) return true;
 
     const inTitle = note.title && note.title.toLowerCase().includes(q);
     const inContent = note.content && note.content.toLowerCase().includes(q);
-    const inTags = note.tags && note.tags.some((t) => t.toLowerCase().includes(q));
+    const inTags = tags.some((t) => t.toLowerCase().includes(q));
 
     return inTitle || inContent || inTags;
   });
