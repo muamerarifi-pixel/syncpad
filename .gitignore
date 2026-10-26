@@ -13,7 +13,7 @@ build/
 *.log
 
 # Test & Scratch Profiles
-scratch-chrome-profile/
+scratch-*/
 tmp-*/
 tmp-profile/
 

@@ -227,5 +227,30 @@ test('extractAndMigrateNoteImages migrates raw base64 data URLs to clean attachm
   assert.ok(!note.content.includes('UklGRm'));
 });
 
+test('parseInline includes referrerpolicy="no-referrer" and onerror on images', () => {
+  const md = '![Web Landscape](https://example.com/mountain.jpg)';
+  const html = parseInline(md);
+  assert.ok(html.includes('referrerpolicy="no-referrer"'));
+  assert.ok(html.includes('onerror="this.classList.add(\'img-load-error\')"'));
+  assert.ok(html.includes('src="https://example.com/mountain.jpg"'));
+  assert.ok(html.includes('alt="Web Landscape"'));
+});
+
+test('parseMarkdown handles images wrapped in links (rich bookmark)', () => {
+  const md = '[![Project Logo](https://example.com/logo.png)](https://example.com/project)';
+  const html = parseMarkdown(md);
+  assert.ok(html.includes('<a href="https://example.com/project"'));
+  assert.ok(html.includes('src="https://example.com/logo.png"'));
+  assert.ok(html.includes('alt="Project Logo"'));
+});
+
+test('parseMarkdown correctly parses URLs with parentheses', () => {
+  const md = '![Wiki Photo](https://en.wikipedia.org/wiki/File:Sample_(1).jpg) and link [React](https://en.wikipedia.org/wiki/React_(software))';
+  const html = parseMarkdown(md);
+  assert.ok(html.includes('src="https://en.wikipedia.org/wiki/File:Sample_(1).jpg"'));
+  assert.ok(html.includes('href="https://en.wikipedia.org/wiki/React_(software)"'));
+});
+
+
 
 

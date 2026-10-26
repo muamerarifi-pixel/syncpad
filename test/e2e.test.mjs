@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 const PORT = 8788;
 const CHROME_PORT = 9223;
 const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const USER_DATA_DIR = path.resolve('scratch-chrome-profile');
+const USER_DATA_DIR = path.resolve('scratch-chrome-profile-' + Date.now());
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -29,6 +29,38 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/api/sync') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ notes: [], version: 1 }));
+    return;
+  }
+  if (url.pathname === '/api/link-metadata') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    const target = url.searchParams.get('url') || '';
+    if (target.includes('github.com')) {
+      res.end(JSON.stringify({
+        status: 'ok',
+        url: target,
+        isImage: false,
+        title: 'SyncPad GitHub Repository',
+        description: 'Real-time cross-device notes and markdown editor.',
+        image: 'https://images.unsplash.com/photo-test.jpg',
+        siteName: 'github.com'
+      }));
+    } else {
+      res.end(JSON.stringify({
+        status: 'ok',
+        url: target,
+        isImage: true,
+        title: 'sample-photo',
+        image: target
+      }));
+    }
+    return;
+  }
+  if (url.pathname === '/api/proxy') {
+    res.writeHead(200, {
+      'Content-Type': 'image/svg+xml',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="blue"/></svg>');
     return;
   }
 
@@ -54,6 +86,7 @@ async function main() {
     `--remote-debugging-port=${CHROME_PORT}`,
     '--headless=new',
     '--no-first-run',
+    '--disable-extensions',
     '--disable-gpu',
     '--disable-features=IsolateOrigins,site-per-process',
     `--user-data-dir=${USER_DATA_DIR}`,
@@ -68,8 +101,9 @@ async function main() {
       try {
         const resp = await fetch(`http://127.0.0.1:${CHROME_PORT}/json/list`);
         const list = await resp.json();
-        if (list.length > 0 && list[0].webSocketDebuggerUrl) {
-          wsUrl = list[0].webSocketDebuggerUrl;
+        const page = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
+        if (page) {
+          wsUrl = page.webSocketDebuggerUrl;
           break;
         }
       } catch (_) {}
@@ -130,6 +164,9 @@ async function main() {
 
     await sendCommand('Page.enable');
     await sendCommand('Runtime.enable');
+    await sendCommand('Network.enable');
+    await sendCommand('Network.setCacheDisabled', { cacheDisabled: true });
+    await sendCommand('Network.clearBrowserCache');
 
     // Set Desktop viewport (1280x800)
     await sendCommand('Emulation.setDeviceMetricsOverride', {
@@ -330,7 +367,123 @@ async function main() {
       throw new Error('Mobile bottom dock not visible on mobile');
     }
 
-    // TEST 8: Console Errors check
+    // TEST 8: Web URL / Website Link Import in Attach Picture Modal
+    const webUrlImageTest = await evaluate(`
+      (async () => {
+        const app = window.__syncpadApp;
+        app.openImageModal();
+        app.switchImageTab('url');
+
+        const tabUrlPane = document.getElementById('tab-pane-image-url');
+        const inputUrl = document.getElementById('input-image-web-url');
+        const confirmBtn = document.getElementById('btn-confirm-insert-url');
+        const previewContainer = document.getElementById('web-image-preview-container');
+
+        // Input an HTTP image URL served by our test server
+        const testImgUrl = window.location.origin + '/icons/icon-192.svg';
+        inputUrl.value = testImgUrl;
+        await app.inspectWebUrl();
+
+        const previewVisible = previewContainer && previewContainer.style.display !== 'none';
+        const buttonEnabled = confirmBtn && !confirmBtn.disabled;
+        const buttonText = confirmBtn ? confirmBtn.textContent : '';
+
+        // Click Insert Image
+        await app.attachWebImage();
+
+        const content = app.dom.noteContentTextarea.value;
+        const modalClosed = !app.dom.imageModal.classList.contains('open');
+
+        return {
+          paneVisible: tabUrlPane.style.display !== 'none',
+          previewVisible,
+          buttonEnabled,
+          buttonText,
+          modalClosed,
+          contentHasImage: content.includes('icon-192.svg')
+        };
+      })()
+    `);
+    console.log('✓ Web URL Image Import test:', webUrlImageTest);
+    if (!webUrlImageTest.paneVisible || !webUrlImageTest.previewVisible || !webUrlImageTest.contentHasImage) {
+      throw new Error('Web URL Image import failed: ' + JSON.stringify(webUrlImageTest));
+    }
+
+    // TEST 9: Website Link Metadata Preview & Bookmark Insertion
+    const websiteLinkTest = await evaluate(`
+      (async () => {
+        const app = window.__syncpadApp;
+        app.openImageModal();
+        app.switchImageTab('url');
+
+        const inputUrl = document.getElementById('input-image-web-url');
+        inputUrl.value = 'https://github.com/muamerarifi-pixel/syncpad';
+        await app.inspectWebUrl();
+
+        const metaCard = document.getElementById('web-link-meta-card');
+        const metaTitle = document.getElementById('web-meta-title');
+        const btnBookmark = document.getElementById('btn-insert-web-bookmark');
+        const captionInput = document.getElementById('input-image-web-caption');
+
+        const metaCardVisible = metaCard && metaCard.style.display !== 'none';
+        const extractedTitle = metaTitle ? metaTitle.textContent : '';
+        const captionVal = captionInput ? captionInput.value : '';
+        const bookmarkVisible = btnBookmark && btnBookmark.style.display !== 'none';
+
+        // Insert as Bookmark
+        app.insertWebBookmark();
+
+        const content = app.dom.noteContentTextarea.value;
+        const hasBookmark = content.includes('SyncPad GitHub Repository') && content.includes('github.com/muamerarifi-pixel/syncpad');
+
+        return {
+          metaCardVisible,
+          extractedTitle,
+          captionVal,
+          bookmarkVisible,
+          hasBookmark
+        };
+      })()
+    `);
+    console.log('✓ Website Link Metadata Import test:', websiteLinkTest);
+    if (!websiteLinkTest.metaCardVisible || !websiteLinkTest.hasBookmark) {
+      throw new Error('Website link metadata import failed: ' + JSON.stringify(websiteLinkTest));
+    }
+
+    // TEST 10: Invalid Web URL error handling
+    const invalidUrlTest = await evaluate(`
+      (async () => {
+        const app = window.__syncpadApp;
+        app.openImageModal();
+        app.switchImageTab('url');
+
+        const inputUrl = document.getElementById('input-image-web-url');
+        inputUrl.value = 'not-a-valid-url';
+        await app.inspectWebUrl();
+
+        const statusEl = document.getElementById('web-url-status');
+        const confirmBtn = document.getElementById('btn-confirm-insert-url');
+        const previewContainer = document.getElementById('web-image-preview-container');
+
+        const hasError = statusEl && statusEl.classList.contains('error') && statusEl.style.display !== 'none';
+        const buttonDisabled = confirmBtn ? confirmBtn.disabled : false;
+        const previewHidden = !previewContainer || previewContainer.style.display === 'none';
+
+        app.closeImageModal();
+
+        return {
+          hasError,
+          buttonDisabled,
+          previewHidden
+        };
+      })()
+    `);
+    console.log('✓ Invalid URL Error feedback test:', invalidUrlTest);
+    if (!invalidUrlTest.hasError || !invalidUrlTest.buttonDisabled || !invalidUrlTest.previewHidden) {
+      throw new Error('Invalid URL handling failed: ' + JSON.stringify(invalidUrlTest));
+    }
+
+    // TEST 11: Console Errors check
     console.log('Console errors encountered:', consoleErrors);
     if (consoleErrors.length > 0) {
       throw new Error('Console errors encountered during testing: ' + consoleErrors.join('; '));

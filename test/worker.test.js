@@ -255,3 +255,89 @@ test('SyncRoom WebSockets: rejects stale note update and sends authoritative ver
   assert.ok(correction, 'Expected server correction for stale edit');
   assert.equal(correction.note.title, 'Authoritative V2');
 });
+
+test('isPrivateOrLocalHost blocks SSRF and private ranges while permitting public hosts', async () => {
+  const { isPrivateOrLocalHost } = await import('../worker.js');
+  assert.equal(isPrivateOrLocalHost('localhost'), true);
+  assert.equal(isPrivateOrLocalHost('127.0.0.1'), true);
+  assert.equal(isPrivateOrLocalHost('0.0.0.0'), true);
+  assert.equal(isPrivateOrLocalHost('::1'), true);
+  assert.equal(isPrivateOrLocalHost('10.0.1.5'), true);
+  assert.equal(isPrivateOrLocalHost('172.16.0.1'), true);
+  assert.equal(isPrivateOrLocalHost('172.31.255.255'), true);
+  assert.equal(isPrivateOrLocalHost('192.168.1.100'), true);
+  assert.equal(isPrivateOrLocalHost('169.254.169.254'), true);
+  assert.equal(isPrivateOrLocalHost('metadata.google.internal'), true);
+  assert.equal(isPrivateOrLocalHost('test.local'), true);
+  assert.equal(isPrivateOrLocalHost('test.internal'), true);
+
+  // Public hosts must be permitted
+  assert.equal(isPrivateOrLocalHost('example.com'), false);
+  assert.equal(isPrivateOrLocalHost('github.com'), false);
+  assert.equal(isPrivateOrLocalHost('images.unsplash.com'), false);
+  assert.equal(isPrivateOrLocalHost('upload.wikimedia.org'), false);
+});
+
+test('extractHtmlMetadata extracts OpenGraph, Twitter, and title metadata accurately', async () => {
+  const { extractHtmlMetadata } = await import('../worker.js');
+  
+  const sampleHtml = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>SyncPad Documentation &mdash; Real-Time Notes</title>
+      <meta property="og:title" content="SyncPad Official &amp; Docs" />
+      <meta property="og:description" content="Cross-device markdown editor with zero setup &amp; private rooms." />
+      <meta property="og:image" content="/assets/social-card.png" />
+      <meta property="og:site_name" content="SyncPad Cloud" />
+      <link rel="icon" href="/favicon.svg" />
+    </head>
+    <body></body>
+    </html>
+  `;
+
+  const meta = extractHtmlMetadata(sampleHtml, 'https://syncpad.example.com/docs');
+  assert.equal(meta.title, 'SyncPad Official & Docs');
+  assert.equal(meta.description, 'Cross-device markdown editor with zero setup & private rooms.');
+  assert.equal(meta.image, 'https://syncpad.example.com/assets/social-card.png');
+  assert.equal(meta.siteName, 'SyncPad Cloud');
+  assert.equal(meta.favicon, 'https://syncpad.example.com/favicon.svg');
+});
+
+test('Worker /api/link-metadata rejects missing or disallowed URLs with CORS headers', async () => {
+  // Missing parameter
+  const req1 = new Request('https://syncpad.internal/api/link-metadata');
+  const res1 = await worker.fetch(req1, {}, {});
+  assert.equal(res1.status, 400);
+  assert.equal(res1.headers.get('Access-Control-Allow-Origin'), '*');
+  const data1 = await res1.json();
+  assert.ok(data1.error);
+
+  // SSRF attempt to local network blocked
+  const req2 = new Request('https://syncpad.internal/api/link-metadata?url=http://127.0.0.1:8080/admin');
+  const res2 = await worker.fetch(req2, {}, {});
+  assert.equal(res2.status, 403);
+  assert.equal(res2.headers.get('Access-Control-Allow-Origin'), '*');
+  const data2 = await res2.json();
+  assert.ok(data2.error.includes('Target host is not permitted'));
+
+  // Invalid protocol blocked
+  const req3 = new Request('https://syncpad.internal/api/link-metadata?url=ftp://files.example.com/test');
+  const res3 = await worker.fetch(req3, {}, {});
+  assert.equal(res3.status, 400);
+  const data3 = await res3.json();
+  assert.ok(data3.error.includes('Protocol not allowed'));
+});
+
+test('Worker /api/proxy rejects missing and SSRF targets', async () => {
+  // Missing URL parameter
+  const req1 = new Request('https://syncpad.internal/api/proxy');
+  const res1 = await worker.fetch(req1, {}, {});
+  assert.equal(res1.status, 400);
+
+  // SSRF blocked
+  const req2 = new Request('https://syncpad.internal/api/proxy?url=http://169.254.169.254/latest/meta-data');
+  const res2 = await worker.fetch(req2, {}, {});
+  assert.equal(res2.status, 403);
+});
+

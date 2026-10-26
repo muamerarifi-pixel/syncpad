@@ -318,7 +318,7 @@ export function parseInline(text) {
 
   // Extract images to placeholders to protect URLs from inline regex formatting
   const images = [];
-  str = str.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
+  str = str.replace(/!\[([^\]]*)\]\(((?:[^\s()]|\([^\s()]*\))+)\)/g, (match, alt, url) => {
     const placeholder = `@@IMG_${images.length}@@`;
     images.push({ alt, url });
     return placeholder;
@@ -326,7 +326,7 @@ export function parseInline(text) {
 
   // Extract links to placeholders with boundary tags so labels can receive formatting
   const links = [];
-  str = str.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, label, url) => {
+  str = str.replace(/\[([^\]]+)\]\(((?:[^\s()]|\([^\s()]*\))+)\)/g, (match, label, url) => {
     const idx = links.length;
     links.push({ url });
     return `@@LSTART_${idx}@@${label}@@LEND_${idx}@@`;
@@ -364,7 +364,7 @@ export function parseInline(text) {
     const safeUrl = sanitizeImageUrl(url);
     const safeAlt = escapeHtml(alt);
     const captionHtml = safeAlt ? `<figcaption class="image-caption">${safeAlt}</figcaption>` : '';
-    return `<figure class="image-figure"><img src="${safeUrl}" alt="${safeAlt}" loading="lazy" class="markdown-image" data-zoomable="true" />${captionHtml}</figure>`;
+    return `<figure class="image-figure"><img src="${safeUrl}" alt="${safeAlt}" loading="lazy" class="markdown-image" data-zoomable="true" referrerpolicy="no-referrer" onerror="this.classList.add('img-load-error')" />${captionHtml}</figure>`;
   });
 
   return str;

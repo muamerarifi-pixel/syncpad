@@ -431,18 +431,50 @@
         <!-- Tab 2: URL -->
         <div id="tab-pane-image-url" class="modal-tab-pane" style="display: none;">
           <div class="form-group">
-            <label for="input-image-web-url" class="form-label">Image Web Address</label>
-            <input type="url" id="input-image-web-url" class="form-input" placeholder="https://example.com/photo.jpg" spellcheck="false" />
+            <label for="input-image-web-url" class="form-label">Web Image or Website Address</label>
+            <div class="web-url-input-wrapper">
+              <input type="url" id="input-image-web-url" class="form-input" placeholder="https://example.com/photo.jpg or website link" spellcheck="false" autocomplete="off" />
+              <button id="btn-fetch-web-url" class="btn-input-action" type="button" title="Inspect / load link">Inspect</button>
+            </div>
+            <span class="input-hint">Paste an image link or webpage address (e.g. https://...)</span>
           </div>
-          <div class="form-group" style="margin-top: 12px;">
-            <label for="input-image-web-caption" class="form-label">Caption / Alt Text (optional)</label>
-            <input type="text" id="input-image-web-caption" class="form-input" placeholder="e.g. Beautiful landscape" />
-          </div>
+
+          <!-- Live Status feedback: Loading / Error / Success -->
+          <div id="web-url-status" class="web-url-status" style="display: none;"></div>
+
+          <!-- Preview Area: Image Preview + Webpage Metadata Card -->
           <div id="web-image-preview-container" class="web-image-preview" style="display: none;">
-            <img id="web-image-preview-img" alt="Preview" />
+            <img id="web-image-preview-img" alt="Preview" referrerpolicy="no-referrer" />
+            <div id="web-link-meta-card" class="web-link-meta-card" style="display: none;">
+              <div class="web-meta-site" id="web-meta-site"></div>
+              <div class="web-meta-title" id="web-meta-title"></div>
+              <div class="web-meta-desc" id="web-meta-desc"></div>
+            </div>
           </div>
+
+          <div class="form-group" style="margin-top: 12px;">
+            <label for="input-image-web-caption" class="form-label">Caption / Alt Text / Title</label>
+            <input type="text" id="input-image-web-caption" class="form-input" placeholder="e.g. Beautiful landscape or Article Title" />
+          </div>
+
           <div class="modal-footer-row" style="margin-top: 16px;">
-            <div></div>
+            <div class="web-url-actions-left" id="web-url-actions-left">
+              <button id="btn-save-web-image" class="btn-secondary" type="button" style="display: none;" title="Save image into note attachments for offline and multi-device sync">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>Save to Note</span>
+              </button>
+              <button id="btn-insert-web-bookmark" class="btn-secondary" type="button" style="display: none;" title="Insert formatted Markdown bookmark link with description">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                </svg>
+                <span>Insert Bookmark</span>
+              </button>
+            </div>
             <button id="btn-confirm-insert-url" class="btn-primary" disabled>Insert Image</button>
           </div>
         </div>

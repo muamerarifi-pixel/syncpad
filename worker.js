@@ -360,6 +360,147 @@ function getMemoryRoom(roomCode) {
   return memoryRooms.get(roomCode);
 }
 
+/**
+ * Safe SSRF check: prevents requests to private, internal or loopback IP ranges
+ */
+export function isPrivateOrLocalHost(hostname) {
+  if (!hostname) return true;
+  const host = hostname.toLowerCase().trim();
+  
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    host === 'metadata.google.internal' ||
+    host === 'instance-data'
+  ) {
+    return true;
+  }
+
+  // IPv4 check: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 (link-local)
+  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const a = parseInt(ipv4Match[1], 10);
+    const b = parseInt(ipv4Match[2], 10);
+    if (a === 127 || a === 10 || a === 0) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true; // cloud metadata / link-local
+  }
+
+  return false;
+}
+
+/**
+ * Decode HTML entities in extracted metadata
+ */
+export function decodeHtmlEntities(str) {
+  if (!str) return '';
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x2F;/gi, '/')
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+    .trim();
+}
+
+/**
+ * Extract OpenGraph and HTML metadata from HTML text
+ */
+export function extractHtmlMetadata(html, targetUrl) {
+  const result = {
+    title: '',
+    description: '',
+    image: '',
+    siteName: '',
+    favicon: ''
+  };
+
+  try {
+    const baseUrl = new URL(targetUrl);
+    result.siteName = baseUrl.hostname.replace(/^www\./i, '');
+    result.favicon = `https://${baseUrl.hostname}/favicon.ico`;
+
+    // 1. Title (og:title -> twitter:title -> <title>)
+    const ogTitleMatch = html.match(/<meta\s+[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i) ||
+                         html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:title["']/i);
+    const twTitleMatch = html.match(/<meta\s+[^>]*name=["']twitter:title["'][^>]*content=["']([^"']+)["']/i) ||
+                         html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:title["']/i);
+    const titleTagMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+
+    if (ogTitleMatch && ogTitleMatch[1]) {
+      result.title = decodeHtmlEntities(ogTitleMatch[1]);
+    } else if (twTitleMatch && twTitleMatch[1]) {
+      result.title = decodeHtmlEntities(twTitleMatch[1]);
+    } else if (titleTagMatch && titleTagMatch[1]) {
+      result.title = decodeHtmlEntities(titleTagMatch[1]);
+    }
+
+    // 2. Description (og:description -> twitter:description -> meta description)
+    const ogDescMatch = html.match(/<meta\s+[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["']/i) ||
+                        html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["']/i);
+    const twDescMatch = html.match(/<meta\s+[^>]*name=["']twitter:description["'][^>]*content=["']([^"']+)["']/i) ||
+                        html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:description["']/i);
+    const metaDescMatch = html.match(/<meta\s+[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i) ||
+                          html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']description["']/i);
+
+    if (ogDescMatch && ogDescMatch[1]) {
+      result.description = decodeHtmlEntities(ogDescMatch[1]);
+    } else if (twDescMatch && twDescMatch[1]) {
+      result.description = decodeHtmlEntities(twDescMatch[1]);
+    } else if (metaDescMatch && metaDescMatch[1]) {
+      result.description = decodeHtmlEntities(metaDescMatch[1]);
+    }
+
+    // 3. Image (og:image -> twitter:image -> link image_src)
+    const ogImgMatch = html.match(/<meta\s+[^>]*property=["']og:image(?::url)?["'][^>]*content=["']([^"']+)["']/i) ||
+                       html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:image(?::url)?["']/i);
+    const twImgMatch = html.match(/<meta\s+[^>]*name=["']twitter:image(?::src)?["'][^>]*content=["']([^"']+)["']/i) ||
+                       html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:image(?::src)?["']/i);
+    const linkImgMatch = html.match(/<link\s+[^>]*rel=["']image_src["'][^>]*href=["']([^"']+)["']/i);
+
+    let rawImg = '';
+    if (ogImgMatch && ogImgMatch[1]) {
+      rawImg = ogImgMatch[1].trim();
+    } else if (twImgMatch && twImgMatch[1]) {
+      rawImg = twImgMatch[1].trim();
+    } else if (linkImgMatch && linkImgMatch[1]) {
+      rawImg = linkImgMatch[1].trim();
+    }
+
+    if (rawImg) {
+      try {
+        result.image = new URL(rawImg, targetUrl).href;
+      } catch (_) {
+        result.image = rawImg;
+      }
+    }
+
+    // 4. Site Name
+    const siteNameMatch = html.match(/<meta\s+[^>]*property=["']og:site_name["'][^>]*content=["']([^"']+)["']/i);
+    if (siteNameMatch && siteNameMatch[1]) {
+      result.siteName = decodeHtmlEntities(siteNameMatch[1].trim());
+    }
+
+    // 5. Favicon
+    const iconMatch = html.match(/<link\s+[^>]*rel=["'](?:shortcut\s+)?icon["'][^>]*href=["']([^"']+)["']/i);
+    if (iconMatch && iconMatch[1]) {
+      try {
+        result.favicon = new URL(iconMatch[1].trim(), targetUrl).href;
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  return result;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -385,6 +526,237 @@ export default {
             'Access-Control-Allow-Origin': '*'
           }
         });
+      }
+
+      // Link Metadata Endpoint: GET /api/link-metadata?url=...
+      if (url.pathname === '/api/link-metadata') {
+        const targetUrl = url.searchParams.get('url');
+        if (!targetUrl) {
+          return new Response(JSON.stringify({ error: 'Missing url parameter' }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+
+        let parsedTarget;
+        try {
+          parsedTarget = new URL(targetUrl);
+        } catch (_) {
+          return new Response(JSON.stringify({ error: 'Invalid URL' }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+
+        if (!['http:', 'https:'].includes(parsedTarget.protocol)) {
+          return new Response(JSON.stringify({ error: 'Protocol not allowed' }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+
+        if (isPrivateOrLocalHost(parsedTarget.hostname)) {
+          return new Response(JSON.stringify({ error: 'Target host is not permitted' }), {
+            status: 403,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 7500);
+
+          const upstreamRes = await fetch(targetUrl, {
+            signal: controller.signal,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/*,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9'
+            },
+            redirect: 'follow'
+          });
+          clearTimeout(timeoutId);
+
+          if (!upstreamRes.ok) {
+            return new Response(JSON.stringify({
+              error: `Upstream website returned ${upstreamRes.status}`,
+              status: upstreamRes.status
+            }), {
+              status: upstreamRes.status >= 400 && upstreamRes.status < 500 ? upstreamRes.status : 502,
+              headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              }
+            });
+          }
+
+          const contentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
+
+          // If the URL directly points to an image
+          if (contentType.startsWith('image/')) {
+            const pathname = parsedTarget.pathname;
+            const fileName = pathname.substring(pathname.lastIndexOf('/') + 1) || 'image';
+            return new Response(JSON.stringify({
+              status: 'ok',
+              url: targetUrl,
+              isImage: true,
+              title: fileName,
+              description: '',
+              image: targetUrl,
+              siteName: parsedTarget.hostname.replace(/^www\./i, ''),
+              contentType
+            }), {
+              headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              }
+            });
+          }
+
+          // Otherwise parse HTML (read first 512KB to avoid memory bloat)
+          const text = await upstreamRes.text();
+          const sample = text.slice(0, 524288);
+          const meta = extractHtmlMetadata(sample, targetUrl);
+
+          return new Response(JSON.stringify({
+            status: 'ok',
+            url: targetUrl,
+            isImage: false,
+            title: meta.title || parsedTarget.hostname,
+            description: meta.description || '',
+            image: meta.image || '',
+            siteName: meta.siteName || parsedTarget.hostname.replace(/^www\./i, ''),
+            favicon: meta.favicon || ''
+          }), {
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        } catch (err) {
+          const isTimeout = err.name === 'AbortError';
+          return new Response(JSON.stringify({
+            error: isTimeout ? 'Request timed out' : (err.message || 'Failed to fetch link metadata')
+          }), {
+            status: isTimeout ? 504 : 502,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+      }
+
+      // Proxy Image / Resource Endpoint: GET /api/proxy?url=...
+      if (url.pathname === '/api/proxy') {
+        const targetUrl = url.searchParams.get('url');
+        if (!targetUrl) {
+          return new Response(JSON.stringify({ error: 'Missing url parameter' }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+
+        let parsedTarget;
+        try {
+          parsedTarget = new URL(targetUrl);
+        } catch (_) {
+          return new Response(JSON.stringify({ error: 'Invalid URL' }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+
+        if (!['http:', 'https:'].includes(parsedTarget.protocol)) {
+          return new Response(JSON.stringify({ error: 'Protocol not allowed' }), {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+
+        if (isPrivateOrLocalHost(parsedTarget.hostname)) {
+          return new Response(JSON.stringify({ error: 'Target host is not permitted' }), {
+            status: 403,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+          const upstreamRes = await fetch(targetUrl, {
+            signal: controller.signal,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9'
+            },
+            redirect: 'follow'
+          });
+          clearTimeout(timeoutId);
+
+          if (!upstreamRes.ok) {
+            return new Response(JSON.stringify({
+              error: `Upstream returned ${upstreamRes.status}`,
+              status: upstreamRes.status
+            }), {
+              status: upstreamRes.status >= 400 && upstreamRes.status < 500 ? upstreamRes.status : 502,
+              headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+              }
+            });
+          }
+
+          const contentType = upstreamRes.headers.get('content-type') || 'application/octet-stream';
+          const headers = new Headers();
+          headers.set('Content-Type', contentType);
+          headers.set('Access-Control-Allow-Origin', '*');
+          headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+          headers.set('Cache-Control', 'public, max-age=86400, s-maxage=86400');
+          headers.set('X-Content-Type-Options', 'nosniff');
+
+          return new Response(upstreamRes.body, {
+            status: 200,
+            headers
+          });
+        } catch (err) {
+          const isTimeout = err.name === 'AbortError';
+          return new Response(JSON.stringify({
+            error: isTimeout ? 'Request timed out' : (err.message || 'Failed to proxy resource')
+          }), {
+            status: isTimeout ? 504 : 502,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
       }
 
       // Generic /api/room (Generate or inspect room)

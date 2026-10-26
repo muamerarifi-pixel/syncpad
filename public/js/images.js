@@ -120,11 +120,11 @@ export function formatBytes(bytes) {
 /**
  * Insert an image Markdown tag into the given textarea at cursor or end
  */
-export function insertImageMarkdown(textarea, alt, url) {
+export function insertImageMarkdown(textarea, alt, url, linkUrl = null) {
   if (!textarea) return;
 
   const cleanAlt = (alt || 'Image').replace(/[\[\]]/g, '').trim();
-  const markdownTag = `\n\n![${cleanAlt}](${url})\n\n`;
+  const markdownTag = linkUrl ? `\n\n[![${cleanAlt}](${url})](${linkUrl})\n\n` : `\n\n![${cleanAlt}](${url})\n\n`;
 
   const start = textarea.selectionStart !== undefined ? textarea.selectionStart : textarea.value.length;
   const end = textarea.selectionEnd !== undefined ? textarea.selectionEnd : start;

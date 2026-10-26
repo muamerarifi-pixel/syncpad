@@ -3,7 +3,7 @@
  * Ensures 100% offline availability of app shell, icons, and static assets.
  */
 
-const CACHE_NAME = 'syncpad-v4';
+const CACHE_NAME = 'syncpad-v5';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

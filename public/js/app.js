@@ -119,6 +119,14 @@ class SyncPadApp {
       webImagePreviewContainer: document.getElementById('web-image-preview-container'),
       webImagePreviewImg: document.getElementById('web-image-preview-img'),
       confirmInsertUrlBtn: document.getElementById('btn-confirm-insert-url'),
+      btnFetchWebUrl: document.getElementById('btn-fetch-web-url'),
+      webUrlStatus: document.getElementById('web-url-status'),
+      webLinkMetaCard: document.getElementById('web-link-meta-card'),
+      webMetaSite: document.getElementById('web-meta-site'),
+      webMetaTitle: document.getElementById('web-meta-title'),
+      webMetaDesc: document.getElementById('web-meta-desc'),
+      btnSaveWebImage: document.getElementById('btn-save-web-image'),
+      btnInsertWebBookmark: document.getElementById('btn-insert-web-bookmark'),
       
       // Theme
       themeToggleBtn: document.getElementById('btn-toggle-theme'),
@@ -894,6 +902,8 @@ class SyncPadApp {
 
   resetImageModal() {
     this.stagedImageData = null;
+    this.stagedWebImageUrl = null;
+    this.stagedWebMetadata = null;
     if (this.dom.inputImageFile) this.dom.inputImageFile.value = '';
     if (this.dom.imagePreviewWrapper) this.dom.imagePreviewWrapper.style.display = 'none';
     if (this.dom.imageDropArea) this.dom.imageDropArea.style.display = 'flex';
@@ -903,7 +913,22 @@ class SyncPadApp {
     if (this.dom.inputImageWebUrl) this.dom.inputImageWebUrl.value = '';
     if (this.dom.inputImageWebCaption) this.dom.inputImageWebCaption.value = '';
     if (this.dom.webImagePreviewContainer) this.dom.webImagePreviewContainer.style.display = 'none';
-    if (this.dom.confirmInsertUrlBtn) this.dom.confirmInsertUrlBtn.disabled = true;
+    if (this.dom.webImagePreviewImg) {
+      this.dom.webImagePreviewImg.src = '';
+      this.dom.webImagePreviewImg.style.display = 'none';
+    }
+    if (this.dom.webLinkMetaCard) this.dom.webLinkMetaCard.style.display = 'none';
+    if (this.dom.webUrlStatus) {
+      this.dom.webUrlStatus.style.display = 'none';
+      this.dom.webUrlStatus.className = 'web-url-status';
+      this.dom.webUrlStatus.textContent = '';
+    }
+    if (this.dom.confirmInsertUrlBtn) {
+      this.dom.confirmInsertUrlBtn.disabled = true;
+      this.dom.confirmInsertUrlBtn.textContent = 'Insert Image';
+    }
+    if (this.dom.btnSaveWebImage) this.dom.btnSaveWebImage.style.display = 'none';
+    if (this.dom.btnInsertWebBookmark) this.dom.btnInsertWebBookmark.style.display = 'none';
   }
 
   switchImageTab(tabName) {
@@ -918,6 +943,9 @@ class SyncPadApp {
     }
     if (this.dom.paneImageUrl) {
       this.dom.paneImageUrl.style.display = !isUpload ? 'flex' : 'none';
+      if (!isUpload && this.dom.inputImageWebUrl) {
+        setTimeout(() => this.dom.inputImageWebUrl.focus(), 60);
+      }
     }
   }
 
@@ -978,18 +1006,339 @@ class SyncPadApp {
     showToast('Picture attached to note! 📸', 'success', 2200);
   }
 
+  showWebUrlStatus(type, message) {
+    if (!this.dom.webUrlStatus) return;
+    this.dom.webUrlStatus.className = `web-url-status ${type}`;
+    this.dom.webUrlStatus.innerHTML = message;
+    this.dom.webUrlStatus.style.display = 'flex';
+  }
+
+  hideWebUrlStatus() {
+    if (!this.dom.webUrlStatus) return;
+    this.dom.webUrlStatus.style.display = 'none';
+    this.dom.webUrlStatus.innerHTML = '';
+  }
+
+  renderWebImagePreview(imgSrc) {
+    if (this.dom.webImagePreviewContainer) {
+      this.dom.webImagePreviewContainer.style.display = 'flex';
+    }
+    if (this.dom.webImagePreviewImg) {
+      this.dom.webImagePreviewImg.src = imgSrc;
+      this.dom.webImagePreviewImg.style.display = 'block';
+    }
+    if (this.dom.webLinkMetaCard) {
+      this.dom.webLinkMetaCard.style.display = 'none';
+    }
+  }
+
+  renderWebMetadataPreview(meta) {
+    if (this.dom.webImagePreviewContainer) {
+      this.dom.webImagePreviewContainer.style.display = 'flex';
+    }
+    if (this.dom.webImagePreviewImg) {
+      if (meta.image) {
+        this.dom.webImagePreviewImg.src = meta.image;
+        this.dom.webImagePreviewImg.style.display = 'block';
+      } else {
+        this.dom.webImagePreviewImg.style.display = 'none';
+      }
+    }
+    if (this.dom.webLinkMetaCard) {
+      this.dom.webLinkMetaCard.style.display = 'block';
+      if (this.dom.webMetaSite) this.dom.webMetaSite.textContent = meta.siteName || '';
+      if (this.dom.webMetaTitle) this.dom.webMetaTitle.textContent = meta.title || '';
+      if (this.dom.webMetaDesc) this.dom.webMetaDesc.textContent = meta.description || '';
+    }
+  }
+
+  disableWebUrlActions() {
+    if (this.dom.confirmInsertUrlBtn) {
+      this.dom.confirmInsertUrlBtn.disabled = true;
+      this.dom.confirmInsertUrlBtn.textContent = 'Insert Image';
+    }
+    if (this.dom.btnSaveWebImage) this.dom.btnSaveWebImage.style.display = 'none';
+    if (this.dom.btnInsertWebBookmark) this.dom.btnInsertWebBookmark.style.display = 'none';
+    if (this.dom.webImagePreviewContainer) this.dom.webImagePreviewContainer.style.display = 'none';
+  }
+
+  resetWebUrlPreview() {
+    this.hideWebUrlStatus();
+    this.disableWebUrlActions();
+    this.stagedWebImageUrl = null;
+    this.stagedWebMetadata = null;
+  }
+
+  async inspectWebUrl() {
+    const rawVal = this.dom.inputImageWebUrl?.value.trim() || '';
+    if (!rawVal) {
+      this.resetWebUrlPreview();
+      return;
+    }
+
+    // Validate URL syntax and protocol
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(rawVal);
+    } catch (_) {
+      this.showWebUrlStatus('error', '⚠️ Please enter a valid URL (e.g. https://example.com/photo.jpg)');
+      this.disableWebUrlActions();
+      return;
+    }
+
+    const isDataImg = parsedUrl.protocol === 'data:' && rawVal.startsWith('data:image/');
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) && !isDataImg) {
+      this.showWebUrlStatus('error', '⚠️ Please enter a valid http:// or https:// web address');
+      this.disableWebUrlActions();
+      return;
+    }
+
+    this.showWebUrlStatus('loading', '⏳ Loading preview and checking link...');
+    this.disableWebUrlActions();
+
+    this.stagedWebImageUrl = null;
+    this.stagedWebMetadata = null;
+
+    // Helper: Test loading directly as an image with timeout
+    const tryDirectImageLoad = (url) => {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.referrerPolicy = 'no-referrer';
+        let doneCalled = false;
+        const finish = (ok) => {
+          if (!doneCalled) {
+            doneCalled = true;
+            resolve(ok ? img : null);
+          }
+        };
+        img.onload = () => finish(true);
+        img.onerror = () => finish(false);
+        img.src = url;
+        setTimeout(() => finish(false), 2500);
+      });
+    };
+
+    // 1. Try direct image load first
+    const directImg = await tryDirectImageLoad(rawVal);
+    if (directImg) {
+      this.stagedWebImageUrl = rawVal;
+      this.renderWebImagePreview(rawVal);
+      this.showWebUrlStatus('success', '✓ Picture loaded successfully');
+
+      // Auto-suggest caption from filename
+      if (this.dom.inputImageWebCaption && !this.dom.inputImageWebCaption.value.trim()) {
+        const pathPart = parsedUrl.pathname.split('/').filter(Boolean).pop() || '';
+        const namePart = pathPart.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+        if (namePart) this.dom.inputImageWebCaption.value = namePart;
+      }
+
+      if (this.dom.confirmInsertUrlBtn) {
+        this.dom.confirmInsertUrlBtn.disabled = false;
+        this.dom.confirmInsertUrlBtn.textContent = 'Insert Picture';
+      }
+      if (this.dom.btnSaveWebImage) this.dom.btnSaveWebImage.style.display = 'inline-flex';
+      if (this.dom.btnInsertWebBookmark) this.dom.btnInsertWebBookmark.style.display = 'none';
+      return;
+    }
+
+    // 2. Direct load failed or it's a website page -> query /api/link-metadata
+    try {
+      const metaResp = await fetch(`/api/link-metadata?url=${encodeURIComponent(rawVal)}`);
+      if (metaResp.ok) {
+        const meta = await metaResp.json();
+        this.stagedWebMetadata = meta;
+
+        // Case A: Target is a direct image that had CORS/hotlink restrictions
+        if (meta.isImage) {
+          const proxiedUrl = `/api/proxy?url=${encodeURIComponent(rawVal)}`;
+          this.stagedWebImageUrl = rawVal;
+          this.renderWebImagePreview(proxiedUrl);
+          this.showWebUrlStatus('success', '✓ Picture verified via secure proxy');
+
+          if (this.dom.inputImageWebCaption && !this.dom.inputImageWebCaption.value.trim() && meta.title) {
+            this.dom.inputImageWebCaption.value = meta.title.replace(/\.[^/.]+$/, '');
+          }
+
+          if (this.dom.confirmInsertUrlBtn) {
+            this.dom.confirmInsertUrlBtn.disabled = false;
+            this.dom.confirmInsertUrlBtn.textContent = 'Insert Picture';
+          }
+          if (this.dom.btnSaveWebImage) this.dom.btnSaveWebImage.style.display = 'inline-flex';
+          if (this.dom.btnInsertWebBookmark) this.dom.btnInsertWebBookmark.style.display = 'none';
+          return;
+        }
+
+        // Case B: Webpage with metadata (title, description, optional og:image)
+        if (meta.title || meta.image) {
+          if (this.dom.inputImageWebCaption && !this.dom.inputImageWebCaption.value.trim() && meta.title) {
+            this.dom.inputImageWebCaption.value = meta.title;
+          }
+
+          this.renderWebMetadataPreview(meta);
+
+          if (meta.image) {
+            this.stagedWebImageUrl = meta.image;
+            this.showWebUrlStatus('success', `✓ Found preview from ${meta.siteName || parsedUrl.hostname}`);
+            if (this.dom.confirmInsertUrlBtn) {
+              this.dom.confirmInsertUrlBtn.disabled = false;
+              this.dom.confirmInsertUrlBtn.textContent = 'Insert Picture with Link';
+            }
+            if (this.dom.btnSaveWebImage) this.dom.btnSaveWebImage.style.display = 'inline-flex';
+          } else {
+            this.showWebUrlStatus('success', `✓ Found webpage from ${meta.siteName || parsedUrl.hostname}`);
+            if (this.dom.confirmInsertUrlBtn) {
+              this.dom.confirmInsertUrlBtn.disabled = false;
+              this.dom.confirmInsertUrlBtn.textContent = 'Insert Markdown Link';
+            }
+          }
+
+          if (this.dom.btnInsertWebBookmark) this.dom.btnInsertWebBookmark.style.display = 'inline-flex';
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Metadata fetch failed:', err);
+    }
+
+    // 3. Fallback: try proxying raw URL in case it's an image requiring proxy
+    const proxyUrl = `/api/proxy?url=${encodeURIComponent(rawVal)}`;
+    const proxyImg = await tryDirectImageLoad(proxyUrl);
+    if (proxyImg) {
+      this.stagedWebImageUrl = rawVal;
+      this.renderWebImagePreview(proxyUrl);
+      this.showWebUrlStatus('success', '✓ Picture loaded via proxy');
+      if (this.dom.confirmInsertUrlBtn) {
+        this.dom.confirmInsertUrlBtn.disabled = false;
+        this.dom.confirmInsertUrlBtn.textContent = 'Insert Picture';
+      }
+      if (this.dom.btnSaveWebImage) this.dom.btnSaveWebImage.style.display = 'inline-flex';
+      return;
+    }
+
+    // 4. Failed
+    this.showWebUrlStatus('error', '⚠️ Unable to load image or website preview. Please verify the URL.');
+    this.disableWebUrlActions();
+  }
+
   async attachWebImage() {
-    const url = this.dom.inputImageWebUrl?.value.trim();
-    if (!url) return;
+    const rawUrl = this.dom.inputImageWebUrl?.value.trim();
+    if (!rawUrl) return;
 
     if (!this.activeNote) {
       await this.createNewNote();
     }
 
-    const caption = this.dom.inputImageWebCaption?.value.trim() || 'Picture';
-    insertImageMarkdown(this.dom.noteContentTextarea, caption, url);
+    const caption = this.dom.inputImageWebCaption?.value.trim() || (this.stagedWebMetadata && this.stagedWebMetadata.title) || 'Picture';
+
+    // If it's a webpage with an image, insert linked image: [![caption](imgUrl)](pageUrl)
+    if (this.stagedWebMetadata && !this.stagedWebMetadata.isImage && this.stagedWebImageUrl) {
+      insertImageMarkdown(this.dom.noteContentTextarea, caption, this.stagedWebImageUrl, rawUrl);
+    } else if (this.stagedWebImageUrl) {
+      // Direct image
+      insertImageMarkdown(this.dom.noteContentTextarea, caption, this.stagedWebImageUrl);
+    } else {
+      // General link without image
+      const textarea = this.dom.noteContentTextarea;
+      if (textarea) {
+        const linkTag = `\n\n[${caption}](${rawUrl})\n\n`;
+        const start = textarea.selectionStart !== undefined ? textarea.selectionStart : textarea.value.length;
+        const end = textarea.selectionEnd !== undefined ? textarea.selectionEnd : start;
+        textarea.value = textarea.value.substring(0, start) + linkTag + textarea.value.substring(end);
+        textarea.setSelectionRange(start + linkTag.length, start + linkTag.length);
+        textarea.focus();
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+
     this.closeImageModal();
-    showToast('Picture attached to note! 📸', 'success', 2200);
+    showToast('Attached to note! 📸', 'success', 2200);
+  }
+
+  async saveWebImageToNote() {
+    const url = this.stagedWebImageUrl || this.dom.inputImageWebUrl?.value.trim();
+    if (!url) return;
+
+    if (!this.activeNote) {
+      await this.createNewNote();
+    }
+    if (!Array.isArray(this.activeNote.images)) {
+      this.activeNote.images = [];
+    }
+
+    showToast('Downloading and saving picture...', 'info', 1500);
+
+    try {
+      let blob = null;
+      try {
+        const resp = await fetch(url, { mode: 'cors' });
+        if (resp.ok) blob = await resp.blob();
+      } catch (_) {}
+
+      if (!blob) {
+        const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+        const resp = await fetch(proxyUrl);
+        if (resp.ok) blob = await resp.blob();
+      }
+
+      if (!blob) {
+        throw new Error('Failed to retrieve image data');
+      }
+
+      const processed = await compressImage(blob);
+      const caption = this.dom.inputImageWebCaption?.value.trim() || 'Picture';
+      const imageId = 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+
+      this.activeNote.images.push({
+        id: imageId,
+        name: caption,
+        dataUrl: processed.dataUrl,
+        size: processed.size,
+        createdAt: Date.now()
+      });
+
+      insertImagePlaceholder(this.dom.noteContentTextarea, caption, imageId);
+      this.updateAttachedImagesUI();
+      await this.saveActiveNote(true);
+
+      this.closeImageModal();
+      showToast('Picture saved to note attachments! 📸', 'success', 2500);
+    } catch (err) {
+      console.error('Failed to save web image to note:', err);
+      showToast('Failed to save image locally to note', 'error');
+    }
+  }
+
+  insertWebBookmark() {
+    const meta = this.stagedWebMetadata;
+    const url = this.dom.inputImageWebUrl?.value.trim() || '';
+    if (!url) return;
+
+    const title = this.dom.inputImageWebCaption?.value.trim() || (meta && meta.title) || url;
+    const desc = (meta && meta.description) || '';
+    const img = this.stagedWebImageUrl || (meta && meta.image) || '';
+
+    let mdSnippet = '';
+    if (img) {
+      mdSnippet = `\n\n[![${title}](${img})](${url})\n\n> [**${title}**](${url})${desc ? '\n> ' + desc : ''}\n\n`;
+    } else {
+      mdSnippet = `\n\n[**${title}**](${url})${desc ? '\n\n> ' + desc : ''}\n\n`;
+    }
+
+    const textarea = this.dom.noteContentTextarea;
+    if (textarea) {
+      const start = textarea.selectionStart !== undefined ? textarea.selectionStart : textarea.value.length;
+      const end = textarea.selectionEnd !== undefined ? textarea.selectionEnd : start;
+      const before = textarea.value.substring(0, start);
+      const after = textarea.value.substring(end);
+      textarea.value = before + mdSnippet + after;
+      const newPos = start + mdSnippet.length;
+      textarea.setSelectionRange(newPos, newPos);
+      textarea.focus();
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    this.closeImageModal();
+    showToast('Website bookmark inserted! 🔗', 'success', 2200);
   }
 
   async processAndInsertFiles(fileList) {
@@ -1338,28 +1687,37 @@ class SyncPadApp {
       this.dom.confirmInsertFileBtn.addEventListener('click', () => this.attachStagedImage());
     }
 
-    // Web URL Image Input
+    // Web URL Image & Website Link Input
     if (this.dom.inputImageWebUrl) {
+      let debounceTimer = null;
       this.dom.inputImageWebUrl.addEventListener('input', () => {
-        const val = this.dom.inputImageWebUrl.value.trim();
-        const isValid = /^(https?:|\/)/i.test(val);
-        if (this.dom.confirmInsertUrlBtn) {
-          this.dom.confirmInsertUrlBtn.disabled = !isValid;
-        }
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => this.inspectWebUrl(), 350);
+      });
 
-        if (this.dom.webImagePreviewContainer && this.dom.webImagePreviewImg) {
-          if (isValid) {
-            this.dom.webImagePreviewImg.src = val;
-            this.dom.webImagePreviewContainer.style.display = 'flex';
-          } else {
-            this.dom.webImagePreviewContainer.style.display = 'none';
-          }
+      this.dom.inputImageWebUrl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          clearTimeout(debounceTimer);
+          this.inspectWebUrl();
         }
       });
     }
 
+    if (this.dom.btnFetchWebUrl) {
+      this.dom.btnFetchWebUrl.addEventListener('click', () => this.inspectWebUrl());
+    }
+
     if (this.dom.confirmInsertUrlBtn) {
       this.dom.confirmInsertUrlBtn.addEventListener('click', () => this.attachWebImage());
+    }
+
+    if (this.dom.btnSaveWebImage) {
+      this.dom.btnSaveWebImage.addEventListener('click', () => this.saveWebImageToNote());
+    }
+
+    if (this.dom.btnInsertWebBookmark) {
+      this.dom.btnInsertWebBookmark.addEventListener('click', () => this.insertWebBookmark());
     }
 
     // Direct Drag-and-Drop on Editor Pane
@@ -1499,8 +1857,19 @@ class SyncPadApp {
       ul: () => insertMarkdownSyntax(textarea, '- ', '', 'list item'),
       ol: () => insertMarkdownSyntax(textarea, '1. ', '', 'first item'),
       task: () => insertMarkdownSyntax(textarea, '- [ ] ', '', 'task item'),
-      table: () => insertMarkdownSyntax(textarea, '\n| Column 1 | Column 2 |\n| --- | --- |\n| Item 1 | Item 2 |\n', '', ''),
-      link: () => insertMarkdownSyntax(textarea, '[', '](https://example.com)', 'link text'),
+      link: async () => {
+        let clipboardUrl = '';
+        if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+          try {
+            const clip = (await navigator.clipboard.readText()).trim();
+            if (/^https?:\/\//i.test(clip)) {
+              clipboardUrl = clip;
+            }
+          } catch (_) {}
+        }
+        const targetUrl = clipboardUrl || 'https://example.com';
+        insertMarkdownSyntax(textarea, '[', `](${targetUrl})`, 'link text');
+      },
       image: () => this.openImageModal(),
       hr: () => insertMarkdownSyntax(textarea, '\n---\n', '', '')
     };
@@ -1513,7 +1882,7 @@ class SyncPadApp {
         }
         const action = btn.getAttribute('data-format');
         if (actions[action]) {
-          actions[action]();
+          await actions[action]();
           this.handleEditorInput();
         }
       });
