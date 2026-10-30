@@ -12,7 +12,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview } from './src/linkmeta.js';
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -303,7 +303,7 @@ export class SyncRoom extends DurableObject {
     // keep the server copy and save the incoming text as a separate "conflict" note.
     if (ex && !ex.deleted && !deleted && kind === 'note' && baseRev < ex.rev && ex.device !== device) {
       const old = JSON.parse(ex.data);
-      if (old.body === data.body) {
+      if (old.body === data.body && old.html === data.html) {
         return { id, ok: true, rev: ex.rev, noop: true, item: rowOut(ex) };
       }
       const cid = (id.slice(0, 44) + '-c' + now.toString(36)).slice(0, 64);

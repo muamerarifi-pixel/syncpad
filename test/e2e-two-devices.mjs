@@ -78,23 +78,63 @@ await A.screenshot({ path: `${OUT}/05-desktop-feed.png` });
 await B.waitForTimeout(600);
 await B.screenshot({ path: `${OUT}/06-mobile-feed.png` });
 
-// Notes: B (mobile) creates a note, A sees it
+// Notes: rich text editor — size before typing, colour, highlight, checklist
 await B.click('.tabbar-btn[data-tab="notes"]');
 await B.click('#fab-new-note');
-await B.type('#editor-text', '# Shopping list\n- [ ] Milk\n- [ ] Bread\n#home');
+await B.click('[data-fmt="size"]');
+await B.click('.menu button:has-text("Huge")');
+await B.keyboard.type('Shopping list');
+await B.keyboard.press('Enter');
+await B.click('[data-fmt="size"]');
+await B.click('.menu button:has-text("Normal")');
+await B.keyboard.type('[] Milk');
+await B.keyboard.press('Enter');
+await B.keyboard.type('Bread');
+await B.keyboard.press('Enter');
+await B.keyboard.press('Enter');
+await B.keyboard.type('Remember the receipt');
+await B.keyboard.down('Shift'); for (let i = 0; i < 7; i++) await B.keyboard.press('ArrowLeft'); await B.keyboard.up('Shift');
+await B.click('[data-fmt="color"]');
+await B.click('.menu button[title="Red"]');
+await B.click('[data-fmt="color"]');
+await B.click('.menu button[title="Yellow highlight"]');
+await B.waitForTimeout(900);
+await B.screenshot({ path: `${OUT}/07-mobile-editor.png` });
+const bHtml = await B.innerHTML('#editor-text');
+if (!/font-size:\s*xx-large[^>]*>Shopping list/.test(bHtml)) throw new Error('size before typing failed: ' + bHtml);
+if (!/data-checklist/.test(bHtml) || !/data-checked="false"[^>]*>Milk/.test(bHtml)) throw new Error('checklist failed: ' + bHtml);
+if (!/color:\s*rgb\(229, 72, 77\)/.test(bHtml) || !/background-color:\s*rgba\(255, 213, 0, 0.4\)/.test(bHtml)) throw new Error('colour/highlight failed: ' + bHtml);
+step('mobile editor: size before typing, checklist via "[] ", red + highlight');
 await A.click('.tab[data-tab="notes"]');
 await A.waitForSelector('.note-item >> text=Shopping list', { timeout: 10000 });
-step('note B → A');
-await B.screenshot({ path: `${OUT}/07-mobile-editor.png` });
 await A.click('.note-item >> text=Shopping list');
-await A.click('.seg-btn[data-mode="read"]');
-await A.click('#preview input[type="checkbox"] >> nth=0');
+await A.waitForSelector('#editor-text span[style*="xx-large"]', { timeout: 8000 });
+await A.waitForSelector('#editor-text span[style*="rgb(229, 72, 77)"]', { timeout: 8000 });
+step('formatting arrives on the laptop');
+const li = await A.$('#editor-text ul[data-checklist] > li');
+const box = await li.boundingBox();
+await A.mouse.click(box.x + 10, box.y + 10);
 await B.click('#btn-editor-back');
 await B.waitForTimeout(300);
 await B.click('.note-item >> text=Shopping list');
-await B.waitForFunction(() => document.querySelector('#editor-text').value.includes('[x] Milk'), null, { timeout: 8000 });
+await B.waitForSelector('#editor-text li[data-checked="true"]', { timeout: 8000 });
 step('checklist tick A → B');
-await A.screenshot({ path: `${OUT}/08-desktop-notes-read.png` });
+// size change AFTER typing: select a word on A and make it Larger
+await A.click('#editor-text li >> text=Bread');
+await A.keyboard.press('End');
+await A.keyboard.down('Shift'); for (let i = 0; i < 5; i++) await A.keyboard.press('ArrowLeft'); await A.keyboard.up('Shift');
+await A.click('[data-fmt="size"]');
+await A.click('.menu button:has-text("Larger")');
+await B.waitForSelector('#editor-text span[style*="x-large"] >> text=Bread', { timeout: 8000 }).catch(async () => {
+  await B.click('#btn-editor-back'); await B.waitForTimeout(300); await B.click('.note-item >> text=Shopping list');
+  await B.waitForSelector('#editor-text span[style*="x-large"] >> text=Bread', { timeout: 8000 });
+});
+step('size change after typing syncs');
+await A.click('[data-fmt="color"]');
+await A.waitForTimeout(200);
+await A.screenshot({ path: `${OUT}/08-desktop-notes-palette.png` });
+await A.keyboard.press('Escape');
+await A.click('#editor-text');
 
 // Delete with undo on A, propagates to B
 await A.click('.tab[data-tab="drops"]');

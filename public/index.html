@@ -55,6 +55,11 @@
       <symbol id="i-task" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m8 12 3 3 5-6"/></symbol>
       <symbol id="i-code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol>
       <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM17 17h4v4h-4z"/></symbol>
+      <symbol id="i-underline" viewBox="0 0 24 24"><path d="M6 4v6a6 6 0 0 0 12 0V4"/><path d="M4 20h16"/></symbol>
+      <symbol id="i-strike" viewBox="0 0 24 24"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><path d="M4 12h16"/></symbol>
+      <symbol id="i-olist" viewBox="0 0 24 24"><path d="M10 6h11M10 12h11M10 18h11"/><path d="M4 5h1v4M3.5 9h2.5M6 19H3.8c0-1 2.2-2 2.2-3.2 0-.7-.6-1.3-1.4-1.3-.6 0-1 .3-1.3.7"/></symbol>
+      <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3a2.4 2.4 0 0 1 0-3.4l9.6-9.6a2.4 2.4 0 0 1 3.4 0l5.6 5.6a2.4 2.4 0 0 1 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></symbol>
+      <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
       <symbol id="i-sync" viewBox="0 0 24 24"><path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/></symbol>
     </defs>
   </svg>
@@ -119,10 +124,6 @@
           <div class="editor" id="editor" hidden>
             <div class="editor-bar">
               <button class="icon-btn only-mobile" id="btn-editor-back" aria-label="Back to notes"><svg class="ic"><use href="#i-back"/></svg></button>
-              <div class="seg" role="group" aria-label="Mode">
-                <button class="seg-btn" data-mode="edit" aria-pressed="true"><svg class="ic"><use href="#i-note"/></svg><span>Write</span></button>
-                <button class="seg-btn" data-mode="read" aria-pressed="false"><svg class="ic"><use href="#i-eye"/></svg><span>Read</span></button>
-              </div>
               <span class="save-state" id="save-state"></span>
               <div class="spacer"></div>
               <button class="icon-btn" id="btn-pin" aria-label="Pin note" aria-pressed="false"><svg class="ic"><use href="#i-pin"/></svg></button>
@@ -134,17 +135,25 @@
               <button class="btn btn-sm btn-danger-soft" data-act="conflict-drop">Delete this copy</button>
             </div>
             <div class="fmt-bar" id="fmt-bar" role="toolbar" aria-label="Formatting">
+              <button class="fmt-size" data-fmt="size" title="Text size" aria-haspopup="menu"><span id="fmt-size-label">Normal</span><svg class="ic"><use href="#i-chev"/></svg></button>
+              <button class="icon-btn sm fmt-color" data-fmt="color" title="Text colour &amp; highlight" aria-haspopup="menu"><span class="a-glyph">A</span><span class="color-bar" id="fmt-color-bar"></span></button>
+              <span class="fmt-sep"></span>
               <button class="icon-btn sm" data-fmt="bold" title="Bold (Ctrl+B)"><svg class="ic"><use href="#i-bold"/></svg></button>
               <button class="icon-btn sm" data-fmt="italic" title="Italic (Ctrl+I)"><svg class="ic"><use href="#i-italic"/></svg></button>
+              <button class="icon-btn sm" data-fmt="underline" title="Underline (Ctrl+U)"><svg class="ic"><use href="#i-underline"/></svg></button>
+              <button class="icon-btn sm" data-fmt="strikeThrough" title="Strikethrough"><svg class="ic"><use href="#i-strike"/></svg></button>
+              <span class="fmt-sep"></span>
               <button class="icon-btn sm" data-fmt="heading" title="Heading"><svg class="ic"><use href="#i-heading"/></svg></button>
-              <button class="icon-btn sm" data-fmt="list" title="Bullet list"><svg class="ic"><use href="#i-list"/></svg></button>
-              <button class="icon-btn sm" data-fmt="task" title="Checklist"><svg class="ic"><use href="#i-task"/></svg></button>
-              <button class="icon-btn sm" data-fmt="code" title="Code"><svg class="ic"><use href="#i-code"/></svg></button>
+              <button class="icon-btn sm" data-fmt="insertUnorderedList" title="Bullet list"><svg class="ic"><use href="#i-list"/></svg></button>
+              <button class="icon-btn sm" data-fmt="insertOrderedList" title="Numbered list"><svg class="ic"><use href="#i-olist"/></svg></button>
+              <button class="icon-btn sm" data-fmt="checklist" title="Checklist"><svg class="ic"><use href="#i-task"/></svg></button>
+              <span class="fmt-sep"></span>
               <button class="icon-btn sm" data-fmt="link" title="Link"><svg class="ic"><use href="#i-link"/></svg></button>
-              <button class="icon-btn sm" data-fmt="attach" title="Attach a file"><svg class="ic"><use href="#i-clip"/></svg></button>
+              <button class="icon-btn sm" data-fmt="attach" title="Attach a file or photo"><svg class="ic"><use href="#i-clip"/></svg></button>
+              <button class="icon-btn sm" data-fmt="clear" title="Clear formatting"><svg class="ic"><use href="#i-eraser"/></svg></button>
             </div>
-            <textarea class="editor-text" id="editor-text" spellcheck="true" placeholder="Start typing… The first line becomes the title.&#10;&#10;Use # for headings, - [ ] for checklists, #tags to organise." aria-label="Note text"></textarea>
-            <div class="preview md" id="preview" hidden></div>
+            <div class="editor-text rt" id="editor-text" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Note text" spellcheck="true"
+                 data-placeholder="Start typing… the first line becomes the title."></div>
             <div class="editor-foot" id="editor-foot"></div>
           </div>
         </div>
