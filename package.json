@@ -1,6 +1,6 @@
 {
   "name": "syncpad",
-  "version": "2.0.0",
+  "version": "2.4.0",
   "description": "Send files, links and notes between all your devices \u2014 offline-first PWA on Cloudflare Workers (free plan)",
   "type": "module",
   "main": "worker.js",
@@ -8,7 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "node --test test/api.test.mjs",
-    "test:e2e": "node test/e2e-two-devices.mjs && node test/e2e-flows.mjs"
+    "test:e2e": "node test/e2e-two-devices.mjs && node test/e2e-flows.mjs && node test/e2e-zoom-pin.mjs && node test/e2e-devices.mjs && node test/e2e-features.mjs"
   },
   "keywords": [
     "file-sharing",

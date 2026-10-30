@@ -1,26 +1,30 @@
 /**
- * SyncPad v2 — Cloudflare Worker + Durable Object backend
+ * SyncPad — Cloudflare Worker + Durable Object backend
  *
- * One Durable Object instance per "space" (a private, unguessable 144-bit key shared
- * by all of your devices). Notes, clips and file metadata live in the object's SQLite
- * database; file bytes are stored in 1 MiB chunks in the same database, so no extra
- * Cloudflare resources (R2, KV, D1) are needed and everything stays on the free plan.
+ * One Durable Object per "space" (your devices). It is addressed by the space id from
+ * the original link; access needs the current space *token* (the same as the id until a
+ * device is removed, then a new random one) plus, for each device, a private device secret.
+ * Removing a device = revoke it + switch every remaining device to a new token.
  *
- * A single "__global__" instance handles 6-digit pairing codes and a storage cap that
- * protects the account-wide 5 GB free Durable Object storage your other apps share.
+ * Notes, clips, file metadata, file bytes (1 MiB chunks), note history and push
+ * subscriptions all live in the object's SQLite database — no extra Cloudflare resources.
+ * A single "__global__" instance holds pairing codes, the account-wide storage cap and
+ * the VAPID key pair used to sign Web Push requests.
  */
 import { DurableObject } from 'cloudflare:workers';
-import { getLinkPreview } from './src/linkmeta.js';
+import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
+const TRASH_DAYS = 30;
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
 const KINDS = new Set(['note', 'clip', 'file', 'settings']);
 const PAIR_TTL = 10 * 60 * 1000;
-const ROUTE = /^\/api\/s\/([A-Za-z0-9_-]{20,64})\/(ws|sync|devices|file\/([A-Za-z0-9_-]{6,64})(?:\/(\d{1,4}|have))?)$/;
+const ROUTE = /^\/api\/s\/([A-Za-z0-9_-]{20,64})\/(.+)$/;
+const DAY = 86400000;
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -29,23 +33,26 @@ const json = (data, status = 200) =>
   });
 
 const clean = (v, max) => String(v ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, max);
+const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+async function sha(str) {
+  return b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)));
+}
 
 function globalStub(env) {
   return env.SYNC_ROOM.get(env.SYNC_ROOM.idFromName('__global__'));
 }
 
 function manifest(url) {
-  const s = url.searchParams.get('s');
-  // The space key in start_url lets iOS home-screen installs (which get their own
-  // storage, separate from Safari) open already connected.
-  const start = s && KEY_RE.test(s) ? `/?s=${s}` : '/';
+  const s = url.searchParams.get('s') || '';
+  // The link in start_url lets iOS home-screen installs (which get their own storage) open connected.
+  const ok = /^[A-Za-z0-9_-]{20,64}(~[A-Za-z0-9_-]{20,64})?$/.test(s);
   return new Response(
     JSON.stringify({
       id: '/',
       name: 'SyncPad',
       short_name: 'SyncPad',
       description: 'Send files, links and notes between all your devices.',
-      start_url: start,
+      start_url: ok ? `/?s=${s}` : '/',
       scope: '/',
       display: 'standalone',
       background_color: '#f6f7f9',
@@ -79,7 +86,8 @@ export default {
       if (p === '/api/pair' && request.method === 'POST') {
         const body = await request.json().catch(() => ({}));
         if (!KEY_RE.test(body.space || '')) return json({ error: 'bad space' }, 400);
-        return json(await globalStub(env).createCode(body.space));
+        const token = KEY_RE.test(body.token || '') ? body.token : body.space;
+        return json(await globalStub(env).createCode(body.space, token));
       }
       if (p === '/api/pair/claim' && request.method === 'POST') {
         const body = await request.json().catch(() => ({}));
@@ -87,6 +95,7 @@ export default {
         const res = await globalStub(env).claimCode(String(body.code || '').replace(/\D/g, ''), ip);
         return json(res, res.space ? 200 : res.error === 'slow' ? 429 : 404);
       }
+      if (p === '/api/push/key') return json({ key: (await globalStub(env).vapid()).pub });
       if (p === '/api/link') {
         if (!KEY_RE.test(url.searchParams.get('s') || '')) return json({ error: 'forbidden' }, 403);
         return json(await getLinkPreview(url.searchParams.get('url') || ''));
@@ -100,7 +109,7 @@ export default {
       if (p.startsWith('/api/')) return json({ error: 'not found' }, 404);
       return env.ASSETS.fetch(request);
     } catch (err) {
-      return json({ error: 'server', message: String(err && err.message || err) }, 500);
+      return json({ error: 'server', message: String((err && err.message) || err) }, 500);
     }
   }
 };
@@ -113,6 +122,8 @@ export class SyncRoom extends DurableObject {
     this.globalReady = false;
     this.lastClean = 0;
     this.globalTotal = null;
+    this.okTokens = new Set();
+    this.lastPush = new Map();
   }
 
   /* ───────────────────────── space: setup ───────────────────────── */
@@ -129,10 +140,60 @@ export class SyncRoom extends DurableObject {
       file TEXT NOT NULL, idx INTEGER NOT NULL, size INTEGER NOT NULL, created INTEGER NOT NULL, data BLOB,
       PRIMARY KEY (file, idx))`);
     s.exec('CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, name TEXT, seen INTEGER)');
+    try { s.exec('ALTER TABLE devices ADD COLUMN secret TEXT'); } catch {}
+    try { s.exec('ALTER TABLE devices ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0'); } catch {}
+    s.exec('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)');
+    s.exec('CREATE TABLE IF NOT EXISTS subs (device TEXT PRIMARY KEY, endpoint TEXT NOT NULL, created INTEGER NOT NULL)');
+    s.exec(`CREATE TABLE IF NOT EXISTS history (
+      hid INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT NOT NULL, created INTEGER NOT NULL, device TEXT, data TEXT NOT NULL)`);
+    s.exec('CREATE INDEX IF NOT EXISTS history_note ON history(note, created)');
     this.seq = s.exec('SELECT COALESCE(MAX(seq), 0) AS v FROM items').one().v;
     this.bytes = s.exec('SELECT COALESCE(SUM(size), 0) AS v FROM chunks').one().v;
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
     this.ready = true;
+  }
+
+  meta(k) {
+    const r = this.sql.exec('SELECT v FROM meta WHERE k = ?', k).toArray()[0];
+    return r ? r.v : null;
+  }
+  setMeta(k, v) {
+    this.sql.exec('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v', k, v);
+  }
+
+  /**
+   * Access check. Token = current space token (defaults to the id in the URL for links
+   * made before any device was removed). Devices also send their id + private secret;
+   * the first valid request registers the secret (trust on first use).
+   */
+  async auth(request, url, spaceKey) {
+    const h = (n) => request.headers.get('x-' + n) || url.searchParams.get(n) || '';
+    const token = h('k') || spaceKey;
+    const d = clean(h('d'), 64);
+    const ds = h('ds');
+    let keyHash = this.meta('keyHash');
+    if (!keyHash) {
+      keyHash = await sha(spaceKey);
+      this.setMeta('keyHash', keyHash);
+      this.setMeta('key', spaceKey);
+    }
+    let okToken = this.okTokens.has(token);
+    if (!okToken && (await sha(token)) === keyHash) { okToken = true; this.okTokens.add(token); }
+    const row = d ? this.sql.exec('SELECT secret, revoked FROM devices WHERE id = ?', d).toArray()[0] : null;
+    if (row && row.revoked) return { res: json({ error: 'revoked', revoked: true }, 403) };
+    const dsHash = ds ? await sha(ds) : null;
+    if (okToken) {
+      if (d && dsHash) {
+        if (!row) this.sql.exec('INSERT INTO devices (id, name, seen, secret, revoked) VALUES (?, ?, ?, ?, 0)', d, 'Device', Date.now(), dsHash);
+        else if (!row.secret) this.sql.exec('UPDATE devices SET secret = ? WHERE id = ?', dsHash, d);
+        else if (row.secret !== dsHash) return { res: json({ error: 'auth' }, 403) };
+        return { device: d };
+      }
+      return { device: null };
+    }
+    // Old token but a known, not-removed device: hand over the new token
+    if (row && row.secret && dsHash === row.secret) return { res: json({ error: 'rotated', rotated: true, token: this.meta('key') }, 409) };
+    return { res: json({ error: 'auth' }, 403) };
   }
 
   async fetch(request) {
@@ -140,20 +201,45 @@ export class SyncRoom extends DurableObject {
     const url = new URL(request.url);
     const m = url.pathname.match(ROUTE);
     if (!m) return json({ error: 'not found' }, 404);
-    const [, , action, fileId, sub] = m;
+    if (this.origin !== url.origin) { this.origin = url.origin; if (this.meta('origin') !== url.origin) this.setMeta('origin', url.origin); }
+    const parts = m[2].split('/');
     const method = request.method;
+    const a = await this.auth(request, url, m[1]);
+    if (a.res) return a.res;
+    const dev = a.device;
 
-    if (action === 'ws') return this.openSocket(request, url);
-    if (action === 'devices' && method === 'GET') return json(this.deviceList());
-    if (action === 'sync' && method === 'POST') {
-      const body = await request.json().catch(() => null);
-      if (!body) return json({ error: 'bad json' }, 400);
-      return json(await this.sync(body, null));
-    }
-    if (fileId) {
-      if (sub === 'have' && method === 'GET') return json({ have: this.haveChunks(fileId) });
-      if (sub !== undefined && sub !== 'have' && method === 'PUT') return this.putChunk(fileId, Number(sub), request);
-      if (sub === undefined && (method === 'GET' || method === 'HEAD')) return this.readFile(fileId, request, url);
+    switch (parts[0]) {
+      case 'ws':
+        return parts.length === 1 ? this.openSocket(request, url) : json({ error: 'not found' }, 404);
+      case 'sync': {
+        if (method !== 'POST') break;
+        const body = await request.json().catch(() => null);
+        if (!body) return json({ error: 'bad json' }, 400);
+        return json(await this.sync({ ...body, device: dev || body.device }, null));
+      }
+      case 'devices':
+        return json(this.deviceList());
+      case 'rotate':
+        if (method === 'POST') return this.rotate(await request.json().catch(() => ({})), dev);
+        break;
+      case 'push':
+        if (!dev) return json({ error: 'device required' }, 403);
+        if (method === 'POST') return this.subscribe(await request.json().catch(() => ({})), dev, url);
+        if (method === 'DELETE') { this.sql.exec('DELETE FROM subs WHERE device = ?', dev); return json({ ok: true }); }
+        break;
+      case 'latest':
+        return json(this.latest(Number(url.searchParams.get('since')) || 0, clean(url.searchParams.get('d'), 64)));
+      case 'history':
+        if (parts[1] && ID_RE.test(parts[1])) return json(parts[2] ? this.historyItem(parts[1], Number(parts[2])) : this.historyList(parts[1]));
+        break;
+      case 'file': {
+        const id = parts[1];
+        if (!id || !ID_RE.test(id)) break;
+        if (parts[2] === 'have' && method === 'GET') return json({ have: this.haveChunks(id) });
+        if (parts[2] && /^\d{1,4}$/.test(parts[2]) && method === 'PUT') return this.putChunk(id, Number(parts[2]), request);
+        if (parts.length === 2 && (method === 'GET' || method === 'HEAD')) return this.readFile(id, request, url);
+        break;
+      }
     }
     return json({ error: 'not found' }, 404);
   }
@@ -176,6 +262,10 @@ export class SyncRoom extends DurableObject {
     let m;
     try { m = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw)); } catch { return; }
     const att = ws.deserializeAttachment() || {};
+    if (att.device) {
+      const r = this.sql.exec('SELECT revoked FROM devices WHERE id = ?', att.device).toArray()[0];
+      if (r && r.revoked) { try { ws.send(JSON.stringify({ t: 'revoked' })); ws.close(4003, 'removed'); } catch {} return; }
+    }
     if (m.t === 'hi') {
       if (m.name) { att.name = clean(m.name, 40); ws.serializeAttachment(att); }
       this.touchDevice(att.device, att.name, true);
@@ -216,7 +306,7 @@ export class SyncRoom extends DurableObject {
       if (a && a.device) online.add(a.device);
     }
     const devices = this.sql
-      .exec('SELECT id, name, seen FROM devices ORDER BY seen DESC LIMIT 50')
+      .exec('SELECT id, name, seen FROM devices WHERE revoked = 0 ORDER BY seen DESC LIMIT 50')
       .toArray()
       .map((d) => ({ ...d, online: online.has(d.id) }));
     return { online: online.size, devices };
@@ -238,6 +328,141 @@ export class SyncRoom extends DurableObject {
     }
   }
 
+  /* ───────────────────────── space: removing a device ───────────────────────── */
+
+  async rotate(body, requester) {
+    if (!requester) return json({ error: 'This device needs to reconnect first.' }, 403);
+    const token = String(body.token || '');
+    if (!KEY_RE.test(token)) return json({ error: 'bad token' }, 400);
+    const remove = (Array.isArray(body.remove) ? body.remove : []).map((x) => clean(x, 64)).filter((x) => x && x !== requester).slice(0, 50);
+    if (!remove.length) return json({ error: 'nothing to remove' }, 400);
+    for (const id of remove) {
+      this.sql.exec('INSERT INTO devices (id, name, seen, revoked) VALUES (?, ?, ?, 1) ON CONFLICT(id) DO UPDATE SET revoked = 1', id, 'Device', Date.now());
+      this.sql.exec('DELETE FROM subs WHERE device = ?', id);
+    }
+    this.setMeta('key', token);
+    this.setMeta('keyHash', await sha(token));
+    this.okTokens = new Set([token]);
+    for (const s of this.ctx.getWebSockets()) {
+      const a = s.deserializeAttachment() || {};
+      try {
+        if (remove.includes(a.device)) { s.send(JSON.stringify({ t: 'revoked' })); s.close(4003, 'removed'); }
+        else s.send(JSON.stringify({ t: 'token', token }));
+      } catch {}
+    }
+    this.broadcastPresence();
+    return json({ ok: true });
+  }
+
+  /* ───────────────────────── space: push notifications ───────────────────────── */
+
+  subscribe(body, device, url) {
+    const endpoint = String(body.endpoint || '');
+    let u;
+    try { u = new URL(endpoint); } catch { return json({ error: 'bad endpoint' }, 400); }
+    const local = /^(localhost|127\.0\.0\.1)$/.test(url.hostname) && u.protocol === 'http:' && u.hostname === '127.0.0.1';
+    if (!local && (u.protocol !== 'https:' || isPrivateOrLocalHost(u.hostname) || endpoint.length > 1000)) return json({ error: 'bad endpoint' }, 400);
+    this.sql.exec(
+      'INSERT INTO subs (device, endpoint, created) VALUES (?, ?, ?) ON CONFLICT(device) DO UPDATE SET endpoint = excluded.endpoint, created = excluded.created',
+      device, endpoint, Date.now()
+    );
+    return json({ ok: true });
+  }
+
+  /** Called after a new drop; waits briefly so several files become one notification */
+  queuePush(from) {
+    this.pushFrom = from;
+    if (this.pushTimer) return;
+    this.pushTimer = setTimeout(() => {
+      this.pushTimer = null;
+      this.sendPush(this.pushFrom).catch(() => {});
+    }, 1500);
+  }
+
+  async vapidKey() {
+    if (!this.vapidCache) {
+      this.vapidCache = (async () => {
+        const v = await globalStub(this.env).vapid();
+        const key = await crypto.subtle.importKey('jwk', v.jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+        return { pub: v.pub, key };
+      })();
+      this.vapidCache.catch(() => { this.vapidCache = null; });
+    }
+    return this.vapidCache;
+  }
+
+  async sendPush(from) {
+    const subs = this.sql.exec('SELECT device, endpoint FROM subs WHERE device != ?', from || '').toArray();
+    if (!subs.length) return;
+    const v = await this.vapidKey();
+    const now = Date.now();
+    const enc = (o) => b64url(new TextEncoder().encode(JSON.stringify(o)));
+    for (const s of subs) {
+      if (now - (this.lastPush.get(s.device) || 0) < 5000) continue;
+      this.lastPush.set(s.device, now);
+      try {
+        const aud = new URL(s.endpoint).origin;
+        const unsigned = `${enc({ typ: 'JWT', alg: 'ES256' })}.${enc({ aud, exp: Math.floor(now / 1000) + 3600, sub: this.origin || this.meta('origin') || 'mailto:syncpad@example.com' })}`;
+        const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, v.key, new TextEncoder().encode(unsigned));
+        const r = await fetch(s.endpoint, {
+          method: 'POST',
+          headers: { Authorization: `vapid t=${unsigned}.${b64url(sig)}, k=${v.pub}`, TTL: '86400', Urgency: 'high', Topic: 'syncpad-drops' }
+        });
+        if (r.status === 404 || r.status === 410) this.sql.exec('DELETE FROM subs WHERE device = ?', s.device);
+      } catch {}
+    }
+  }
+
+  /** What a notification should say: newest drops from other devices since `since` */
+  latest(since, device) {
+    const rows = this.sql
+      .exec(`SELECT kind, data, device FROM items WHERE seq > ? AND deleted = 0 AND kind IN ('clip', 'file') AND device != ? ORDER BY seq DESC LIMIT 30`, since, device || '')
+      .toArray()
+      .map((r) => ({ ...r, data: JSON.parse(r.data) }))
+      .filter((r) => !r.data.parent && !r.data.trashed);
+    const names = new Map(this.sql.exec('SELECT id, name FROM devices').toArray().map((d) => [d.id, d.name]));
+    return {
+      count: rows.length,
+      items: rows.slice(0, 3).map((r) => ({
+        kind: r.kind,
+        from: names.get(r.device) || 'another device',
+        text: r.kind === 'file' ? r.data.name : String(r.data.text || '').slice(0, 140)
+      }))
+    };
+  }
+
+  /* ───────────────────────── space: note history ───────────────────────── */
+
+  snapshot(ex, data, device, force) {
+    const old = JSON.parse(ex.data);
+    if (old.html === data.html && old.body === data.body) return;
+    if (!String(old.text || old.body || '').trim() && !/data-file/.test(old.html || '')) return;
+    const last = this.sql.exec('SELECT created FROM history WHERE note = ? ORDER BY created DESC LIMIT 1', ex.id).toArray()[0];
+    if (!force && last && ex.updated - last.created < 10 * 60 * 1000 && ex.device === device) return;
+    this.sql.exec('INSERT INTO history (note, created, device, data) VALUES (?, ?, ?, ?)', ex.id, ex.updated, ex.device, ex.data);
+    this.sql.exec(
+      'DELETE FROM history WHERE note = ? AND hid NOT IN (SELECT hid FROM history WHERE note = ? ORDER BY created DESC LIMIT 60)',
+      ex.id, ex.id
+    );
+  }
+
+  historyList(note) {
+    const names = new Map(this.sql.exec('SELECT id, name FROM devices').toArray().map((d) => [d.id, d.name]));
+    const versions = this.sql
+      .exec('SELECT hid, created, device, data FROM history WHERE note = ? ORDER BY created DESC LIMIT 60', note)
+      .toArray()
+      .map((r) => {
+        const d = JSON.parse(r.data);
+        return { hid: r.hid, created: r.created, device: r.device, from: names.get(r.device) || 'Device', preview: String(d.text || d.body || '').slice(0, 160) };
+      });
+    return { versions };
+  }
+
+  historyItem(note, hid) {
+    const r = this.sql.exec('SELECT hid, created, device, data FROM history WHERE note = ? AND hid = ?', note, hid).toArray()[0];
+    return r ? { hid: r.hid, created: r.created, device: r.device, data: JSON.parse(r.data) } : { error: 'not found' };
+  }
+
   /* ───────────────────────── space: sync ───────────────────────── */
 
   async sync(body, ws) {
@@ -247,11 +472,13 @@ export class SyncRoom extends DurableObject {
     const now = Date.now();
     const acks = [];
     let changed = false;
+    let newDrop = false;
     const bytesBefore = this.bytes;
 
     for (const op of ops) {
       let ack;
       try { ack = this.applyOp(op, device, now); } catch { ack = { id: op && op.id, ok: false, err: 'bad' }; }
+      if (ack.newDrop) { newDrop = true; delete ack.newDrop; }
       acks.push(ack);
       if (ack.ok && !ack.noop) changed = true;
     }
@@ -265,6 +492,7 @@ export class SyncRoom extends DurableObject {
     const rows = this.sql.exec('SELECT * FROM items WHERE seq > ? ORDER BY seq LIMIT 500', since).toArray();
     const more = rows.length === 500;
     if (changed) this.poke(ws);
+    if (newDrop) this.queuePush(device);
     return {
       seq: more ? rows[rows.length - 1].seq : this.seq,
       more,
@@ -300,25 +528,25 @@ export class SyncRoom extends DurableObject {
     if (ex && ex.deleted && deleted) return { id, ok: true, rev: ex.rev, noop: true };
 
     if (kind === 'file' && !deleted && (!ex || ex.deleted)) {
-      const missing = this.missingChunks(id, data.size);
-      if (missing) return { id, ok: false, err: 'incomplete', have: this.haveChunks(id) };
+      if (this.missingChunks(id, data.size)) return { id, ok: false, err: 'incomplete', have: this.haveChunks(id) };
     }
 
-    // Two devices edited the same note without seeing each other's change:
+    // Two devices changed the text of the same note without seeing each other's edit:
     // keep the server copy and save the incoming text as a separate "conflict" note.
     if (ex && !ex.deleted && !deleted && kind === 'note' && baseRev < ex.rev && ex.device !== device) {
       const old = JSON.parse(ex.data);
-      if (old.body === data.body && old.html === data.html) {
-        return { id, ok: true, rev: ex.rev, noop: true, item: rowOut(ex) };
+      if (old.body !== data.body || old.html !== data.html) {
+        const cid = (id.slice(0, 44) + '-c' + now.toString(36)).slice(0, 64);
+        const seq = ++this.seq;
+        this.sql.exec(
+          'INSERT INTO items (id, kind, rev, seq, created, updated, device, deleted, data) VALUES (?, ?, 1, ?, ?, ?, ?, 0, ?)',
+          cid, kind, seq, now, now, device, JSON.stringify({ ...data, pinned: false, trashed: undefined, conflictOf: id })
+        );
+        return { id, ok: true, rev: ex.rev, conflict: cid, item: rowOut(ex) };
       }
-      const cid = (id.slice(0, 44) + '-c' + now.toString(36)).slice(0, 64);
-      const seq = ++this.seq;
-      this.sql.exec(
-        'INSERT INTO items (id, kind, rev, seq, created, updated, device, deleted, data) VALUES (?, ?, 1, ?, ?, ?, ?, 0, ?)',
-        cid, kind, seq, now, now, device, JSON.stringify({ ...data, pinned: false, conflictOf: id })
-      );
-      return { id, ok: true, rev: ex.rev, conflict: cid, item: rowOut(ex) };
     }
+
+    if (kind === 'note' && ex && !ex.deleted && !deleted) this.snapshot(ex, data, device, !!op.snap);
 
     const rev = (ex ? ex.rev : 0) + 1;
     const seq = ++this.seq;
@@ -329,24 +557,30 @@ export class SyncRoom extends DurableObject {
        device = excluded.device, deleted = excluded.deleted, data = excluded.data`,
       id, kind, rev, seq, created, now, device, deleted ? 1 : 0, dataStr
     );
-    if (deleted && kind === 'file') this.freeChunks(id);
-    if (deleted && kind === 'note') {
-      // Files attached inside a deleted note go with it
+    if (deleted) this.cascade(id, kind, now);
+    const newDrop = !ex && !deleted && (kind === 'clip' || kind === 'file') && !data.parent;
+    return { id, ok: true, rev, newDrop };
+  }
+
+  /** Permanently deleting something also removes its file bytes, attachments and history */
+  cascade(id, kind, now) {
+    if (kind === 'file') this.freeChunks(id);
+    if (kind === 'note') {
       const kids = this.sql
         .exec(`SELECT id FROM items WHERE kind = 'file' AND deleted = 0 AND json_extract(data, '$.parent') = ?`, id)
         .toArray();
-      for (const k of kids) this.tombstone(k.id, now);
+      for (const k of kids) this.tombstone(k.id, 'file', now);
+      this.sql.exec('DELETE FROM history WHERE note = ?', id);
     }
-    return { id, ok: true, rev };
   }
 
-  tombstone(id, now) {
+  tombstone(id, kind, now) {
     const seq = ++this.seq;
     this.sql.exec(
       `UPDATE items SET deleted = 1, data = '{}', rev = rev + 1, seq = ?, updated = ?, device = 'server' WHERE id = ?`,
       seq, now, id
     );
-    this.freeChunks(id);
+    this.cascade(id, kind, now);
   }
 
   cleanup(now) {
@@ -356,22 +590,28 @@ export class SyncRoom extends DurableObject {
       .exec(
         `SELECT DISTINCT file FROM chunks WHERE created < ?
          AND file NOT IN (SELECT id FROM items WHERE kind = 'file' AND deleted = 0)`,
-        now - 24 * 60 * 60 * 1000
+        now - DAY
       )
       .toArray();
     for (const o of orphans) this.freeChunks(o.file);
 
-    // Optional auto-delete of old drops (files + clips that aren't kept/pinned)
+    // Trash is emptied automatically after 30 days
+    const expired = this.sql
+      .exec(`SELECT id, kind FROM items WHERE deleted = 0 AND json_extract(data, '$.trashed') < ?`, now - TRASH_DAYS * DAY)
+      .toArray();
+    for (const r of expired) { this.tombstone(r.id, r.kind, now); changed = true; }
+
+    // Optional auto-delete of old drops (files + clips that aren't pinned)
     const st = this.getRow('settings');
     const days = st && !st.deleted ? Number(JSON.parse(st.data).autodel) || 0 : 0;
     if (days > 0) {
       const old = this.sql
-        .exec(`SELECT id, kind, data FROM items WHERE deleted = 0 AND kind IN ('file', 'clip') AND created < ?`, now - days * 86400000)
+        .exec(`SELECT id, kind, data FROM items WHERE deleted = 0 AND kind IN ('file', 'clip') AND created < ?`, now - days * DAY)
         .toArray();
       for (const r of old) {
         const d = JSON.parse(r.data);
         if (d.keep || (r.kind === 'file' && d.parent)) continue;
-        this.tombstone(r.id, now);
+        this.tombstone(r.id, r.kind, now);
         changed = true;
       }
     }
@@ -397,8 +637,8 @@ export class SyncRoom extends DurableObject {
   }
 
   freeChunks(id) {
-    const r = this.sql.exec('SELECT COALESCE(SUM(size), 0) AS s FROM chunks WHERE file = ?', id).one();
-    if (r.s > 0 || this.sql.exec('SELECT 1 FROM chunks WHERE file = ? LIMIT 1', id).toArray().length) {
+    const r = this.sql.exec('SELECT COUNT(*) AS c, COALESCE(SUM(size), 0) AS s FROM chunks WHERE file = ?', id).one();
+    if (r.c) {
       this.sql.exec('DELETE FROM chunks WHERE file = ?', id);
       this.bytes -= r.s;
     }
@@ -494,31 +734,33 @@ export class SyncRoom extends DurableObject {
     return new Response(readable, { status, headers });
   }
 
-  /* ───────────────────────── global: pairing + storage cap ───────────────────────── */
+  /* ───────────────────────── global: pairing, storage cap, push keys ───────────────────────── */
 
   initGlobal() {
     if (this.globalReady) return;
     const s = this.sql;
     s.exec('CREATE TABLE IF NOT EXISTS codes (code TEXT PRIMARY KEY, space TEXT NOT NULL, expires INTEGER NOT NULL)');
+    try { s.exec('ALTER TABLE codes ADD COLUMN token TEXT'); } catch {}
     s.exec('CREATE TABLE IF NOT EXISTS tries (ip TEXT PRIMARY KEY, n INTEGER NOT NULL, reset INTEGER NOT NULL)');
     s.exec('CREATE TABLE IF NOT EXISTS spaces (sid TEXT PRIMARY KEY, bytes INTEGER NOT NULL)');
+    s.exec('CREATE TABLE IF NOT EXISTS gmeta (k TEXT PRIMARY KEY, v TEXT)');
     this.total = s.exec('SELECT COALESCE(SUM(bytes), 0) AS v FROM spaces').one().v;
     this.globalReady = true;
   }
 
-  async createCode(space) {
+  async createCode(space, token) {
     this.initGlobal();
     const now = Date.now();
     this.sql.exec('DELETE FROM codes WHERE expires < ?', now);
-    const ex = this.sql.exec('SELECT code, expires FROM codes WHERE space = ? ORDER BY expires DESC LIMIT 1', space).toArray()[0];
-    if (ex && ex.expires - now > 3 * 60 * 1000) return { code: ex.code, expires: ex.expires };
+    const ex = this.sql.exec('SELECT code, expires, token FROM codes WHERE space = ? ORDER BY expires DESC LIMIT 1', space).toArray()[0];
+    if (ex && ex.expires - now > 3 * 60 * 1000 && (ex.token || space) === token) return { code: ex.code, expires: ex.expires };
     let code = '';
     for (let i = 0; i < 25; i++) {
       code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
       if (!this.sql.exec('SELECT 1 FROM codes WHERE code = ?', code).toArray().length) break;
     }
     const expires = now + PAIR_TTL;
-    this.sql.exec('INSERT OR REPLACE INTO codes (code, space, expires) VALUES (?, ?, ?)', code, space, expires);
+    this.sql.exec('INSERT OR REPLACE INTO codes (code, space, expires, token) VALUES (?, ?, ?, ?)', code, space, expires, token);
     return { code, expires };
   }
 
@@ -528,14 +770,27 @@ export class SyncRoom extends DurableObject {
     const t = this.sql.exec('SELECT n, reset FROM tries WHERE ip = ?', ip).toArray()[0];
     if (t && t.reset > now && t.n >= 12) return { error: 'slow', retry: t.reset - now };
     const row = /^\d{6}$/.test(code)
-      ? this.sql.exec('SELECT space, expires FROM codes WHERE code = ?', code).toArray()[0]
+      ? this.sql.exec('SELECT space, expires, token FROM codes WHERE code = ?', code).toArray()[0]
       : null;
     if (!row || row.expires < now) {
       if (!t || t.reset <= now) this.sql.exec('INSERT OR REPLACE INTO tries (ip, n, reset) VALUES (?, 1, ?)', ip, now + 10 * 60 * 1000);
       else this.sql.exec('UPDATE tries SET n = n + 1 WHERE ip = ?', ip);
       return { error: 'invalid' };
     }
-    return { space: row.space };
+    return { space: row.space, token: row.token || row.space };
+  }
+
+  async vapid() {
+    this.initGlobal();
+    let row = this.sql.exec(`SELECT v FROM gmeta WHERE k = 'vapid'`).toArray()[0];
+    if (!row) {
+      const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+      const jwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
+      const pub = b64url(await crypto.subtle.exportKey('raw', kp.publicKey));
+      this.sql.exec(`INSERT OR IGNORE INTO gmeta (k, v) VALUES ('vapid', ?)`, JSON.stringify({ jwk, pub }));
+      row = this.sql.exec(`SELECT v FROM gmeta WHERE k = 'vapid'`).toArray()[0];
+    }
+    return JSON.parse(row.v);
   }
 
   setSpaceBytes(sid, bytes) {
@@ -583,11 +838,12 @@ function rowOut(r) {
 
 function clampTime(t, now) {
   const n = Number(t);
-  return Number.isFinite(n) && n > 1420070400000 && n < now + 86400000 ? Math.floor(n) : now;
+  return Number.isFinite(n) && n > 1420070400000 && n < now + DAY ? Math.floor(n) : now;
 }
 
 function sanitize(kind, d) {
   if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
+  const trashed = Number.isFinite(d.trashed) && d.trashed > 0 ? Math.floor(d.trashed) : undefined;
   if (kind === 'file') {
     const size = Math.floor(Number(d.size));
     if (!(size >= 0 && size <= MAX_FILE)) return null;
@@ -598,11 +854,15 @@ function sanitize(kind, d) {
       parent: d.parent && ID_RE.test(d.parent) ? d.parent : null,
       keep: !!d.keep
     };
+    if (trashed) out.trashed = trashed;
     if (typeof d.thumb === 'string' && d.thumb.startsWith('data:image/') && d.thumb.length < 200000) out.thumb = d.thumb;
     if (Number.isFinite(d.w) && Number.isFinite(d.h)) { out.w = Math.floor(d.w); out.h = Math.floor(d.h); }
     return out;
   }
-  return d;
+  const out = { ...d };
+  if (trashed) out.trashed = trashed;
+  else delete out.trashed;
+  return out;
 }
 
 function serveType(type, download) {

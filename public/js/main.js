@@ -9,7 +9,7 @@ import { Files } from './files.js';
 import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js';
 import qrcode from '/vendor/qrcode.mjs';
 
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -27,7 +27,6 @@ const ui = {
   known: new Set(),
   fresh: new Set(),
   expanded: new Set(),
-  pendingDeletes: new Map(),
   stickBottom: true,
   busy: false,
   installPrompt: null
@@ -43,17 +42,24 @@ async function boot() {
   await store.open();
   if (!store.get('device')) await store.set('device', rid(16));
   if (!store.get('deviceName')) await store.set('deviceName', detectDeviceName());
+  if (!store.get('secret')) await store.set('secret', rid(24));
 
   const params = readParams();
   let joinOffer = null;
   if (!store.get('space')) {
-    const k = params.join || params.s;
-    await store.set('space', k && KEY_RE.test(k) ? k : rid(24));
+    const k = parseLink(params.join || params.s);
+    const space = k ? k.space : rid(24);
+    await store.set('space', space);
+    await store.set('token', k ? k.token : space);
     await store.set('seq', 0);
-    if (k && KEY_RE.test(k)) ui.joinedOnFirstRun = true;
-  } else if (params.join && KEY_RE.test(params.join) && params.join !== store.get('space')) {
-    joinOffer = params.join;
+    if (k) ui.joinedOnFirstRun = true;
+  } else {
+    const k = parseLink(params.join);
+    if (k && k.space !== store.get('space')) joinOffer = k;
+    else if (k && k.token !== store.get('token')) await store.set('token', k.token);
   }
+  if (!store.get('token')) await store.set('token', store.get('space'));
+  store.set('pinOn', !!pinConf());
   cleanUrl();
 
   sync = new Sync(store);
@@ -71,6 +77,8 @@ async function boot() {
   files.resumeAll();
   registerSW();
   if (ui.joinedOnFirstRun) toast('Connected — everything now syncs with your other device.');
+  if (params.removed) toast('This device was removed from your SyncPad by another device, and its copy was erased.', { duration: 12000 });
+  if (store.get('push') && pushSupported() && Notification.permission === 'granted') subscribePush(false).catch(() => {});
   if (joinOffer) whenUnlocked(() => offerJoin(joinOffer));
   takeShared(params.shared);
 }
@@ -78,7 +86,7 @@ async function boot() {
 function readParams() {
   const q = new URLSearchParams(location.search);
   const h = new URLSearchParams(location.hash.replace(/^#/, ''));
-  return { join: h.get('join') || q.get('join'), s: q.get('s'), shared: q.has('shared') };
+  return { join: h.get('join') || q.get('join'), s: q.get('s'), shared: q.has('shared'), removed: q.has('removed') };
 }
 
 function cleanUrl() {
@@ -87,7 +95,7 @@ function cleanUrl() {
 
 function updateManifest() {
   // lets iOS home-screen installs open already connected
-  el.manifestLink.href = '/app.webmanifest?s=' + store.get('space');
+  el.manifestLink.href = '/app.webmanifest?s=' + linkCode();
 }
 
 const me = () => store.get('device');
@@ -111,6 +119,13 @@ function wire() {
     if (ui.noteId === from) { ui.noteId = to; renderEditor(true); }
     toast('This note was also edited on another device — both versions were kept.');
   });
+  sync.addEventListener('token', onToken);
+  sync.addEventListener('revoked', onRevoked);
+  sync.addEventListener('denied', () => {
+    renderStatus();
+    toast('This device lost access to your SyncPad. Connect it again with a code from another device.', { action: 'Connect', onAction: openConnect, duration: 12000 });
+  });
+  files.addEventListener('offline', () => scheduleRender(true, false));
   sync.addEventListener('rejected', (e) => toast(e.detail.err === 'too_big' ? 'That note is too large to sync.' : 'Something could not be synced.'));
   files.addEventListener('progress', (e) => updateProgress(e.detail.id));
   files.addEventListener('error', (e) => toast(e.detail.message, { duration: 6000 }));
@@ -131,6 +146,16 @@ function wire() {
   el.btnConnect.addEventListener('click', openConnect);
   el.btnSettings.addEventListener('click', openSettings);
   el.btnLock.addEventListener('click', lockNow);
+  el.btnOpenTrash.addEventListener('click', async () => { el.dlgSettings.close(); await sleepMs(80); openTrash(); });
+  el.trashList.addEventListener('click', onTrashClick);
+  el.btnEmptyTrash.addEventListener('click', emptyTrash);
+  el.historyList.addEventListener('click', (e) => { const b = e.target.closest('[data-hid]'); if (b) showVersion(b.dataset.hid); });
+  el.btnRestoreVersion.addEventListener('click', restoreVersion);
+  el.btnNotif.addEventListener('click', toggleNotif);
+  el.settingsDevices.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-remove]');
+    if (b) removeDevice(b.dataset.remove, b.dataset.name);
+  });
   el.btnSettingsConnect.addEventListener('click', async () => { el.dlgSettings.close(); await sleepMs(80); openConnect(); });
 
   // text zoom (note editor)
@@ -154,6 +179,7 @@ function wire() {
     if (await showLock('verify')) {
       localStorage.removeItem('sp-pin');
       localStorage.removeItem('sp-pin-try');
+      store.set('pinOn', false);
       renderLockButton();
       toast('PIN turned off for this device.');
     }
@@ -381,20 +407,19 @@ function wire() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       saveNote.flush();
-      commitDeletes();
       onVisibilityForLock(false);
     } else {
       onVisibilityForLock(true);
       clearUnseen();
     }
   });
-  addEventListener('pagehide', () => { saveNote.flush(); commitDeletes(); });
+  addEventListener('pagehide', () => saveNote.flush());
   addEventListener('online', renderStatus);
   // a join link opened while SyncPad is already open in this tab
   addEventListener('hashchange', () => {
-    const k = readParams().join;
+    const k = parseLink(readParams().join);
     cleanUrl();
-    if (k && KEY_RE.test(k) && k !== store.get('space')) whenUnlocked(() => offerJoin(k));
+    if (k && k.space !== store.get('space')) whenUnlocked(() => offerJoin(k));
   });
   addEventListener('offline', renderStatus);
   addEventListener('resize', debounce(() => { if (!isMobileLayout()) el.app.classList.remove('editing'); }, 150));
@@ -504,7 +529,10 @@ function renderStatus() {
   const pending = store.outbox.size + files.queue.length;
   let state;
   let text;
-  if (!navigator.onLine || sync.state === 'offline') {
+  if (sync.state === 'denied') {
+    state = 'offline';
+    text = 'Not connected';
+  } else if (!navigator.onLine || sync.state === 'offline') {
     state = 'offline';
     text = pending ? 'Offline · saved here' : 'Offline';
   } else if (sync.state === 'connecting' && !sync.lastOk) {
@@ -527,7 +555,7 @@ function renderStatus() {
 
 const isDrop = (i) => i.kind === 'clip' || (i.kind === 'file' && !i.data.parent);
 function dropItems() {
-  return store.list().filter((i) => isDrop(i) && !ui.pendingDeletes.has(i.id)).sort((a, b) => a.created - b.created);
+  return store.list().filter((i) => isDrop(i) && !i.data.trashed).sort((a, b) => a.created - b.created);
 }
 
 function renderDrops() {
@@ -594,7 +622,7 @@ function rememberDevices() {
 
 function cardNode(it) {
   const prog = files.progress.get(it.id);
-  const sig = [ui.namesVer || 0, it.rev, it.updated, it.data.keep ? 1 : 0, prog ? prog.state + (prog.err || '') : '', ui.expanded.has(it.id) ? 1 : 0, Math.floor((Date.now() - it.created) / 60000) < 1 ? 'n' : 'o'].join('|');
+  const sig = [ui.namesVer || 0, it.kind === 'file' && files.isOffline(it.id) ? 'off' : '', it.rev, it.updated, it.data.keep ? 1 : 0, prog ? prog.state + (prog.err || '') : '', ui.expanded.has(it.id) ? 1 : 0, Math.floor((Date.now() - it.created) / 60000) < 1 ? 'n' : 'o'].join('|');
   const c = cards.get(it.id);
   if (c && c.sig === sig) {
     c.node.classList.toggle('fresh', ui.fresh.has(it.id));
@@ -609,7 +637,7 @@ function cardNode(it) {
 }
 
 function metaHTML(it, extra = '') {
-  return `<div class="drop-meta">${extra}${extra ? '<span class="sep"></span>' : ''}<span>${esc(deviceLabel(it.device))}</span><span class="sep"></span><span>${clock(it.created)}</span>${it.data.keep ? '<span class="pin-flag" title="Pinned — never cleaned up"><svg class="ic"><use href="#i-pin"/></svg></span>' : ''}</div>`;
+  return `<div class="drop-meta">${extra}${extra ? '<span class="sep"></span>' : ''}<span>${esc(deviceLabel(it.device))}</span><span class="sep"></span><span>${clock(it.created)}</span>${it.kind === 'file' && files.isOffline(it.id) ? '<span class="pin-flag off" title="Saved on this device — opens without internet"><svg class="ic"><use href="#i-ondevice"/></svg></span>' : ''}${it.data.keep ? '<span class="pin-flag" title="Pinned — never cleaned up"><svg class="ic"><use href="#i-pin"/></svg></span>' : ''}</div>`;
 }
 
 function clipHTML(it) {
@@ -727,12 +755,20 @@ function dropMenu(anchor, it) {
       files.prefetch(it);
       m.push({ icon: 'share', label: 'Share…', run: () => files.share(it).catch(() => toast('Could not open the share sheet.')) });
     }
+    if (!p) {
+      if (files.isOffline(it.id)) m.push({ icon: 'ondevice', label: 'Remove offline copy', run: () => files.removeOffline(it.id).then(() => toast('Offline copy removed from this device')) });
+      else m.push({ icon: 'ondevice', label: 'Keep on this device (offline)', run: async () => {
+        toast('Saving for offline use…');
+        try { await files.keepOffline(it); toast(`“${it.data.name}” now opens without internet on this device.`); }
+        catch { toast('Could not save it for offline use. Check your connection.'); }
+      } });
+    }
     if (kind === 'image' && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
       m.push({ icon: 'copy', label: 'Copy image', run: () => files.copyImage(it).then(() => toast('Image copied')).catch(() => toast('Copy is not supported for this image.')) });
     }
   }
   m.push({ icon: 'pin', label: it.data.keep ? 'Unpin' : 'Pin (never auto-delete)', run: () => { it.data = { ...it.data, keep: !it.data.keep }; store.save(it).then(() => sync.schedule()); } });
-  m.push({ icon: 'trash', label: 'Delete everywhere', danger: true, run: () => deleteWithUndo(it, it.kind === 'clip' ? 'Message' : 'File') });
+  m.push({ icon: 'trash', label: 'Move to Trash', danger: true, run: () => deleteWithUndo(it, it.kind === 'clip' ? 'Message' : 'File') });
   openMenu(anchor, m);
 }
 
@@ -807,7 +843,7 @@ function noteHtml(n) {
 function notesSorted() {
   return store
     .list('note')
-    .filter((n) => !ui.pendingDeletes.has(n.id))
+    .filter((n) => !n.data.trashed)
     .sort((a, b) => (b.data.pinned ? 1 : 0) - (a.data.pinned ? 1 : 0) || b.updated - a.updated);
 }
 
@@ -893,7 +929,12 @@ function closeEditor(fromLayer = false) {
 }
 
 function renderEditor(force) {
-  const n = openNoteItem();
+  let n = openNoteItem();
+  if (n && n.data.trashed) {
+    if (isMobileLayout() && el.app.classList.contains('editing')) closeEditor();
+    ui.noteId = null;
+    n = null;
+  }
   if (!n) {
     el.editor.hidden = true;
     el.editorEmpty.hidden = false;
@@ -1032,8 +1073,9 @@ function noteMenu(anchor) {
     { icon: 'drops', label: 'Send as a drop', run: () => { sendClip(text()); toast('Sent to Drops'); } },
     { icon: 'download', label: 'Download (keeps colours)', run: downloadNote }
   ];
+  if (store.items.has(n.id)) m.splice(2, 0, { icon: 'history', label: 'Version history', run: openHistory });
   if (navigator.share && isTouch()) m.push({ icon: 'share', label: 'Share…', run: () => navigator.share({ text: text() }).catch(() => {}) });
-  if (store.items.has(n.id)) m.push({ icon: 'trash', label: 'Delete note', danger: true, run: () => deleteWithUndo(n, 'Note') });
+  if (store.items.has(n.id)) m.push({ icon: 'trash', label: 'Move to Trash', danger: true, run: () => deleteWithUndo(n, 'Note') });
   openMenu(anchor, m);
 }
 
@@ -1335,40 +1377,6 @@ function rangeFromPoint(x, y) {
   return null;
 }
 
-/* ───────── delete with undo ───────── */
-
-function deleteWithUndo(item, label) {
-  if (ui.pendingDeletes.has(item.id)) return;
-  ui.pendingDeletes.set(item.id, setTimeout(() => commitDelete(item.id), 5000));
-  if (ui.noteId === item.id) {
-    if (isMobileLayout()) closeEditor();
-    ui.noteId = null;
-    renderEditor(true);
-  }
-  if (!store.items.has(item.id)) { ui.newNote = null; }
-  renderLists();
-  toast(`${label} deleted`, {
-    action: 'Undo',
-    duration: 5000,
-    onAction: () => {
-      clearTimeout(ui.pendingDeletes.get(item.id));
-      ui.pendingDeletes.delete(item.id);
-      renderLists();
-    }
-  });
-}
-async function commitDelete(id) {
-  ui.pendingDeletes.delete(id);
-  const it = store.items.get(id);
-  if (!it) return;
-  await store.remove(it);
-  files.forget(id);
-  sync.schedule();
-}
-function commitDeletes() {
-  for (const [id, t] of ui.pendingDeletes) { clearTimeout(t); commitDelete(id); }
-}
-
 /* ═════════════════════════ viewer ═════════════════════════ */
 
 async function openFile(it) {
@@ -1404,13 +1412,17 @@ async function openFile(it) {
 
 /* ═════════════════════════ connect devices ═════════════════════════ */
 
-const joinLink = () => `${location.origin}/#join=${store.get('space')}`;
+const joinLink = () => `${location.origin}/#join=${linkCode()}`;
 
-async function openConnect() {
+function renderQR() {
   const qr = qrcode(0, 'M');
   qr.addData(joinLink());
   qr.make();
   el.pairQr.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+}
+
+async function openConnect() {
+  renderQR();
   el.btnShareLink.hidden = !(navigator.share && isTouch());
   el.joinCode.value = '';
   el.joinMsg.textContent = '';
@@ -1431,7 +1443,7 @@ async function loadPairCode() {
   el.pairCode.textContent = '· · ·';
   el.pairExpiry.textContent = '';
   try {
-    const r = await fetch('/api/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ space: store.get('space') }) });
+    const r = await fetch('/api/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ space: store.get('space'), token: store.get('token') }) });
     const j = await r.json();
     if (!j.code) throw new Error();
     el.pairCode.textContent = j.code.slice(0, 3) + ' ' + j.code.slice(3);
@@ -1494,7 +1506,7 @@ async function joinWithCode() {
     }
     el.dlgConnect.close();
     await new Promise((r) => setTimeout(r, 80));
-    await offerJoin(j.space);
+    await offerJoin({ space: j.space, token: j.token || j.space });
   } catch (err) {
     el.joinMsg.textContent = navigator.onLine ? err.message : 'You are offline. Connect to the internet first.';
     el.joinMsg.className = 'form-msg err';
@@ -1503,7 +1515,7 @@ async function joinWithCode() {
   }
 }
 
-async function offerJoin(key) {
+async function offerJoin(link) {
   const count = store.list().filter((i) => i.kind !== 'settings').length;
   if (count > 0) {
     const ok = await confirmDialog(
@@ -1513,23 +1525,25 @@ async function offerJoin(key) {
     );
     if (!ok) return;
   }
-  await joinSpace(key);
+  await joinSpace(link);
 }
 
-async function joinSpace(key) {
+async function joinSpace(link) {
   saveNote.flush();
-  commitDeletes();
   await sync.flush(6000);
   const old = store.get('space');
+  const oldK = store.get('token') || old;
   sync.stop();
-  for (const it of store.list('file')) it.local = { ...(it.local || {}), up: true, from: old };
-  await store.moveToSpace(key);
+  for (const it of store.list('file')) it.local = { ...(it.local || {}), up: true, from: old, fromK: oldK };
+  await store.moveToSpace(link.space, link.token);
+  sync.denied = false;
   cards.clear();
   updateManifest();
   sync.devices = [];
   sync.start();
   files.resumeAll();
   renderAll();
+  if (store.get('push')) subscribePush(false).catch(() => {});
   toast('Connected — everything now syncs between your devices.');
 }
 
@@ -1544,6 +1558,9 @@ function openSettings() {
   el.versionText.textContent = `SyncPad ${VERSION} · ${store.get('deviceName')}`;
   renderPinSettings();
   loadDevices();
+  renderNotif();
+  const tc = trashedItems().length;
+  el.trashBtnLabel.textContent = tc ? `Open Trash (${tc})` : 'Open Trash';
   renderStorage();
   openDialog(el.dlgSettings);
 }
@@ -1580,6 +1597,7 @@ function renderSettingsDevices(list) {
         <span class="dev-ic"><svg class="ic"><use href="#i-${devIcon(name)}"/></svg><span class="dot"></span></span>
         <div class="dev-main"><div class="dev-name">${esc(name)}${isMe ? '<span class="me">This device</span>' : ''}</div>
         <div class="dev-when">${on ? 'Online now' : `Last seen ${esc(ago(d.seen))}`}</div></div>
+        ${isMe ? '' : `<button class="dev-remove" data-remove="${esc(d.id)}" data-name="${esc(name)}">Remove</button>`}
       </div>`;
     })
     .join('') + (devices.length <= 1 ? '<div class="dev-empty">No other devices yet. Tap “Add a device” to connect your phone or computer.</div>' : '');
@@ -1617,11 +1635,11 @@ async function disconnect() {
 }
 async function wipeDevice() {
   saveNote.flush();
-  commitDeletes();
   await sync.flush(6000);
   sync.stop();
   await store.wipe();
   try { for (const k of ['sp-pin', 'sp-pin-try', 'sp-zoom']) localStorage.removeItem(k); } catch {}
+  try { for (const n of ['sp-files', 'sp-offline']) await caches.delete(n); } catch {}
   location.replace('/');
 }
 
@@ -1741,6 +1759,7 @@ async function savePin(pin) {
   const conf = { salt, iters, hash: await pinHash(pin, salt, iters), len: pin.length, after: old && old.after != null ? old.after : 60 };
   localStorage.setItem('sp-pin', JSON.stringify(conf));
   localStorage.removeItem('sp-pin-try');
+  store.set('pinOn', true);
   renderLockButton();
 }
 
@@ -1884,6 +1903,299 @@ function onVisibilityForLock(visible) {
   }
   if (!lk.mode && Date.now() - lk.hiddenAt >= (c.after != null ? c.after : 60) * 1000) lockNow();
   else document.documentElement.classList.remove('privacy');
+}
+
+/* ═════════════════════════ links with tokens ═════════════════════════ */
+
+function parseLink(s) {
+  const m = /^([A-Za-z0-9_-]{20,64})(?:~([A-Za-z0-9_-]{20,64}))?$/.exec(String(s || ''));
+  return m ? { space: m[1], token: m[2] || m[1] } : null;
+}
+function linkCode() {
+  const s = store.get('space');
+  const t = store.get('token') || s;
+  return t === s ? s : `${s}~${t}`;
+}
+
+/* ═════════════════════════ removing devices ═════════════════════════ */
+
+async function removeDevice(id, name) {
+  const ok = await confirmDialog(
+    `Remove “${name}”?`,
+    'It will be signed out of SyncPad, and its copy of your notes and files will be erased the next time it goes online. Your other devices switch to a new private link automatically — nothing to do on them.',
+    'Remove device',
+    true
+  );
+  if (!ok) return;
+  if (!navigator.onLine) { toast('Go online to remove a device.'); return; }
+  const token = rid(24);
+  let r = await fetch(`/api/s/${store.get('space')}/rotate`, { method: 'POST', headers: sync.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ remove: [id], token }) }).catch(() => null);
+  if (r && r.status === 409) {
+    const j = await r.json().catch(() => ({}));
+    if (j.token) await sync.setToken(j.token);
+    r = await fetch(`/api/s/${store.get('space')}/rotate`, { method: 'POST', headers: sync.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ remove: [id], token }) }).catch(() => null);
+  }
+  if (!r || !r.ok) { toast('Could not remove the device. Try again in a moment.'); return; }
+  await sync.setToken(token);
+  sync.devices = sync.devices.filter((d) => d.id !== id);
+  renderSettingsDevices(sync.devices);
+  toast(`“${name}” was removed. Your devices now use a new private link.`, { duration: 6000 });
+}
+
+async function onRevoked() {
+  if (ui.revoking) return;
+  ui.revoking = true;
+  try { sync.stop(); await store.wipe(); } catch {}
+  try { for (const k of ['sp-pin', 'sp-pin-try', 'sp-zoom']) localStorage.removeItem(k); } catch {}
+  try { for (const n of ['sp-files', 'sp-offline']) await caches.delete(n); } catch {}
+  location.replace('/?removed=1');
+}
+
+function onToken() {
+  updateManifest();
+  cards.clear();
+  renderDrops();
+  for (const img of $$('img[data-file]', el.editorText)) if ((img.getAttribute('src') || '').startsWith('/api/')) img.removeAttribute('src');
+  hydrateFiles(el.editorText);
+  if (el.dlgConnect.open) renderQR();
+}
+
+/* ═════════════════════════ trash ═════════════════════════ */
+
+function deleteWithUndo(item, label) {
+  const stored = store.items.get(item.id);
+  if (ui.noteId === item.id) {
+    if (isMobileLayout()) closeEditor();
+    ui.noteId = null;
+    ui.newNote = null;
+    renderEditor(true);
+  }
+  if (!stored) { renderLists(); return; } // a note that was never saved
+  if (stored.local && stored.local.up) {   // still uploading: nothing to keep
+    store.remove(stored).then(() => { files.forget(stored.id); sync.schedule(); });
+    toast(`${label} deleted`);
+    renderLists();
+    return;
+  }
+  stored.data = { ...stored.data, trashed: Date.now() };
+  store.save(stored).then(() => sync.schedule());
+  renderLists();
+  toast(`${label} moved to Trash`, { action: 'Undo', duration: 6000, onAction: () => restoreItem(stored.id) });
+}
+
+async function restoreItem(id) {
+  const it = store.items.get(id);
+  if (!it) return;
+  const { trashed, ...rest } = it.data;
+  it.data = rest;
+  await store.save(it);
+  sync.schedule();
+  renderLists();
+  if (el.dlgTrash.open) renderTrash();
+}
+
+async function deleteForever(id) {
+  const it = store.items.get(id);
+  if (!it) return;
+  await store.remove(it);
+  files.forget(id);
+  sync.schedule();
+}
+
+const trashedItems = () => store.list().filter((i) => i.data.trashed && i.kind !== 'settings').sort((a, b) => b.data.trashed - a.data.trashed);
+
+function openTrash() {
+  renderTrash();
+  openDialog(el.dlgTrash);
+}
+
+function renderTrash() {
+  const list = trashedItems();
+  el.btnEmptyTrash.hidden = !list.length;
+  if (!list.length) { el.trashList.innerHTML = '<div class="trash-empty">Trash is empty.</div>'; return; }
+  el.trashList.innerHTML = list.map((it) => {
+    const days = Math.max(0, 30 - Math.floor((Date.now() - it.data.trashed) / 86400000));
+    const what = it.kind === 'note' ? 'Note' : it.kind === 'file' ? 'File' : 'Message';
+    const title = it.kind === 'note' ? noteTitle(noteText(it)) : it.kind === 'file' ? it.data.name : String(it.data.text || '').slice(0, 90);
+    const icon = it.kind === 'note' ? 'note' : it.kind === 'file' ? kindIcon(fileKind(it.data.type, it.data.name)) : singleUrl(it.data.text || '') ? 'link' : 'drops';
+    return `<div class="trash-row" data-id="${it.id}">
+      <span class="dev-ic"><svg class="ic"><use href="#i-${icon}"/></svg></span>
+      <div class="trash-main"><div class="trash-title">${esc(title || what)}</div>
+      <div class="trash-meta">${what} · deleted ${esc(ago(it.data.trashed))} · ${days} day${days === 1 ? '' : 's'} left</div></div>
+      <button class="btn btn-soft btn-sm" data-act="restore">Restore</button>
+      <button class="icon-btn sm" data-act="forever" aria-label="Delete forever" title="Delete forever"><svg class="ic"><use href="#i-trash"/></svg></button>
+    </div>`;
+  }).join('');
+}
+
+async function onTrashClick(e) {
+  const b = e.target.closest('[data-act]');
+  const row = b && b.closest('[data-id]');
+  if (!row) return;
+  const id = row.dataset.id;
+  if (b.dataset.act === 'restore') {
+    await restoreItem(id);
+    toast('Restored');
+  } else if (b.dataset.act === 'forever') {
+    const ok = await confirmDialog('Delete forever?', 'This can’t be undone, on any device.', 'Delete forever', true);
+    if (!ok) return;
+    await deleteForever(id);
+    renderTrash();
+  }
+}
+
+async function emptyTrash() {
+  const list = trashedItems();
+  if (!list.length) return;
+  const ok = await confirmDialog('Empty the trash?', `${list.length} item${list.length === 1 ? '' : 's'} will be deleted forever on all devices.`, 'Empty trash', true);
+  if (!ok) return;
+  for (const it of list) await deleteForever(it.id);
+  renderTrash();
+  toast('Trash emptied');
+}
+
+/* ═════════════════════════ note history ═════════════════════════ */
+
+async function openHistory() {
+  const n = openNoteItem();
+  if (!n) return;
+  saveNote.flush();
+  if (!store.items.has(n.id) || !n.rev) { toast('History starts once this note has synced.'); return; }
+  if (!navigator.onLine) { toast('Version history needs an internet connection.'); return; }
+  ui.historyNote = n.id;
+  ui.historyPick = null;
+  el.historyList.innerHTML = '<div class="trash-empty">Loading…</div>';
+  el.historyPreview.innerHTML = '';
+  el.btnRestoreVersion.disabled = true;
+  openDialog(el.dlgHistory);
+  try {
+    const r = await fetch(`/api/s/${store.get('space')}/history/${n.id}`, { headers: sync.headers() });
+    const j = await r.json();
+    const versions = j.versions || [];
+    el.historyList.innerHTML =
+      `<button class="history-item" data-hid="current"><b>Current version</b><span>${esc(noteTitle(noteText(n)))}</span></button>` +
+      versions.map((v) => `<button class="history-item" data-hid="${v.hid}"><b>${esc(dayLabel(v.created))}, ${esc(clock(v.created))}</b>
+        <span>${esc(v.device === me() ? 'This device' : v.from)} · ${esc(String(v.preview || '').replace(/\s+/g, ' ').slice(0, 70))}</span></button>`).join('') +
+      (versions.length ? '' : '<div class="trash-empty">Earlier versions show up here as you keep editing — one is saved every 10 minutes, and whenever another device edits the note.</div>');
+    showVersion('current');
+  } catch {
+    el.historyList.innerHTML = '<div class="trash-empty">Could not load the history.</div>';
+  }
+}
+
+async function showVersion(hid) {
+  for (const b of $$('.history-item', el.historyList)) b.setAttribute('aria-current', String(b.dataset.hid === String(hid)));
+  const n = store.items.get(ui.historyNote);
+  if (!n) return;
+  ui.historyPick = null;
+  el.btnRestoreVersion.disabled = true;
+  if (hid === 'current') {
+    el.historyPreview.innerHTML = noteHtml(n);
+    hydrateFiles(el.historyPreview);
+    return;
+  }
+  el.historyPreview.innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const j = await (await fetch(`/api/s/${store.get('space')}/history/${n.id}/${hid}`, { headers: sync.headers() })).json();
+    if (!j.data) throw new Error();
+    ui.historyPick = j;
+    el.historyPreview.innerHTML = j.data.html != null ? sanitizeNote(j.data.html) : markdownToHtml(j.data.body || '');
+    hydrateFiles(el.historyPreview);
+    el.btnRestoreVersion.disabled = false;
+  } catch {
+    el.historyPreview.innerHTML = '<p class="muted">Could not load this version.</p>';
+  }
+}
+
+async function restoreVersion() {
+  const v = ui.historyPick;
+  const n = store.items.get(ui.historyNote);
+  if (!v || !n) return;
+  const html = v.data.html != null ? sanitizeNote(v.data.html) : markdownToHtml(v.data.body || '');
+  const text = v.data.text != null ? v.data.text : v.data.body || '';
+  const { body, ...rest } = n.data;
+  n.data = { ...rest, html, text };
+  await store.save(n, { snap: true });
+  sync.schedule();
+  el.dlgHistory.close();
+  if (ui.noteId === n.id) renderEditor(true);
+  renderNotesList();
+  toast(`Restored the version from ${dayLabel(v.created)}, ${clock(v.created)}. The text you replaced is kept in history too.`, { duration: 6000 });
+}
+
+/* ═════════════════════════ notifications ═════════════════════════ */
+
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+function b64ToBytes(s) {
+  const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4));
+  return Uint8Array.from(b, (c) => c.charCodeAt(0));
+}
+
+async function renderNotif() {
+  const btn = el.btnNotif;
+  const label = btn.querySelector('span');
+  btn.hidden = false;
+  if (!pushSupported()) {
+    el.notifText.textContent = isIOS() && !isStandalone()
+      ? 'On iPhone/iPad, add SyncPad to your Home Screen first (Share → Add to Home Screen), then turn this on there.'
+      : 'This browser can’t show notifications.';
+    btn.hidden = true;
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    el.notifText.textContent = 'Notifications are blocked for this site in your browser settings.';
+    btn.hidden = true;
+    return;
+  }
+  let on = false;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    on = !!(reg && (await reg.pushManager.getSubscription())) && !!store.get('push');
+  } catch {}
+  el.notifText.textContent = on ? 'On — you’ll get a notification when a drop arrives from another device.' : 'Get a notification when a drop arrives from another device.';
+  label.textContent = on ? 'Turn off' : 'Turn on';
+  btn.dataset.on = on ? '1' : '';
+}
+
+async function subscribePush(create) {
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub && create) {
+    const { key } = await (await fetch('/api/push/key')).json();
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+  }
+  if (!sub) return;
+  const r = await fetch(`/api/s/${store.get('space')}/push`, {
+    method: 'POST',
+    headers: sync.headers({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ endpoint: sub.endpoint })
+  });
+  if (!r.ok) throw new Error('register failed');
+  await store.set('push', true);
+}
+
+async function toggleNotif() {
+  if (el.btnNotif.dataset.on) {
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = reg && (await reg.pushManager.getSubscription());
+      if (sub) await sub.unsubscribe();
+    } catch {}
+    fetch(`/api/s/${store.get('space')}/push`, { method: 'DELETE', headers: sync.headers() }).catch(() => {});
+    await store.set('push', false);
+    toast('Notifications are off for this device.');
+    renderNotif();
+    return;
+  }
+  try {
+    if ((await Notification.requestPermission()) !== 'granted') { renderNotif(); return; }
+    await subscribePush(true);
+    toast('Notifications are on for this device.');
+  } catch {
+    toast(navigator.onLine ? 'Could not turn on notifications on this device.' : 'Go online to turn on notifications.');
+  }
+  renderNotif();
 }
 
 /* ═════════════════════════ small UI helpers ═════════════════════════ */

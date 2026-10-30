@@ -26,7 +26,47 @@ export class Files extends EventTarget {
   get maxFile() { return (this.sync.info && this.sync.info.maxFile) || 200 * 1024 * 1024; }
   emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
 
-  url(id, download = false) { return `/api/s/${this.space}/file/${id}${download ? '?dl=1' : ''}`; }
+  url(id, download = false) {
+    return `/api/s/${this.space}/file/${id}?k=${encodeURIComponent(this.sync.token)}${download ? '&dl=1' : ''}`;
+  }
+  /** Cache key (no token in it, so a link change doesn't lose offline copies) */
+  cacheKey(id) { return `${location.origin}/api/s/${this.space}/file/${id}`; }
+
+  /* ───── keep files on this device ───── */
+  offlineIds() { return new Set(this.store.get('offline', [])); }
+  isOffline(id) { return this.offlineIds().has(id); }
+  async keepOffline(item) {
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    const cache = await caches.open('sp-offline');
+    let res;
+    const b = this.mem.get(item.id);
+    if (b) res = new Response(b, { headers: { 'content-type': item.data.type || b.type || 'application/octet-stream', 'content-length': String(b.size) } });
+    else {
+      res = await fetch(this.url(item.id));
+      if (!res.ok) throw new Error('download failed');
+    }
+    await cache.put(this.cacheKey(item.id), res);
+    const ids = this.offlineIds();
+    ids.add(item.id);
+    await this.store.set('offline', [...ids]);
+    this.emit('offline', { id: item.id });
+  }
+  async removeOffline(id) {
+    const ids = this.offlineIds();
+    if (!ids.delete(id)) return;
+    await this.store.set('offline', [...ids]);
+    try { await (await caches.open('sp-offline')).delete(this.cacheKey(id)); } catch {}
+    this.emit('offline', { id });
+  }
+  async cachedBlob(id) {
+    try {
+      for (const name of ['sp-offline', 'sp-files']) {
+        const hit = await (await caches.open(name)).match(this.cacheKey(id));
+        if (hit) return await hit.blob();
+      }
+    } catch {}
+    return null;
+  }
 
   /** Best URL to show a file: local copy if we have one, else the cloud copy */
   src(id) {
@@ -116,7 +156,7 @@ export class Files extends EventTarget {
 
     let blob = this.mem.get(id) || (await this.store.getBlob(id).catch(() => null));
     if (!blob && item.local.from) {
-      const r = await fetch(`/api/s/${item.local.from}/file/${id}`).catch(() => null);
+      const r = await fetch(`/api/s/${item.local.from}/file/${id}?k=${encodeURIComponent(item.local.fromK || item.local.from)}`).catch(() => null);
       if (r && r.ok) blob = await r.blob();
       else if (r && r.status === 404) { await this.store.remove(item); return 'done'; }
       else return 'retry';
@@ -129,7 +169,7 @@ export class Files extends EventTarget {
 
     let have = job.have;
     if (!have) {
-      have = await fetch(`/api/s/${this.space}/file/${id}/have`).then((r) => r.json()).then((j) => j.have || []).catch(() => null);
+      have = await fetch(`/api/s/${this.space}/file/${id}/have`, { headers: this.sync.headers() }).then((r) => r.json()).then((j) => j.have || []).catch(() => null);
       if (!have) return 'retry';
     }
     const total = blob.size;
@@ -152,7 +192,7 @@ export class Files extends EventTarget {
         const part = blob.slice(i * CHUNK, Math.min(total, (i + 1) * CHUNK));
         for (let attempt = 1; ; attempt++) {
           try {
-            const r = await fetch(`/api/s/${space}/file/${id}/${i}`, { method: 'PUT', body: part });
+            const r = await fetch(`/api/s/${space}/file/${id}/${i}`, { method: 'PUT', body: part, headers: this.sync.headers() });
             if (r.status === 507) { failed = 'full'; return; }
             if (r.status === 410) { failed = 'gone'; return; }
             if (!r.ok) throw new Error('http ' + r.status);
@@ -207,12 +247,17 @@ export class Files extends EventTarget {
     this.urls.delete(id);
     this.mem.delete(id);
     this.progress.delete(id);
-    if ('caches' in window) caches.open('sp-files').then((c) => c.delete(this.url(id))).catch(() => {});
+    if ('caches' in window) for (const n of ['sp-files', 'sp-offline']) caches.open(n).then((c) => c.delete(this.cacheKey(id))).catch(() => {});
+    if (this.isOffline(id)) this.removeOffline(id);
   }
 
   /* ───── getting files out ───── */
 
-  download(item) {
+  async download(item) {
+    if (!this.mem.has(item.id) && (this.isOffline(item.id) || !navigator.onLine)) {
+      const b = await this.cachedBlob(item.id);
+      if (b) this.mem.set(item.id, b);
+    }
     const a = document.createElement('a');
     a.href = this.mem.has(item.id) ? this.src(item.id) : this.url(item.id, true);
     a.download = item.data.name || 'file';
@@ -237,6 +282,8 @@ export class Files extends EventTarget {
 
   async blobOf(item) {
     if (this.mem.has(item.id)) return this.mem.get(item.id);
+    const cached = await this.cachedBlob(item.id);
+    if (cached) { this.mem.set(item.id, cached); return cached; }
     const p = this.prefetched.get(item.id) || fetch(this.url(item.id)).then((r) => (r.ok ? r.blob() : null));
     const b = await p;
     if (b) this.mem.set(item.id, b);

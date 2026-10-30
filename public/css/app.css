@@ -405,6 +405,43 @@ a { color: var(--accent-text); }
 .dev-empty { padding: 14px; font-size: 13.5px; color: var(--muted); }
 .add-dev { align-self: flex-start; }
 
+/* device remove, notifications */
+.dev-remove { border: 0; background: transparent; color: var(--danger); font-weight: 600; font-size: 13px; padding: 6px 8px; border-radius: 8px; }
+.dev-remove:hover { background: var(--danger-soft); }
+.notif-row { justify-content: space-between; flex-wrap: nowrap; }
+.notif-row .muted { flex: 1; }
+.pin-flag.off { color: var(--ok); }
+
+/* trash */
+.trash-note { margin: 0 0 10px; }
+.trash-list { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.trash-row { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 14px; }
+.trash-row + .trash-row { border-top: 1px solid var(--border); }
+.trash-row .dev-ic { color: var(--muted); }
+.trash-main { flex: 1; min-width: 0; }
+.trash-title { font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-meta { font-size: 12.5px; color: var(--muted); }
+.trash-empty { padding: 26px 16px; text-align: center; color: var(--muted); font-size: 14px; }
+.trash-foot { margin-top: 12px; }
+
+/* version history */
+.sheet.sheet-wide { width: min(880px, calc(100% - 32px)); }
+.history { display: grid; grid-template-columns: 260px 1fr; gap: 16px; min-height: 360px; }
+.history-list { border: 1px solid var(--border); border-radius: 14px; overflow-y: auto; max-height: 62vh; }
+.history-item { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.history-item:last-child { border-bottom: 0; }
+.history-item[aria-current="true"] { background: var(--accent-soft); }
+.history-item b { display: block; font-size: 14px; }
+.history-item span { display: block; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-view { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.history-preview { flex: 1; border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; overflow-y: auto; max-height: 56vh; min-height: 200px; font-size: 15px; line-height: 1.6; }
+@media (max-width: 860px) {
+  .sheet.sheet-wide { width: 100%; }
+  .history { grid-template-columns: 1fr; }
+  .history-list { max-height: 30vh; }
+  .history-preview { max-height: 40vh; }
+}
+
 /* PIN lock */
 html.locked .app, html.privacy .app { visibility: hidden; }
 .lock { position: fixed; inset: 0; z-index: 200; background: var(--bg); display: grid; place-items: center; padding: 24px; overflow-y: auto; }

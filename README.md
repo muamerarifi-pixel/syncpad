@@ -8,6 +8,12 @@ Send files, links and notes between all your devices — phone, laptop, tablet �
 - **Notes**: markdown notes that sync as you type. The first line is the title, `#tags` organise them, `- [ ]` makes checklists you can tick in Read mode, and you can drop files straight into a note.
 - **Connect a device** in one step: scan the QR code with your phone camera, or type the 6-digit code (valid 10 minutes) on a computer.
 - **Install it** on every device (PWA). On Android it shows up in the system **Share** menu, so you can share any file or link to your other devices.
+- **Remove a device** from Settings: it's signed out and its copy is erased the next time it goes online; your other devices switch to a new private link automatically.
+- **Trash**: deleted notes, files and messages can be restored for 30 days.
+- **Version history** for notes: earlier versions are saved automatically (every 10 minutes and whenever another device edits) and can be restored.
+- **Notifications** when a drop arrives from another device (Android, desktop, and iPhone once installed to the Home Screen). The push itself carries no content — the device fetches it securely.
+- **Keep files offline** on a device so they open without internet.
+- **PIN lock** per device and **A−/A+** text zoom in notes.
 - **Offline-first**: everything is saved on the device first and syncs when you're back online, including queued file uploads, which resume where they stopped.
 
 ## Where files are stored
@@ -19,7 +25,7 @@ Files are kept in the same Cloudflare Durable Object (SQLite) that already power
 
 ## Privacy & security
 
-- Each set of devices shares a private **144-bit random key** (not guessable; v1's 3-digit room codes are gone and rejected by the server).
+- Each set of devices shares a private **144-bit random key**, and every device also has its own private secret. Removing a device revokes it and rotates the key.
 - Pairing codes are 6 digits, expire after 10 minutes and are rate-limited.
 - Uploaded files are served with a sandbox CSP and `nosniff`, so an uploaded HTML/SVG file can never run scripts inside the app.
 - No trackers, no third-party requests. Link previews are fetched server-side and only text (title, site, description) is kept.

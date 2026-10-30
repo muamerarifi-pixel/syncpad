@@ -83,3 +83,79 @@ test('6-digit pairing code resolves to the space', async () => {
   const bad = await post('/api/pair/claim', { code: '000000' === c.code ? '111111' : '000000' });
   assert.equal(bad.status, 404);
 });
+
+const hdr = (k, dev) => ({ 'content-type': 'application/json', 'x-k': k, 'x-d': dev.d, 'x-ds': dev.ds });
+const devCall = (s, dev, k, body, path = 'sync') =>
+  fetch(`${BASE}/api/s/${s}/${path}`, { method: 'POST', headers: hdr(k, dev), body: JSON.stringify(body) });
+
+test('removing a device: it is locked out, other devices get the new token', async () => {
+  const s = key();
+  const A = { d: 'deviceAAAA', ds: key() };
+  const B = { d: 'deviceBBBB', ds: key() };
+  const C = { d: 'deviceCCCC', ds: key() };
+  for (const dev of [A, B, C]) assert.equal((await devCall(s, dev, s, { since: 0, ops: [] })).status, 200);
+  // someone who knows a device id but not its secret is refused
+  assert.equal((await devCall(s, { d: 'deviceAAAA', ds: key() }, s, { since: 0 })).status, 403);
+  const t2 = key();
+  assert.equal((await devCall(s, A, s, { remove: ['deviceBBBB'], token: t2 }, 'rotate')).status, 200);
+  const rb = await devCall(s, B, s, { since: 0 });
+  assert.equal(rb.status, 403);
+  assert.equal((await rb.json()).revoked, true);
+  // the old link alone no longer works
+  assert.equal((await fetch(`${BASE}/api/s/${s}/sync`, { method: 'POST', body: '{"since":0}' })).status, 403);
+  // C still has the old token: it is handed the new one
+  const rc = await devCall(s, C, s, { since: 0 });
+  assert.equal(rc.status, 409);
+  assert.equal((await rc.json()).token, t2);
+  assert.equal((await devCall(s, C, t2, { since: 0 })).status, 200);
+  // a brand-new device joining with the new token works
+  assert.equal((await devCall(s, { d: 'deviceDDDD', ds: key() }, t2, { since: 0 })).status, 200);
+  const list = await (await fetch(`${BASE}/api/s/${s}/devices?k=${t2}`)).json();
+  assert.ok(!list.devices.some((d) => d.id === 'deviceBBBB'));
+  // files need the token too
+  assert.equal((await fetch(`${BASE}/api/s/${s}/file/abcdefgh`)).status, 403);
+});
+
+test('note history keeps earlier versions', async () => {
+  const s = key();
+  const A = { d: 'deviceAAAA', ds: key() };
+  const B = { d: 'deviceBBBB', ds: key() };
+  const r1 = await (await devCall(s, A, s, { since: 0, ops: [{ id: 'note000009', kind: 'note', baseRev: 0, data: { html: '<p>v1</p>', text: 'v1' } }] })).json();
+  await devCall(s, A, s, { since: r1.seq, ops: [{ id: 'note000009', kind: 'note', baseRev: 1, data: { html: '<p>v2</p>', text: 'v2' } }] });
+  await devCall(s, B, s, { since: 0, ops: [{ id: 'note000009', kind: 'note', baseRev: 2, data: { html: '<p>v3 from B</p>', text: 'v3 from B' } }] });
+  const h = await (await fetch(`${BASE}/api/s/${s}/history/note000009`)).json();
+  assert.deepEqual(h.versions.map((v) => v.preview), ['v2', 'v1']);
+  const item = await (await fetch(`${BASE}/api/s/${s}/history/note000009/${h.versions[1].hid}`)).json();
+  assert.equal(item.data.html, '<p>v1</p>');
+});
+
+test('push: other devices get a VAPID-signed push when a drop arrives', async () => {
+  const http = await import('node:http');
+  const got = [];
+  const srv = http.createServer((req, res) => { got.push({ url: req.url, auth: req.headers.authorization }); res.end('ok'); });
+  await new Promise((r) => srv.listen(9911, '127.0.0.1', r));
+  try {
+    const s = key();
+    const A = { d: 'deviceAAAA', ds: key() };
+    const B = { d: 'deviceBBBB', ds: key() };
+    await devCall(s, A, s, { since: 0 });
+    assert.equal((await devCall(s, A, s, { endpoint: 'http://127.0.0.1:9911/push/A' }, 'push')).status, 200);
+    await devCall(s, B, s, { since: 0, ops: [{ id: 'clip000001', kind: 'clip', baseRev: 0, data: { text: 'hello phone' } }] });
+    for (let i = 0; i < 40 && !got.length; i++) await new Promise((r) => setTimeout(r, 100));
+    assert.equal(got.length, 1);
+    assert.equal(got[0].url, '/push/A');
+    const m = /^vapid t=([\w-]+)\.([\w-]+)\.([\w-]+), k=([\w-]+)$/.exec(got[0].auth);
+    assert.ok(m, got[0].auth);
+    const dec = (x) => Buffer.from(x.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+    const pub = await crypto.subtle.importKey('raw', dec(m[4]), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pub, dec(m[3]), new TextEncoder().encode(`${m[1]}.${m[2]}`));
+    assert.ok(ok, 'JWT signature verifies');
+    assert.equal(JSON.parse(dec(m[2]).toString()).aud, 'http://127.0.0.1:9911');
+    const key2 = await (await fetch(`${BASE}/api/push/key`)).json();
+    assert.equal(key2.key, m[4]);
+    const latest = await (await fetch(`${BASE}/api/s/${s}/latest?since=0&d=deviceAAAA`)).json();
+    assert.equal(latest.items[0].text, 'hello phone');
+  } finally {
+    srv.close();
+  }
+});

@@ -65,6 +65,10 @@
       <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></symbol>
       <symbol id="i-tablet" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2.5"/><path d="M11 18h2"/></symbol>
       <symbol id="i-laptop" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+      <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-restore" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></symbol>
+      <symbol id="i-ondevice" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="m9 12 2 2 4-4"/></symbol>
       <symbol id="i-sync" viewBox="0 0 24 24"><path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/></symbol>
     </defs>
   </svg>
@@ -241,6 +245,15 @@
         <button class="btn btn-soft btn-sm add-dev" id="btn-settings-connect"><svg class="ic"><use href="#i-qr"/></svg><span>Add a device</span></button>
       </div>
       <div class="field">
+        <span>Notifications on this device</span>
+        <div class="row notif-row"><span class="muted small" id="notif-text">—</span><button class="btn btn-soft btn-sm" id="btn-notif"><svg class="ic"><use href="#i-bell"/></svg><span>Turn on</span></button></div>
+      </div>
+      <div class="field">
+        <span>Trash</span>
+        <button class="btn btn-soft btn-sm add-dev" id="btn-open-trash"><svg class="ic"><use href="#i-trash"/></svg><span id="trash-btn-label">Open Trash</span></button>
+        <small class="muted">Deleted notes, files and messages stay here for 30 days.</small>
+      </div>
+      <div class="field">
         <span>Appearance</span>
         <div class="seg seg-full" id="set-theme" role="group" aria-label="Theme">
           <button class="seg-btn" data-theme-opt="system">Auto</button>
@@ -302,6 +315,34 @@
       <button class="icon-btn on-dark" data-close aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
     </div>
     <div class="viewer-body" id="viewer-body"></div>
+  </dialog>
+
+  <!-- Trash -->
+  <dialog class="sheet" id="dlg-trash" aria-labelledby="trash-title">
+    <div class="sheet-head">
+      <h2 id="trash-title">Trash</h2>
+      <button class="icon-btn" data-close aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="sheet-body">
+      <p class="muted small trash-note">Items are deleted forever after 30 days.</p>
+      <div class="trash-list" id="trash-list"></div>
+      <div class="row end trash-foot"><button class="btn btn-danger-soft btn-sm" id="btn-empty-trash">Empty trash</button></div>
+    </div>
+  </dialog>
+
+  <!-- Version history -->
+  <dialog class="sheet sheet-wide" id="dlg-history" aria-labelledby="history-title">
+    <div class="sheet-head">
+      <h2 id="history-title">Version history</h2>
+      <button class="icon-btn" data-close aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="sheet-body history">
+      <div class="history-list" id="history-list"></div>
+      <div class="history-view">
+        <div class="history-preview rt" id="history-preview"></div>
+        <div class="row end"><button class="btn btn-primary" id="btn-restore-version" disabled><svg class="ic"><use href="#i-restore"/></svg><span>Restore this version</span></button></div>
+      </div>
+    </div>
   </dialog>
 
   <!-- Confirm -->

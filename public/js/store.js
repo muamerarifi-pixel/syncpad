@@ -49,7 +49,7 @@ export class Store extends EventTarget {
   }
 
   /** Save a local change and queue it for sync */
-  async save(item, { sync = true } = {}) {
+  async save(item, { sync = true, snap = false } = {}) {
     item.updated = Date.now();
     this.items.set(item.id, item);
     const t = this.db.transaction(['items', 'outbox'], 'readwrite');
@@ -59,6 +59,7 @@ export class Store extends EventTarget {
         id: item.id, lv: ++this.lv, baseRev: item.rev || 0,
         op: { id: item.id, kind: item.kind, deleted: false, data: item.data, created: item.created }
       };
+      if (snap) e.op.snap = true;
       this.outbox.set(item.id, e);
       t.objectStore('outbox').put(e);
     }
@@ -181,7 +182,7 @@ export class Store extends EventTarget {
   delBlob(id) { return req(this.db.transaction('blobs', 'readwrite').objectStore('blobs').delete(id)); }
 
   /** Switch to another space: everything local gets re-sent there. */
-  async moveToSpace(key) {
+  async moveToSpace(key, token = key) {
     const t = this.db.transaction(['items', 'outbox', 'kv'], 'readwrite');
     const ib = t.objectStore('items');
     const ob = t.objectStore('outbox');
@@ -197,8 +198,10 @@ export class Store extends EventTarget {
       ob.put(e);
     }
     this.kv.set('space', key);
+    this.kv.set('token', token);
     this.kv.set('seq', 0);
     t.objectStore('kv').put({ k: 'space', v: key });
+    t.objectStore('kv').put({ k: 'token', v: token });
     t.objectStore('kv').put({ k: 'seq', v: 0 });
     await done(t);
     this.emit([...this.items.keys()]);

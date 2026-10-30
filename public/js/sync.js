@@ -23,6 +23,19 @@ export class Sync extends EventTarget {
   get space() { return this.store.get('space'); }
   get device() { return this.store.get('device'); }
   get name() { return this.store.get('deviceName'); }
+  get token() { return this.store.get('token') || this.space; }
+
+  /** Credentials sent with every request: space token + this device's id and private secret */
+  headers(extra = {}) {
+    return { 'x-k': this.token, 'x-d': this.device, 'x-ds': this.store.get('secret') || '', ...extra };
+  }
+
+  async setToken(token) {
+    if (!token || token === this.token) return;
+    await this.store.set('token', token);
+    this.emit('token');
+    if (this.ws) { try { this.ws.close(); } catch {} }
+  }
 
   start() {
     this.stopped = false;
@@ -63,18 +76,20 @@ export class Sync extends EventTarget {
   emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
 
   connect() {
-    if (this.stopped || !this.space || !navigator.onLine) {
+    if (this.stopped || this.denied || !this.space || !navigator.onLine) {
       if (!navigator.onLine) this.setState('offline');
       return;
     }
     if (this.ws && (this.ws.readyState === 0 || this.ws.readyState === 1)) return;
     clearTimeout(this.reconnectTimer);
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const qs = new URLSearchParams({ d: this.device, n: this.name || '' });
+    const qs = new URLSearchParams({ d: this.device, n: this.name || '', k: this.token, ds: this.store.get('secret') || '' });
     let ws;
     try { ws = new WebSocket(`${proto}://${location.host}/api/s/${this.space}/ws?${qs}`); } catch { return this.retry(); }
     this.ws = ws;
+    let opened = false;
     ws.onopen = () => {
+      opened = true;
       this.wsOpen = true;
       this.backoff = 1000;
       ws.send(JSON.stringify({ t: 'hi', name: this.name }));
@@ -91,6 +106,11 @@ export class Sync extends EventTarget {
         this.devices = m.devices || [];
         this.onlineCount = m.online || 0;
         this.emit('presence');
+      } else if (m.t === 'token') {
+        this.setToken(m.token);
+      } else if (m.t === 'revoked') {
+        this.stop();
+        this.emit('revoked');
       } else if (m.t === 'sync' && this.waiters.has(m.rid)) {
         this.waiters.get(m.rid).resolve(m);
         this.waiters.delete(m.rid);
@@ -105,6 +125,7 @@ export class Sync extends EventTarget {
       this.emit('presence');
       if (this.stopped) return;
       this.setState(navigator.onLine ? (Date.now() - this.lastOk < 60000 ? 'online' : 'connecting') : 'offline');
+      if (!opened) this.syncNow(); // the HTTP call tells us if the link changed or access was removed
       this.retry();
     };
     ws.onerror = () => {};
@@ -123,7 +144,7 @@ export class Sync extends EventTarget {
   }
 
   async syncNow() {
-    if (this.stopped || !this.space) return;
+    if (this.stopped || this.denied || !this.space) return;
     if (this.running) { this.again = true; return; }
     this.running = true;
     try {
@@ -165,7 +186,7 @@ export class Sync extends EventTarget {
     this.emit('synced');
   }
 
-  async call(body) {
+  async call(body, retried = false) {
     if (this.wsOpen && this.ws) {
       const id = rid(10);
       const p = new Promise((resolve, reject) => {
@@ -181,9 +202,19 @@ export class Sync extends EventTarget {
     }
     const r = await fetch(`/api/s/${this.space}/sync`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: this.headers({ 'content-type': 'application/json' }),
       body: JSON.stringify(body)
     });
+    if (r.status === 409 && !retried) {
+      const j = await r.json().catch(() => ({}));
+      if (j.token) { await this.setToken(j.token); return this.call(body, true); }
+    }
+    if (r.status === 403) {
+      const j = await r.json().catch(() => ({}));
+      if (j.revoked) { this.stop(); this.emit('revoked'); }
+      else { this.denied = true; this.setState('denied'); this.emit('denied'); }
+      throw new Error('auth');
+    }
     if (!r.ok) throw new Error('http ' + r.status);
     return r.json();
   }
