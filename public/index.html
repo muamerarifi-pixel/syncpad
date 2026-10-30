@@ -60,6 +60,8 @@
       <symbol id="i-olist" viewBox="0 0 24 24"><path d="M10 6h11M10 12h11M10 18h11"/><path d="M4 5h1v4M3.5 9h2.5M6 19H3.8c0-1 2.2-2 2.2-3.2 0-.7-.6-1.3-1.4-1.3-.6 0-1 .3-1.3.7"/></symbol>
       <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3a2.4 2.4 0 0 1 0-3.4l9.6-9.6a2.4 2.4 0 0 1 3.4 0l5.6 5.6a2.4 2.4 0 0 1 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></symbol>
       <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+      <symbol id="i-backspace" viewBox="0 0 24 24"><path d="M21 5H9l-7 7 7 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><path d="m17 9-6 6M11 9l6 6"/></symbol>
       <symbol id="i-sync" viewBox="0 0 24 24"><path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/></symbol>
     </defs>
   </svg>
@@ -88,6 +90,7 @@
           <span class="dot"></span><span class="status-text">Connecting…</span>
         </button>
         <button class="btn btn-soft" id="btn-connect" aria-label="Add a device"><svg class="ic"><use href="#i-qr"/></svg><span class="hide-mobile">Add device</span></button>
+        <button class="icon-btn" id="btn-lock" aria-label="Lock now" title="Lock now" hidden><svg class="ic"><use href="#i-lock"/></svg></button>
         <button class="icon-btn" id="btn-settings" aria-label="Settings"><svg class="ic"><use href="#i-settings"/></svg></button>
       </div>
     </header>
@@ -126,6 +129,11 @@
               <button class="icon-btn only-mobile" id="btn-editor-back" aria-label="Back to notes"><svg class="ic"><use href="#i-back"/></svg></button>
               <span class="save-state" id="save-state"></span>
               <div class="spacer"></div>
+              <div class="zoom" role="group" aria-label="Text zoom">
+                <button class="zo" id="btn-zoom-out" aria-label="Smaller text" title="Smaller text">A−</button>
+                <button class="zv" id="btn-zoom-reset" title="Reset zoom">100%</button>
+                <button class="zi" id="btn-zoom-in" aria-label="Bigger text" title="Bigger text">A+</button>
+              </div>
               <button class="icon-btn" id="btn-pin" aria-label="Pin note" aria-pressed="false"><svg class="ic"><use href="#i-pin"/></svg></button>
               <button class="icon-btn" id="btn-note-more" aria-label="More note actions"><svg class="ic"><use href="#i-more"/></svg></button>
             </div>
@@ -247,6 +255,22 @@
         <div class="meter"><span id="storage-bar"></span></div>
         <small class="muted" id="storage-text">—</small>
       </div>
+      <div class="field">
+        <span>PIN lock on this device</span>
+        <div id="pin-off-row"><button class="btn btn-soft" id="btn-pin-set"><svg class="ic"><use href="#i-lock"/></svg><span>Set a PIN</span></button></div>
+        <div id="pin-on-row" class="pin-on" hidden>
+          <label class="inline-field">Ask again after
+            <select id="set-pin-after">
+              <option value="0">Every time I leave the app</option>
+              <option value="60">1 minute away</option>
+              <option value="300">5 minutes away</option>
+              <option value="900">15 minutes away</option>
+            </select>
+          </label>
+          <div class="row"><button class="btn btn-sm" id="btn-pin-change">Change PIN</button><button class="btn btn-sm btn-danger-soft" id="btn-pin-remove">Turn off</button></div>
+        </div>
+        <small class="muted">Only this device asks for the PIN — your other devices aren't affected. It keeps people who pick up this device out of SyncPad.</small>
+      </div>
       <div class="field" id="install-field" hidden>
         <span>App</span>
         <button class="btn btn-primary" id="btn-install"><svg class="ic"><use href="#i-download"/></svg><span>Install SyncPad on this device</span></button>
@@ -283,6 +307,25 @@
       </div>
     </div>
   </dialog>
+
+  <!-- PIN lock -->
+  <div class="lock" id="lock" hidden role="dialog" aria-modal="true" aria-labelledby="lock-title">
+    <div class="lock-box">
+      <span class="logo lg" aria-hidden="true"><svg class="ic"><use href="#i-lock"/></svg></span>
+      <h2 id="lock-title">Enter your PIN</h2>
+      <p class="muted small" id="lock-sub"></p>
+      <div class="pin-dots" id="pin-dots" aria-hidden="true"></div>
+      <p class="lock-msg" id="lock-msg" role="alert"></p>
+      <div class="keypad" id="keypad">
+        <button class="key" data-k="1">1</button><button class="key" data-k="2">2</button><button class="key" data-k="3">3</button>
+        <button class="key" data-k="4">4</button><button class="key" data-k="5">5</button><button class="key" data-k="6">6</button>
+        <button class="key" data-k="7">7</button><button class="key" data-k="8">8</button><button class="key" data-k="9">9</button>
+        <button class="key txt" data-k="alt" id="lock-alt">Forgot?</button><button class="key" data-k="0">0</button>
+        <button class="key txt" data-k="back" aria-label="Delete digit"><svg class="ic"><use href="#i-backspace"/></svg></button>
+      </div>
+      <button class="btn btn-primary lock-next" id="lock-next" hidden>Next</button>
+    </div>
+  </div>
 
   <div class="menu" id="menu" role="menu" hidden></div>
   <div class="toasts" id="toasts" aria-live="polite"></div>

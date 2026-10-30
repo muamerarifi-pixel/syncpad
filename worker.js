@@ -12,7 +12,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview } from './src/linkmeta.js';
 
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)

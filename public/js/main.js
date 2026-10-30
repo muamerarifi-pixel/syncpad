@@ -9,7 +9,7 @@ import { Files } from './files.js';
 import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js';
 import qrcode from '/vendor/qrcode.mjs';
 
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -60,6 +60,10 @@ async function boot() {
   files = new Files(store, sync);
   ui.known = new Set(dropItems().map((i) => i.id));
   wire();
+  applyZoom();
+  renderLockButton();
+  if (pinConf()) showLock('unlock');
+  else document.documentElement.classList.remove('locked');
   updateManifest();
   await importV1();
   renderAll();
@@ -67,7 +71,7 @@ async function boot() {
   files.resumeAll();
   registerSW();
   if (ui.joinedOnFirstRun) toast('Connected — everything now syncs with your other device.');
-  if (joinOffer) offerJoin(joinOffer);
+  if (joinOffer) whenUnlocked(() => offerJoin(joinOffer));
   takeShared(params.shared);
 }
 
@@ -121,6 +125,44 @@ function wire() {
   el.statusChip.addEventListener('click', openConnect);
   el.btnConnect.addEventListener('click', openConnect);
   el.btnSettings.addEventListener('click', openSettings);
+  el.btnLock.addEventListener('click', lockNow);
+
+  // text zoom (note editor)
+  el.btnZoomIn.addEventListener('click', () => stepZoom(1));
+  el.btnZoomOut.addEventListener('click', () => stepZoom(-1));
+  el.btnZoomReset.addEventListener('click', () => { try { localStorage.setItem('sp-zoom', '1'); } catch {} applyZoom(); });
+  $('.zoom').addEventListener('mousedown', (e) => e.preventDefault());
+
+  // PIN lock
+  el.keypad.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) pinKey(b.dataset.k); });
+  el.lockNext.addEventListener('click', pinNext);
+  el.btnPinSet.addEventListener('click', async () => { el.dlgSettings.close(); await sleepMs(80); showLock('new'); });
+  el.btnPinChange.addEventListener('click', async () => {
+    el.dlgSettings.close();
+    await sleepMs(80);
+    if (await showLock('verify')) showLock('new');
+  });
+  el.btnPinRemove.addEventListener('click', async () => {
+    el.dlgSettings.close();
+    await sleepMs(80);
+    if (await showLock('verify')) {
+      localStorage.removeItem('sp-pin');
+      localStorage.removeItem('sp-pin-try');
+      renderLockButton();
+      toast('PIN turned off for this device.');
+    }
+  });
+  el.setPinAfter.addEventListener('change', () => {
+    const c = pinConf();
+    if (!c) return;
+    c.after = Number(el.setPinAfter.value);
+    localStorage.setItem('sp-pin', JSON.stringify(c));
+  });
+  for (const inp of [el.fileInput, el.noteFileInput]) inp.addEventListener('click', expectAway);
+  if (navigator.share) {
+    const nativeShare = navigator.share.bind(navigator);
+    navigator.share = (data) => { expectAway(); return nativeShare(data); };
+  }
 
   // composer
   el.composerInput.addEventListener('input', () => { autosize(); updateSend(); });
@@ -300,6 +342,15 @@ function wire() {
 
   // keyboard
   document.addEventListener('keydown', (e) => {
+    if (!el.lock.hidden && !el.dlgConfirm.open) {
+      if (/^\d$/.test(e.key)) pinKey(e.key);
+      else if (e.key === 'Backspace') pinKey('back');
+      else if (e.key === 'Enter') pinNext();
+      else if (e.key === 'Escape' && lk.mode !== 'unlock') endLock(false);
+      else if (e.key === 'Tab') return;
+      e.preventDefault();
+      return;
+    }
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === 'k') {
       e.preventDefault();
@@ -324,7 +375,9 @@ function wire() {
     if (document.visibilityState === 'hidden') {
       saveNote.flush();
       commitDeletes();
+      onVisibilityForLock(false);
     } else {
+      onVisibilityForLock(true);
       clearUnseen();
     }
   });
@@ -334,7 +387,7 @@ function wire() {
   addEventListener('hashchange', () => {
     const k = readParams().join;
     cleanUrl();
-    if (k && KEY_RE.test(k) && k !== store.get('space')) offerJoin(k);
+    if (k && KEY_RE.test(k) && k !== store.get('space')) whenUnlocked(() => offerJoin(k));
   });
   addEventListener('offline', renderStatus);
   addEventListener('resize', debounce(() => { if (!isMobileLayout()) el.app.classList.remove('editing'); }, 150));
@@ -1219,7 +1272,7 @@ function autoFormat(e) {
 
 function onEditorClick(e) {
   const li = e.target.closest('ul[data-checklist] > li');
-  if (li && e.target === li && e.clientX - li.getBoundingClientRect().left < 30) {
+  if (li && e.target === li && e.clientX - li.getBoundingClientRect().left < 30 * getZoom()) {
     e.preventDefault();
     li.setAttribute('data-checked', li.getAttribute('data-checked') === 'true' ? 'false' : 'true');
     onEditorInput();
@@ -1482,6 +1535,7 @@ function openSettings() {
   el.setAutodel.value = String((st && st.data.autodel) || 0);
   el.installField.hidden = !ui.installPrompt || isStandalone();
   el.versionText.textContent = `SyncPad ${VERSION} · ${store.get('deviceName')}`;
+  renderPinSettings();
   renderStorage();
   openDialog(el.dlgSettings);
 }
@@ -1514,12 +1568,15 @@ async function install() {
 }
 async function disconnect() {
   const ok = await confirmDialog('Disconnect this device?', 'Everything is removed from this device only. Your other devices keep all notes and files.', 'Disconnect', true);
-  if (!ok) return;
+  if (ok) await wipeDevice();
+}
+async function wipeDevice() {
   saveNote.flush();
   commitDeletes();
   await sync.flush(6000);
   sync.stop();
   await store.wipe();
+  try { for (const k of ['sp-pin', 'sp-pin-try', 'sp-zoom']) localStorage.removeItem(k); } catch {}
   location.replace('/');
 }
 
@@ -1594,7 +1651,200 @@ function dataUrlToBlob(u) {
   return new Blob([arr], { type });
 }
 
+/* ═════════════════════════ text zoom (this device) ═════════════════════════ */
+
+const ZOOMS = [0.8, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2];
+function getZoom() {
+  let z = 1;
+  try { z = Number(localStorage.getItem('sp-zoom')) || 1; } catch {}
+  return Math.min(2, Math.max(0.8, z));
+}
+function applyZoom() {
+  const z = getZoom();
+  document.documentElement.style.setProperty('--note-zoom', String(z));
+  el.btnZoomReset.textContent = `${Math.round(z * 100)}%`;
+  el.btnZoomOut.disabled = z <= ZOOMS[0];
+  el.btnZoomIn.disabled = z >= ZOOMS[ZOOMS.length - 1];
+}
+function stepZoom(dir) {
+  const z = getZoom();
+  let i = ZOOMS.findIndex((v) => v >= z - 0.001);
+  if (i < 0) i = ZOOMS.length - 1;
+  i = Math.max(0, Math.min(ZOOMS.length - 1, i + dir));
+  try { localStorage.setItem('sp-zoom', String(ZOOMS[i])); } catch {}
+  applyZoom();
+}
+
+/* ═════════════════════════ PIN lock (this device only) ═════════════════════════ */
+
+const lk = { mode: null, digits: '', first: '', done: null, busy: false, queue: [], hiddenAt: 0, away: 0 };
+function pinConf() {
+  try { return JSON.parse(localStorage.getItem('sp-pin') || 'null'); } catch { return null; }
+}
+const isLocked = () => !el.lock.hidden || document.documentElement.classList.contains('locked');
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+
+async function pinHash(pin, saltB64, iters) {
+  const salt = Uint8Array.from(atob(saltB64), (c) => c.charCodeAt(0));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+  return b64(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iters }, key, 256));
+}
+async function savePin(pin) {
+  const old = pinConf();
+  const salt = b64(crypto.getRandomValues(new Uint8Array(16)));
+  const iters = 200000;
+  const conf = { salt, iters, hash: await pinHash(pin, salt, iters), len: pin.length, after: old && old.after != null ? old.after : 60 };
+  localStorage.setItem('sp-pin', JSON.stringify(conf));
+  localStorage.removeItem('sp-pin-try');
+  renderLockButton();
+}
+
+/** mode: unlock | verify (current PIN) | new | confirm. Resolves true/false. */
+function showLock(mode) {
+  return new Promise((resolve) => {
+    for (const d of $$('dialog[open]')) d.close();
+    closeMenu();
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    lk.mode = mode;
+    lk.digits = '';
+    lk.done = resolve;
+    el.lock.hidden = false;
+    el.app.inert = true;
+    renderLock();
+  });
+}
+function renderLock(msg = '') {
+  const conf = pinConf();
+  el.lockTitle.textContent = { unlock: 'Enter your PIN', verify: 'Enter your current PIN', new: 'Choose a PIN', confirm: 'Enter it again' }[lk.mode] || '';
+  el.lockSub.textContent = lk.mode === 'new' ? '4 to 6 digits, only for this device' : lk.mode === 'unlock' ? 'SyncPad is locked on this device' : '';
+  const n = lk.mode === 'new' ? Math.max(4, lk.digits.length) : lk.mode === 'confirm' ? lk.first.length : conf ? conf.len : 4;
+  el.pinDots.innerHTML = Array.from({ length: n }, (_, i) => `<span class="${i < lk.digits.length ? 'on' : ''}"></span>`).join('');
+  el.lockMsg.textContent = msg;
+  el.lockAlt.textContent = lk.mode === 'unlock' ? 'Forgot?' : 'Cancel';
+  el.lockNext.hidden = !(lk.mode === 'new' && lk.digits.length >= 4 && lk.digits.length < 6);
+}
+async function pinKey(k) {
+  if (lk.busy || !lk.mode) return;
+  if (k === 'alt') return lk.mode === 'unlock' ? forgotPin() : endLock(false);
+  if (k === 'back') lk.digits = lk.digits.slice(0, -1);
+  else if (/^\d$/.test(k) && lk.digits.length < 6) lk.digits += k;
+  else return;
+  renderLock();
+  const conf = pinConf();
+  if ((lk.mode === 'unlock' || lk.mode === 'verify') && conf && lk.digits.length === conf.len) await checkPin();
+  else if (lk.mode === 'new' && lk.digits.length === 6) pinNext();
+  else if (lk.mode === 'confirm' && lk.digits.length === lk.first.length) {
+    if (lk.digits === lk.first) {
+      lk.busy = true;
+      await savePin(lk.digits);
+      lk.busy = false;
+      endLock(true);
+      toast('PIN is on. This device will ask for it.');
+    } else {
+      lk.mode = 'new';
+      lk.first = '';
+      lk.digits = '';
+      shakeDots();
+      renderLock('The PINs didn’t match. Choose one again.');
+    }
+  }
+}
+function pinNext() {
+  if (lk.mode !== 'new' || lk.digits.length < 4) return;
+  lk.first = lk.digits;
+  lk.digits = '';
+  lk.mode = 'confirm';
+  renderLock();
+}
+function readTries() {
+  try { return JSON.parse(localStorage.getItem('sp-pin-try')) || { n: 0, until: 0 }; } catch { return { n: 0, until: 0 }; }
+}
+async function checkPin() {
+  const conf = pinConf();
+  const tries = readTries();
+  const wait = () => `Too many tries. Wait ${Math.ceil((tries.until - Date.now()) / 1000)} s.`;
+  if (Date.now() < tries.until) { lk.digits = ''; shakeDots(); renderLock(wait()); return; }
+  lk.busy = true;
+  let ok = false;
+  try { ok = (await pinHash(lk.digits, conf.salt, conf.iters)) === conf.hash; } catch {}
+  lk.busy = false;
+  if (ok) { localStorage.removeItem('sp-pin-try'); endLock(true); return; }
+  tries.n++;
+  if (tries.n >= 5) tries.until = Date.now() + Math.min(900, 30 * 2 ** (tries.n - 5)) * 1000;
+  localStorage.setItem('sp-pin-try', JSON.stringify(tries));
+  lk.digits = '';
+  shakeDots();
+  renderLock(tries.until > Date.now() ? wait() : 'Wrong PIN');
+}
+function shakeDots() {
+  el.pinDots.classList.remove('shake');
+  void el.pinDots.offsetWidth;
+  el.pinDots.classList.add('shake');
+  try { navigator.vibrate && navigator.vibrate(70); } catch {}
+}
+function endLock(ok) {
+  const { done, mode } = lk;
+  lk.mode = null;
+  lk.done = null;
+  lk.digits = '';
+  lk.first = '';
+  el.lock.hidden = true;
+  el.app.inert = false;
+  document.documentElement.classList.remove('locked', 'privacy');
+  if (done) done(ok);
+  if (ok && mode === 'unlock') for (const f of lk.queue.splice(0)) f();
+}
+function lockNow() {
+  if (!pinConf() || lk.mode === 'unlock') return;
+  saveNote.flush();
+  document.documentElement.classList.add('locked');
+  showLock('unlock');
+}
+function whenUnlocked(fn) {
+  if (isLocked()) lk.queue.push(fn);
+  else fn();
+}
+function renderLockButton() {
+  el.btnLock.hidden = !pinConf();
+}
+function renderPinSettings() {
+  const c = pinConf();
+  el.pinOffRow.hidden = !!c;
+  el.pinOnRow.hidden = !c;
+  if (c) el.setPinAfter.value = String(c.after != null ? c.after : 60);
+}
+async function forgotPin() {
+  const ok = await confirmDialog(
+    'Forgot your PIN?',
+    'To protect your privacy, the only way back in is to disconnect this device. Your notes and files stay safe on your other devices, and you can connect this one again right after.',
+    'Disconnect this device',
+    true
+  );
+  if (ok) await wipeDevice();
+}
+/** File pickers and share sheets briefly leave the app — that shouldn't trigger the lock */
+function expectAway() { lk.away = Date.now(); }
+function onVisibilityForLock(visible) {
+  const c = pinConf();
+  if (!c || lk.mode === 'unlock') return;
+  if (!visible) {
+    lk.hiddenAt = Date.now();
+    if (!lk.mode) document.documentElement.classList.add('privacy'); // hide content from the app switcher
+    return;
+  }
+  if (lk.away && Date.now() - lk.away < 10 * 60 * 1000) {
+    lk.away = 0;
+    document.documentElement.classList.remove('privacy');
+    return;
+  }
+  if (!lk.mode && Date.now() - lk.hiddenAt >= (c.after != null ? c.after : 60) * 1000) lockNow();
+  else document.documentElement.classList.remove('privacy');
+}
+
 /* ═════════════════════════ small UI helpers ═════════════════════════ */
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
 
 function overNoteEditor(target) {
   return ui.tab === 'notes' && !!openNoteItem() && !!target && !!target.closest && !!target.closest('#editor-pane');
