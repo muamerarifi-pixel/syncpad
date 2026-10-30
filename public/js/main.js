@@ -9,7 +9,7 @@ import { Files } from './files.js';
 import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js';
 import qrcode from '/vendor/qrcode.mjs';
 
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -99,7 +99,12 @@ function wire() {
   sync.addEventListener('state', renderStatus);
   sync.addEventListener('busy', (e) => { ui.busy = e.detail; renderStatus(); });
   sync.addEventListener('synced', () => { renderStatus(); renderSaveState(); });
-  sync.addEventListener('presence', () => { rememberDevices(); renderStatus(); if (el.dlgConnect.open) renderDevices(); });
+  sync.addEventListener('presence', () => {
+    rememberDevices();
+    renderStatus();
+    if (el.dlgConnect.open) renderDevices();
+    if (el.dlgSettings.open) renderSettingsDevices(sync.devices);
+  });
   sync.addEventListener('info', () => { if (el.dlgSettings.open) renderStorage(); });
   sync.addEventListener('conflict', (e) => {
     const { from, to } = e.detail;
@@ -126,6 +131,7 @@ function wire() {
   el.btnConnect.addEventListener('click', openConnect);
   el.btnSettings.addEventListener('click', openSettings);
   el.btnLock.addEventListener('click', lockNow);
+  el.btnSettingsConnect.addEventListener('click', async () => { el.dlgSettings.close(); await sleepMs(80); openConnect(); });
 
   // text zoom (note editor)
   el.btnZoomIn.addEventListener('click', () => stepZoom(1));
@@ -243,6 +249,7 @@ function wire() {
     const v = el.setName.value.trim().slice(0, 40) || detectDeviceName();
     el.setName.value = v;
     await store.set('deviceName', v);
+    renderSettingsDevices(sync.devices);
     if (sync.wsOpen) sync.ws.send(JSON.stringify({ t: 'hi', name: v }));
   });
   el.setTheme.addEventListener('click', (e) => {
@@ -1536,8 +1543,46 @@ function openSettings() {
   el.installField.hidden = !ui.installPrompt || isStandalone();
   el.versionText.textContent = `SyncPad ${VERSION} · ${store.get('deviceName')}`;
   renderPinSettings();
+  loadDevices();
   renderStorage();
   openDialog(el.dlgSettings);
+}
+async function loadDevices() {
+  renderSettingsDevices(sync.devices);
+  if (!navigator.onLine) return;
+  try {
+    const r = await fetch(`/api/s/${store.get('space')}/devices`);
+    const j = await r.json();
+    if (Array.isArray(j.devices)) {
+      sync.devices = j.devices;
+      rememberDevices();
+      renderSettingsDevices(j.devices);
+    }
+  } catch {}
+}
+function devIcon(name) {
+  if (/ipad|tablet/i.test(name || '')) return 'tablet';
+  if (/phone|android|pixel|samsung|mobile/i.test(name || '')) return 'phone';
+  return 'laptop';
+}
+function renderSettingsDevices(list) {
+  const mine = me();
+  const devices = [...(list || [])];
+  if (!devices.some((d) => d.id === mine)) devices.unshift({ id: mine, name: store.get('deviceName'), seen: Date.now(), online: sync.wsOpen });
+  devices.sort((a, b) => (b.id === mine) - (a.id === mine) || (b.online ? 1 : 0) - (a.online ? 1 : 0) || b.seen - a.seen);
+  el.devCount.textContent = devices.length > 1 ? String(devices.length) : '';
+  el.settingsDevices.innerHTML = devices
+    .map((d) => {
+      const isMe = d.id === mine;
+      const on = d.online || (isMe && sync.wsOpen);
+      const name = (isMe ? store.get('deviceName') : d.name) || 'Device';
+      return `<div class="dev-row${on ? ' on' : ''}">
+        <span class="dev-ic"><svg class="ic"><use href="#i-${devIcon(name)}"/></svg><span class="dot"></span></span>
+        <div class="dev-main"><div class="dev-name">${esc(name)}${isMe ? '<span class="me">This device</span>' : ''}</div>
+        <div class="dev-when">${on ? 'Online now' : `Last seen ${esc(ago(d.seen))}`}</div></div>
+      </div>`;
+    })
+    .join('') + (devices.length <= 1 ? '<div class="dev-empty">No other devices yet. Tap “Add a device” to connect your phone or computer.</div>' : '');
 }
 function renderThemeSeg() {
   let t = 'system';

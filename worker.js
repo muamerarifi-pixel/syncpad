@@ -12,7 +12,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview } from './src/linkmeta.js';
 
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -20,7 +20,7 @@ const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
 const KINDS = new Set(['note', 'clip', 'file', 'settings']);
 const PAIR_TTL = 10 * 60 * 1000;
-const ROUTE = /^\/api\/s\/([A-Za-z0-9_-]{20,64})\/(ws|sync|file\/([A-Za-z0-9_-]{6,64})(?:\/(\d{1,4}|have))?)$/;
+const ROUTE = /^\/api\/s\/([A-Za-z0-9_-]{20,64})\/(ws|sync|devices|file\/([A-Za-z0-9_-]{6,64})(?:\/(\d{1,4}|have))?)$/;
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -144,6 +144,7 @@ export class SyncRoom extends DurableObject {
     const method = request.method;
 
     if (action === 'ws') return this.openSocket(request, url);
+    if (action === 'devices' && method === 'GET') return json(this.deviceList());
     if (action === 'sync' && method === 'POST') {
       const body = await request.json().catch(() => null);
       if (!body) return json({ error: 'bad json' }, 400);
@@ -207,7 +208,7 @@ export class SyncRoom extends DurableObject {
     );
   }
 
-  broadcastPresence(exclude) {
+  deviceList(exclude) {
     const online = new Set();
     for (const s of this.ctx.getWebSockets()) {
       if (s === exclude) continue;
@@ -215,10 +216,14 @@ export class SyncRoom extends DurableObject {
       if (a && a.device) online.add(a.device);
     }
     const devices = this.sql
-      .exec('SELECT id, name, seen FROM devices ORDER BY seen DESC LIMIT 30')
+      .exec('SELECT id, name, seen FROM devices ORDER BY seen DESC LIMIT 50')
       .toArray()
       .map((d) => ({ ...d, online: online.has(d.id) }));
-    const msg = JSON.stringify({ t: 'presence', online: online.size, devices });
+    return { online: online.size, devices };
+  }
+
+  broadcastPresence(exclude) {
+    const msg = JSON.stringify({ t: 'presence', ...this.deviceList(exclude) });
     for (const s of this.ctx.getWebSockets()) {
       if (s === exclude) continue;
       try { s.send(msg); } catch {}

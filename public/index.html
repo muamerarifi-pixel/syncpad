@@ -62,6 +62,9 @@
       <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
       <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
       <symbol id="i-backspace" viewBox="0 0 24 24"><path d="M21 5H9l-7 7 7 7h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1z"/><path d="m17 9-6 6M11 9l6 6"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></symbol>
+      <symbol id="i-tablet" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2.5"/><path d="M11 18h2"/></symbol>
+      <symbol id="i-laptop" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></symbol>
       <symbol id="i-sync" viewBox="0 0 24 24"><path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/></symbol>
     </defs>
   </svg>
@@ -232,6 +235,11 @@
         <span>This device's name</span>
         <input id="set-name" maxlength="40" autocomplete="off">
       </label>
+      <div class="field">
+        <span class="field-head">Devices connected to this link <b class="count" id="dev-count"></b></span>
+        <div class="dev-list" id="settings-devices"></div>
+        <button class="btn btn-soft btn-sm add-dev" id="btn-settings-connect"><svg class="ic"><use href="#i-qr"/></svg><span>Add a device</span></button>
+      </div>
       <div class="field">
         <span>Appearance</span>
         <div class="seg seg-full" id="set-theme" role="group" aria-label="Theme">

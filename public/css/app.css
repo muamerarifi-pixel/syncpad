@@ -386,6 +386,25 @@ a { color: var(--accent-text); }
 .zoom .zv { font-size: 12px; color: var(--muted); min-width: 46px; font-weight: 600; }
 .editor-text { zoom: var(--note-zoom, 1); }
 
+/* devices list (settings) */
+.field-head { display: flex; align-items: center; gap: 8px; }
+.field-head .count { font-size: 12px; font-weight: 700; color: var(--accent-text); background: var(--accent-soft); border-radius: 999px; padding: 1px 8px; }
+.field-head .count:empty { display: none; }
+.dev-list { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.dev-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+.dev-row + .dev-row { border-top: 1px solid var(--border); }
+.dev-ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none; background: var(--surface-2); color: var(--muted); position: relative; }
+.dev-ic .ic { width: 19px; height: 19px; }
+.dev-ic .dot { position: absolute; right: -2px; bottom: -2px; width: 11px; height: 11px; border: 2px solid var(--surface); }
+.dev-row.on .dev-ic .dot { background: var(--ok); }
+.dev-main { flex: 1; min-width: 0; }
+.dev-name { font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-name .me { font-size: 11.5px; font-weight: 700; color: var(--accent-text); background: var(--accent-soft); border-radius: 6px; padding: 1px 6px; margin-left: 6px; vertical-align: 1px; }
+.dev-when { font-size: 12.5px; color: var(--muted); }
+.dev-row.on .dev-when { color: var(--ok); font-weight: 600; }
+.dev-empty { padding: 14px; font-size: 13.5px; color: var(--muted); }
+.add-dev { align-self: flex-start; }
+
 /* PIN lock */
 html.locked .app, html.privacy .app { visibility: hidden; }
 .lock { position: fixed; inset: 0; z-index: 200; background: var(--bg); display: grid; place-items: center; padding: 24px; overflow-y: auto; }
