@@ -1,496 +1,199 @@
-/**
- * SyncPad Real-Time Synchronization Module
- * Handles WebSocket connection, room coordination, peer presence, and offline queue flushing.
- */
+// Sync engine: WebSocket for instant pokes + presence, the same sync call over HTTP as fallback.
+import { rid, sleep } from './util.js';
 
-import {
-  getPendingSyncItems,
-  clearPendingSyncItems,
-  applyRemoteNote,
-  getAllNotes,
-  getOrCreateDeviceId,
-  getSetting,
-  setSetting
-} from './db.js';
-
-export const SyncStatus = {
-  DISCONNECTED: 'disconnected',
-  CONNECTING: 'connecting',
-  CONNECTED: 'connected',
-  SYNCING: 'syncing',
-  OFFLINE: 'offline'
-};
-
-class SyncManager {
-  constructor() {
+export class Sync extends EventTarget {
+  constructor(store) {
+    super();
+    this.store = store;
     this.ws = null;
-    this.roomCode = null;
-    this.deviceId = null;
-    this.status = SyncStatus.DISCONNECTED;
-    this.peerCount = 1;
-    this.reconnectAttempts = 0;
-    this.reconnectTimer = null;
-    this.pingInterval = null;
-    this.listeners = new Map(); // event -> Set of callbacks
-    this.isFlushing = false;
-    this.isJoinedFromUrl = false;
-
-    // Monitor browser online/offline events
-    window.addEventListener('online', () => {
-      this.notifyStatus(SyncStatus.CONNECTING);
-      this.reconnectAttempts = 0;
-      this.connect();
-    });
-
-    window.addEventListener('offline', () => {
-      this.notifyStatus(SyncStatus.OFFLINE);
-      if (this.ws) {
-        try { this.ws.close(); } catch (_) {}
-        this.ws = null;
-      }
-    });
+    this.state = 'connecting'; // connecting | online | offline
+    this.wsOpen = false;
+    this.backoff = 1000;
+    this.running = false;
+    this.again = false;
+    this.waiters = new Map();
+    this.devices = [];
+    this.onlineCount = 0;
+    this.info = null; // usage, cap, maxFile, chunk
+    this.stopped = true;
+    this.lastOk = 0;
+    this.schedule = this.schedule.bind(this);
   }
 
-  on(event, callback) {
-    if (!this.listeners.has(event)) {
-      this.listeners.set(event, new Set());
-    }
-    this.listeners.get(event).add(callback);
-    return () => this.off(event, callback);
-  }
+  get space() { return this.store.get('space'); }
+  get device() { return this.store.get('device'); }
+  get name() { return this.store.get('deviceName'); }
 
-  off(event, callback) {
-    if (this.listeners.has(event)) {
-      this.listeners.get(event).delete(callback);
-    }
-  }
-
-  emit(event, data) {
-    if (this.listeners.has(event)) {
-      for (const cb of this.listeners.get(event)) {
-        try {
-          cb(data);
-        } catch (err) {
-          console.error(`Error in sync event listener [${event}]:`, err);
-        }
-      }
-    }
-  }
-
-  notifyStatus(status) {
-    this.status = status;
-    this.emit('statusChange', { status, roomCode: this.roomCode, peerCount: this.peerCount });
-  }
-
-  /**
-   * Generate a readable room code e.g. "PAD-742" or "SYNC-894"
-   */
-  generateRoomCode() {
-    const prefixes = ['PAD', 'SYNC', 'NOTE', 'ROOM', 'FLOW'];
-    const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-    const num = Math.floor(100 + Math.random() * 900);
-    return `${prefix}-${num}`;
-  }
-
-  /**
-   * Sanitize room code to uppercase alphanumeric with optional hyphen
-   */
-  sanitizeRoomCode(code) {
-    if (!code) return '';
-    return code.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 16);
-  }
-
-  /**
-   * Initialize sync manager with room code from URL or stored settings
-   */
-  async init() {
-    this.deviceId = await getOrCreateDeviceId();
-
-    // Check URL search param (?room=XYZ) or hash (#room=XYZ)
-    const urlParams = new URLSearchParams(window.location.search);
-    let roomFromUrl = urlParams.get('room');
-    if (!roomFromUrl && window.location.hash) {
-      const hash = window.location.hash.replace(/^#/, '');
-      const hashParams = new URLSearchParams(hash);
-      roomFromUrl = hashParams.get('room') || (hash.startsWith('room=') ? hash.split('=')[1] : null);
-    }
-
-    if (roomFromUrl) {
-      this.isJoinedFromUrl = true;
-      this.roomCode = this.sanitizeRoomCode(roomFromUrl);
-      await setSetting('roomCode', this.roomCode);
-    } else {
-      this.roomCode = await getSetting('roomCode');
-      if (!this.roomCode) {
-        this.roomCode = this.generateRoomCode();
-        await setSetting('roomCode', this.roomCode);
-      }
-    }
-
-    // Connect to room
-    this.connect();
-    return this.roomCode;
-  }
-
-  /**
-   * Switch or join a new room
-   */
-  async joinRoom(newRoomCode) {
-    const sanitized = this.sanitizeRoomCode(newRoomCode);
-    if (!sanitized) return;
-
-    if (this.roomCode === sanitized && this.status === SyncStatus.CONNECTED) {
-      return; // Already in this room
-    }
-
-    this.roomCode = sanitized;
-    await setSetting('roomCode', this.roomCode);
-
-    // Update URL query param without reload
-    const url = new URL(window.location.href);
-    url.searchParams.set('room', this.roomCode);
-    window.history.replaceState({}, '', url.toString());
-
-    // Reconnect
-    if (this.ws) {
-      try { this.ws.close(); } catch (_) {}
-      this.ws = null;
-    }
-    this.reconnectAttempts = 0;
-    this.connect();
-  }
-
-  /**
-   * Connect to WebSocket endpoint
-   */
-  connect() {
-    if (!navigator.onLine) {
-      this.notifyStatus(SyncStatus.OFFLINE);
-      return;
-    }
-
-    if (!this.roomCode) return;
-
-    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
-      return;
-    }
-
-    clearTimeout(this.reconnectTimer);
-    clearInterval(this.pingInterval);
-
-    this.notifyStatus(SyncStatus.CONNECTING);
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    if (!host) {
-      console.warn('No host available for WebSocket connection');
-      return;
-    }
-
-    const wsUrl = `${protocol}//${host}/api/room/${encodeURIComponent(this.roomCode)}/ws?deviceId=${encodeURIComponent(this.deviceId)}`;
-
-    try {
-      this.ws = new WebSocket(wsUrl);
-
-      this.ws.onopen = async () => {
-        this.reconnectAttempts = 0;
-        this.notifyStatus(SyncStatus.CONNECTED);
-
-        const localNotes = await getAllNotes();
-
-        // Send JOIN announcement with local notes (to seed empty rooms)
-        this.send({
-          type: 'JOIN',
-          roomCode: this.roomCode,
-          deviceId: this.deviceId,
-          timestamp: new Date().toISOString(),
-          notes: localNotes
-        });
-
-        // Request initial full room sync
-        this.send({
-          type: 'ROOM_SYNC_REQUEST',
-          roomCode: this.roomCode,
-          deviceId: this.deviceId,
-          notes: localNotes,
-          knownNotes: localNotes.map((n) => ({ id: n.id, updatedAt: n.updatedAt, version: n.version }))
-        });
-
-        // Flush queued offline items
-        this.flushPendingQueue();
-
-        // Start ping heartbeat (every 25 seconds)
-        this.pingInterval = setInterval(() => {
-          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.send({ type: 'PING' });
-          }
-        }, 25000);
-      };
-
-      this.ws.onmessage = async (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          await this.handleMessage(msg);
-        } catch (err) {
-          console.error('Failed to parse WebSocket message:', err, event.data);
-        }
-      };
-
-      this.ws.onclose = () => {
-        clearInterval(this.pingInterval);
-        this.ws = null;
-        if (navigator.onLine) {
-          this.notifyStatus(SyncStatus.DISCONNECTED);
-          this.scheduleReconnect();
-        } else {
-          this.notifyStatus(SyncStatus.OFFLINE);
-        }
-      };
-
-      this.ws.onerror = (err) => {
-        console.warn('WebSocket error, falling back to reconnect/REST:', err);
-        this.fallbackRestSync();
-      };
-    } catch (err) {
-      console.error('WebSocket connection error:', err);
-      this.notifyStatus(SyncStatus.DISCONNECTED);
-      this.scheduleReconnect();
-    }
-  }
-
-  scheduleReconnect() {
-    clearTimeout(this.reconnectTimer);
-    // Exponential backoff: 1s, 2s, 4s, 8s, up to 30s
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-    this.reconnectAttempts++;
-
-    this.reconnectTimer = setTimeout(() => {
-      this.connect();
-    }, delay);
-  }
-
-  send(data) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify(data));
-        return true;
-      } catch (err) {
-        console.error('Error sending WS message:', err);
-        return false;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Broadcast local note update to all peers in room
-   */
-  broadcastNoteUpdate(note) {
-    const sent = this.send({
-      type: 'NOTE_UPDATE',
-      roomCode: this.roomCode,
-      deviceId: this.deviceId,
-      note
-    });
-
-    if (!sent) {
-      this.notifyStatus(navigator.onLine ? SyncStatus.DISCONNECTED : SyncStatus.OFFLINE);
-    }
-  }
-
-  /**
-   * Broadcast note deletion to all peers in room
-   */
-  broadcastNoteDelete(noteId, updatedAt, version) {
-    this.send({
-      type: 'NOTE_DELETE',
-      roomCode: this.roomCode,
-      deviceId: this.deviceId,
-      noteId,
-      updatedAt,
-      version
-    });
-  }
-
-  /**
-   * Handle incoming WebSocket messages
-   */
-  async handleMessage(msg) {
-    switch (msg.type) {
-      case 'PEER_PRESENCE': {
-        this.peerCount = msg.count || 1;
-        this.emit('presence', { count: this.peerCount, peers: msg.peers });
-        break;
-      }
-
-      case 'NOTE_UPDATE': {
-        if (!msg.note) break;
-        // Skip echo of own update if deviceId matches
-        if (msg.deviceId === this.deviceId) break;
-
-        const { applied, note } = await applyRemoteNote(msg.note);
-        if (applied) {
-          this.emit('remoteNoteChange', { note, action: 'update' });
-        }
-        break;
-      }
-
-      case 'NOTE_DELETE': {
-        if (msg.deviceId === this.deviceId) break;
-
-        const tombstone = {
-          id: msg.noteId,
-          updatedAt: msg.updatedAt || new Date().toISOString(),
-          version: msg.version || 1,
-          isDeleted: true
-        };
-        const { applied } = await applyRemoteNote(tombstone);
-        if (applied) {
-          this.emit('remoteNoteChange', { note: tombstone, action: 'delete' });
-        }
-        break;
-      }
-
-      case 'ROOM_SYNC_RESPONSE': {
-        // Bulk sync received from server or peer
-        let updatedAny = false;
-        if (Array.isArray(msg.notes)) {
-          for (const remoteNote of msg.notes) {
-            const { applied } = await applyRemoteNote(remoteNote);
-            if (applied) updatedAny = true;
-          }
-        }
-        if (Array.isArray(msg.deletedNotes)) {
-          for (const tombstone of msg.deletedNotes) {
-            const { applied } = await applyRemoteNote(tombstone);
-            if (applied) updatedAny = true;
-          }
-        }
-        this.emit('roomSynced', { count: (msg.notes ? msg.notes.length : 0) });
-        break;
-      }
-
-      case 'ROOM_SYNC_REQUEST': {
-        // Another peer requested room sync; send our active notes
-        if (msg.deviceId !== this.deviceId) {
-          const notes = await getAllNotes();
-          this.send({
-            type: 'ROOM_SYNC_RESPONSE',
-            roomCode: this.roomCode,
-            deviceId: this.deviceId,
-            targetDeviceId: msg.deviceId,
-            notes
-          });
-        }
-        break;
-      }
-
-      case 'PONG': {
-        // Heartbeat ACK
-        break;
-      }
-
-      default:
-        break;
-    }
-  }
-
-  /**
-   * Flush pending offline edits to the server
-   */
-  async flushPendingQueue() {
-    if (this.isFlushing) return;
-    this.isFlushing = true;
-
-    try {
-      const items = await getPendingSyncItems();
-      if (!items || items.length === 0) {
-        this.isFlushing = false;
-        return;
-      }
-
-      this.notifyStatus(SyncStatus.SYNCING);
-
-      // Coalesce pending queue items by noteId: keep the latest state/action per noteId
-      const latestPerNote = new Map();
-      const allItemIds = items.map((i) => i.id);
-
-      for (const item of items) {
-        latestPerNote.set(item.noteId, item);
-      }
-
-      for (const item of latestPerNote.values()) {
-        if (item.action === 'UPSERT') {
-          this.send({
-            type: 'NOTE_UPDATE',
-            roomCode: this.roomCode,
-            deviceId: this.deviceId,
-            note: item.data
-          });
-        } else if (item.action === 'DELETE') {
-          this.send({
-            type: 'NOTE_DELETE',
-            roomCode: this.roomCode,
-            deviceId: this.deviceId,
-            noteId: item.noteId,
-            updatedAt: item.data?.updatedAt,
-            version: item.data?.version
-          });
-        }
-      }
-
-      await clearPendingSyncItems(allItemIds);
-      this.notifyStatus(SyncStatus.CONNECTED);
-    } catch (err) {
-      console.error('Error flushing sync queue:', err);
-    } finally {
-      this.isFlushing = false;
-    }
-  }
-
-  /**
-   * Fallback REST sync when WebSockets are unavailable
-   */
-  async fallbackRestSync() {
-    if (!navigator.onLine || !this.roomCode) return;
-
-    try {
-      const pending = await getPendingSyncItems();
-      const localNotes = await getAllNotes();
-
-      const response = await fetch(`/api/room/${encodeURIComponent(this.roomCode)}/sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceId: this.deviceId,
-          changes: pending.map((p) => p.data),
-          clientNotes: localNotes
-        })
+  start() {
+    this.stopped = false;
+    if (!this.listening) {
+      this.listening = true;
+      addEventListener('online', () => {
+        this.backoff = 1000;
+        if (this.wsOpen) this.setState('online');
+        this.connect();
+        this.schedule();
       });
+      addEventListener('offline', () => this.setState('offline'));
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') { this.connect(); this.schedule(); }
+      });
+      // Safety net when WebSockets are blocked (some proxies / captive networks)
+      setInterval(() => {
+        if (!this.stopped && !this.wsOpen && navigator.onLine && document.visibilityState === 'visible') this.syncNow();
+      }, 15000);
+      setInterval(() => { if (this.wsOpen) try { this.ws.send('ping'); } catch {} }, 30000);
+    }
+    this.connect();
+    this.syncNow();
+  }
 
-      if (response.ok) {
-        const data = await response.json();
-        if (data) {
-          if (Array.isArray(data.notes)) {
-            for (const note of data.notes) {
-              await applyRemoteNote(note);
-            }
-          }
-          if (Array.isArray(data.deletedNotes)) {
-            for (const tombstone of data.deletedNotes) {
-              await applyRemoteNote(tombstone);
-            }
-          }
-          if (pending.length > 0) {
-            await clearPendingSyncItems(pending.map((p) => p.id));
-          }
-          this.emit('roomSynced', { count: data.notes ? data.notes.length : 0 });
-        }
+  stop() {
+    this.stopped = true;
+    if (this.ws) { try { this.ws.close(); } catch {} this.ws = null; }
+    this.wsOpen = false;
+  }
+
+  setState(s) {
+    if (this.state === s) return;
+    this.state = s;
+    this.emit('state');
+  }
+
+  emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
+
+  connect() {
+    if (this.stopped || !this.space || !navigator.onLine) {
+      if (!navigator.onLine) this.setState('offline');
+      return;
+    }
+    if (this.ws && (this.ws.readyState === 0 || this.ws.readyState === 1)) return;
+    clearTimeout(this.reconnectTimer);
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const qs = new URLSearchParams({ d: this.device, n: this.name || '' });
+    let ws;
+    try { ws = new WebSocket(`${proto}://${location.host}/api/s/${this.space}/ws?${qs}`); } catch { return this.retry(); }
+    this.ws = ws;
+    ws.onopen = () => {
+      this.wsOpen = true;
+      this.backoff = 1000;
+      ws.send(JSON.stringify({ t: 'hi', name: this.name }));
+      this.setState('online');
+      this.syncNow();
+    };
+    ws.onmessage = (ev) => {
+      if (ev.data === 'pong') return;
+      let m;
+      try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.t === 'poke') {
+        if (m.seq > (this.store.get('seq') || 0)) this.schedule();
+      } else if (m.t === 'presence') {
+        this.devices = m.devices || [];
+        this.onlineCount = m.online || 0;
+        this.emit('presence');
+      } else if (m.t === 'sync' && this.waiters.has(m.rid)) {
+        this.waiters.get(m.rid).resolve(m);
+        this.waiters.delete(m.rid);
       }
-    } catch (_) {
-      // Quietly ignore REST failure
+    };
+    ws.onclose = () => {
+      if (this.ws === ws) this.ws = null;
+      this.wsOpen = false;
+      for (const w of this.waiters.values()) w.reject(new Error('closed'));
+      this.waiters.clear();
+      this.onlineCount = 0;
+      this.emit('presence');
+      if (this.stopped) return;
+      this.setState(navigator.onLine ? (Date.now() - this.lastOk < 60000 ? 'online' : 'connecting') : 'offline');
+      this.retry();
+    };
+    ws.onerror = () => {};
+  }
+
+  retry() {
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => this.connect(), this.backoff);
+    this.backoff = Math.min(this.backoff * 2, 30000);
+  }
+
+  /** Coalesce bursts of local edits into one round trip */
+  schedule() {
+    clearTimeout(this.schedTimer);
+    this.schedTimer = setTimeout(() => this.syncNow(), 120);
+  }
+
+  async syncNow() {
+    if (this.stopped || !this.space) return;
+    if (this.running) { this.again = true; return; }
+    this.running = true;
+    try {
+      do {
+        this.again = false;
+        await this.round();
+      } while (this.again && !this.stopped);
+    } catch (err) {
+      if (!this.wsOpen) this.setState(navigator.onLine ? 'connecting' : 'offline');
+      // retry soon if there is unsent work
+      if (this.store.outbox.size) setTimeout(() => this.schedule(), 5000);
+    } finally {
+      this.running = false;
+    }
+  }
+
+  async round() {
+    for (let i = 0; i < 25; i++) {
+      const sent = this.store.pendingOps(50);
+      const ops = sent.map((e) => ({ ...e.op, baseRev: e.baseRev }));
+      this.emit('busy', true);
+      let res;
+      try {
+        res = await this.call({ since: this.store.get('seq') || 0, ops, device: this.device, name: this.name });
+      } finally {
+        this.emit('busy', false);
+      }
+      if (res.error) throw new Error(res.error);
+      this.lastOk = Date.now();
+      this.setState('online');
+      const events = await this.store.handleAcks(sent, res.acks, this.device);
+      await this.store.applyRemote(res.changes);
+      await this.store.set('seq', res.seq);
+      this.info = { usage: res.usage, total: res.total, cap: res.cap, maxFile: res.maxFile, chunk: res.chunk };
+      this.emit('info');
+      for (const ev of events) this.emit(ev.type, ev);
+      if (!res.more && sent.length < 50) break;
+    }
+    this.emit('synced');
+  }
+
+  async call(body) {
+    if (this.wsOpen && this.ws) {
+      const id = rid(10);
+      const p = new Promise((resolve, reject) => {
+        this.waiters.set(id, { resolve, reject });
+        setTimeout(() => { if (this.waiters.has(id)) { this.waiters.delete(id); reject(new Error('timeout')); } }, 20000);
+      });
+      try {
+        this.ws.send(JSON.stringify({ t: 'sync', rid: id, ...body }));
+        return await p;
+      } catch (e) {
+        // fall through to HTTP
+      }
+    }
+    const r = await fetch(`/api/s/${this.space}/sync`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error('http ' + r.status);
+    return r.json();
+  }
+
+  /** Wait until the outbox is empty (used before leaving a space) */
+  async flush(timeout = 8000) {
+    const t0 = Date.now();
+    while (this.store.outbox.size && Date.now() - t0 < timeout) {
+      await this.syncNow();
+      await sleep(300);
     }
   }
 }
-
-export const syncManager = new SyncManager();

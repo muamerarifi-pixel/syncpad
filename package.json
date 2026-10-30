@@ -1,27 +1,27 @@
 {
   "name": "syncpad",
-  "version": "1.0.0",
-  "description": "Distraction-free, real-time cross-device Notes & Markdown Editor PWA deployed on Cloudflare Workers",
+  "version": "2.0.0",
+  "description": "Send files, links and notes between all your devices \u2014 offline-first PWA on Cloudflare Workers (free plan)",
   "type": "module",
   "main": "worker.js",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/api.test.mjs",
+    "test:e2e": "node test/e2e-two-devices.mjs && node test/e2e-flows.mjs"
   },
   "keywords": [
-    "markdown",
-    "editor",
-    "real-time",
+    "file-sharing",
+    "notes",
+    "sync",
     "pwa",
     "cloudflare-workers",
     "durable-objects",
-    "websockets",
     "offline-first"
   ],
   "author": "Muamer Arifi",
   "license": "MIT",
   "devDependencies": {
-    "wrangler": "^3.100.0"
+    "wrangler": "^4.156.0"
   }
 }

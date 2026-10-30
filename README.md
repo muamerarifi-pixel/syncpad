@@ -1,171 +1,49 @@
-# SyncPad 🚀
+# SyncPad
 
-> **Distraction-free, real-time cross-device Notes & Markdown Editor PWA** deployed on Cloudflare Workers.
+Send files, links and notes between all your devices — phone, laptop, tablet — in one tap. No accounts, no passwords. Works offline and runs entirely on Cloudflare's free plan.
 
-SyncPad is an offline-first, zero-friction Progressive Web Application that lets you write, preview, organize, and synchronize markdown notes instantaneously across all your phones, laptops, and tablets without requiring passwords or account creation.
+## What it does
 
----
+- **Drops**: drag & drop files anywhere, paste (Ctrl+V), pick files, or type a message. It appears on every connected device instantly. Any file type, up to 200 MB each. Images and videos get previews; links get a title card.
+- **Notes**: markdown notes that sync as you type. The first line is the title, `#tags` organise them, `- [ ]` makes checklists you can tick in Read mode, and you can drop files straight into a note.
+- **Connect a device** in one step: scan the QR code with your phone camera, or type the 6-digit code (valid 10 minutes) on a computer.
+- **Install it** on every device (PWA). On Android it shows up in the system **Share** menu, so you can share any file or link to your other devices.
+- **Offline-first**: everything is saved on the device first and syncs when you're back online, including queued file uploads, which resume where they stopped.
 
-## ✨ Features
+## Where files are stored
 
-- **⚡ Zero-Friction Cross-Device Sync**:
-  - Private sync room codes (e.g. `PAD-742`, `SYNC-492`).
-  - Shareable link (`https://your-domain.com/?room=SYNC-492`) connects phones and tablets in 1 click.
-  - Live bi-directional updates via WebSockets backed by Cloudflare Workers & Durable Objects.
-- **🛡️ 100% Offline-First Architecture**:
-  - Full local persistence via browser **IndexedDB**.
-  - Queued offline edits sync automatically when back online.
-  - Robust Last-Write-Wins (LWW) conflict resolution with UTC timestamps and version counters.
-- **📝 Distraction-Free Markdown Editor**:
-  - Live side-by-side **Split View**, **Editor Only**, and **Preview Only** modes.
-  - Instant word count, character count, line count, and reading time statistics.
-  - Rich Markdown support: headings, code blocks with syntax copy, blockquotes, tables, task lists (`- [ ]`), strikethrough, highlights, and safe link sanitization.
-  - Quick formatting toolbar + keyboard shortcuts (`Ctrl+B`, `Ctrl+I`, `Ctrl+S`, `Ctrl+N`, `Ctrl+P`).
-- **🏷️ Smart Organization**:
-  - Instant real-time search across titles, content, and tags.
-  - Tag filtering with interactive tag chips.
-  - Pinned notes section (`⭐ Pin`) keeping your essential notes at the top.
-  - Export notes as `.md` files or copy raw markdown to clipboard with 1 click.
-- **📱 Installable PWA & Responsive Design**:
-  - Full Progressive Web App (PWA) with Service Worker offline caching and Web App Manifest.
-  - Works seamlessly on mobile devices with slide-out navigation and responsive split views.
-  - Dark and Light themes with automatic system preference detection.
+Files are kept in the same Cloudflare Durable Object (SQLite) that already powers sync, split into 1 MiB pieces. No R2 bucket, KV namespace or other extra Cloudflare resource is needed.
 
----
+- The Workers free plan includes **5 GB** of Durable Object storage per account (shared with any other apps on the account). SyncPad caps itself at **3 GB** so your other apps always have room.
+- **Settings → Clean up old drops automatically** can remove drops after 1/7/30 days. Pinned drops and notes are never removed.
 
-## 🏗️ Architecture
+## Privacy & security
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   SyncPad Client (PWA)                      │
-│                                                             │
-│  ┌──────────────────┐  IndexedDB  ┌──────────────────────┐  │
-│  │  Markdown Editor │ ──────────> │   Local Notes Store  │  │
-│  │  & Live Preview  │             │   & Sync Outbox      │  │
-│  └──────────────────┘             └──────────┬───────────┘  │
-│                                              │              │
-│                                     WebSocket / REST        │
-└──────────────────────────────────────────────┼──────────────┘
-                                               │
-                                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 Cloudflare Workers Edge                     │
-│                                                             │
-│  ┌─────────────────────────┐     ┌───────────────────────┐  │
-│  │ Workers Static Assets   │     │ SyncRoom (Durable     │  │
-│  │ (Serves ./public)       │     │ Object / WebSockets)  │  │
-│  └─────────────────────────┘     └───────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
+- Each set of devices shares a private **144-bit random key** (not guessable; v1's 3-digit room codes are gone and rejected by the server).
+- Pairing codes are 6 digits, expire after 10 minutes and are rate-limited.
+- Uploaded files are served with a sandbox CSP and `nosniff`, so an uploaded HTML/SVG file can never run scripts inside the app.
+- No trackers, no third-party requests. Link previews are fetched server-side and only text (title, site, description) is kept.
 
-### Sync Protocol
+## Sync design (for developers)
 
-1. **Connection**: Client opens a WebSocket to `/api/room/{roomCode}/ws?deviceId={id}`.
-2. **Join / Handshake**: Client sends `JOIN`, server welcomes client and returns active room notes (`ROOM_SYNC_RESPONSE`).
-3. **Live Propagation**: Edits emit `NOTE_UPDATE` to all other connected peers in the same room.
-4. **Presence**: Server broadcasts `PEER_PRESENCE` with active device count.
-5. **Conflict Resolution**: Client and Server use deterministic Last-Write-Wins (LWW) based on UTC `updatedAt` timestamps and incremental note version counters.
-6. **Fallback**: If WebSockets are blocked by proxies, client falls back to `/api/room/{roomCode}/sync` REST endpoint.
+- `worker.js`: routes + `SyncRoom` Durable Object (one instance per space, plus one `__global__` instance for pairing codes and the storage cap).
+- Every change gets a server-assigned sequence number; clients pull `seq > lastSeen`. Clock skew between devices doesn't matter.
+- Writes carry the revision they were based on. If two devices edit the same note without seeing each other's change, the server keeps both (the second becomes a "conflict copy") instead of silently overwriting.
+- WebSockets (with hibernation) give instant updates and presence; the same sync call works over plain HTTP if WebSockets are blocked.
 
----
+## Develop
 
-## 📁 Project Structure
-
-```
-syncpad/
-├── public/
-│   ├── css/
-│   │   └── style.css            # Responsive styles & dark/light theme
-│   ├── js/
-│   │   ├── app.js               # Application coordinator & keyboard shortcuts
-│   │   ├── db.js                # Offline-first IndexedDB manager
-│   │   ├── markdown.js          # Zero-dependency Markdown parser & sanitizer
-│   │   ├── sync.js              # WebSocket & room sync manager
-│   │   └── ui.js                # Reactive DOM rendering & toast notifications
-│   ├── icons/
-│   │   ├── favicon.svg          # App favicon
-│   │   ├── icon-192.svg         # PWA icon 192x192
-│   │   └── icon-512.svg         # PWA icon 512x512
-│   ├── index.html               # Semantic HTML5 app shell
-│   ├── manifest.webmanifest     # PWA manifest
-│   └── sw.js                    # PWA Service Worker for offline caching
-├── test/
-│   ├── markdown.test.js         # Automated Markdown parser tests
-│   └── worker.test.js           # Automated Cloudflare Worker sync tests
-├── worker.js                    # Cloudflare Worker & Durable Object backend
-├── wrangler.jsonc               # Cloudflare Wrangler configuration
-├── package.json                 # Project scripts and dependencies
-└── README.md                    # Project documentation
-```
-
----
-
-## 🚀 Cloudflare Deployment
-
-SyncPad is designed for deployment with [Cloudflare Workers](https://workers.cloudflare.com/) and [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/).
-
-### Prerequisites
-
-Ensure you have [Node.js](https://nodejs.org/) installed and a Cloudflare account.
-
-### 1. Install Dependencies
 ```bash
 npm install
+npx wrangler dev                 # http://localhost:8787
+npm test                         # API tests (needs wrangler dev running)
+npm run test:e2e                 # browser tests with two simulated devices (needs Playwright)
 ```
 
-### 2. Login to Cloudflare
-```bash
-npx wrangler login
-```
+Pushing to `main` deploys automatically via Cloudflare Workers Builds.
 
-### 3. Deploy
-```bash
-npx wrangler deploy
-```
+## Upgrading from v1
 
-Wrangler will upload the static assets from `./public` and deploy `worker.js` with the `SyncRoom` Durable Object binding. Your SyncPad instance is now live globally on the Cloudflare Edge network!
+Notes saved on a device by v1 are imported automatically the first time v2 opens there (images included). The old local database is left untouched as a backup.
 
----
-
-## 💻 Local Development
-
-Run the local Cloudflare Workers development server:
-
-```bash
-npx wrangler dev
-```
-
-Open `http://localhost:8787` in your browser. You can open multiple tabs or windows to test real-time multi-device sync locally!
-
-To run unit tests:
-```bash
-npm test
-```
-
----
-
-## ⌨️ Keyboard Shortcuts
-
-| Shortcut | Action |
-| :--- | :--- |
-| `Ctrl + N` / `Cmd + N` | Create a new note |
-| `Ctrl + S` / `Cmd + S` | Force save and sync |
-| `Ctrl + P` / `Cmd + P` | Toggle Preview mode |
-| `Ctrl + B` | Insert bold markdown (`**bold**`) |
-| `Ctrl + I` | Insert italic markdown (`*italic*`) |
-| `Escape` | Close sync room modal / close mobile menu |
-
----
-
-## 🔒 Security & Privacy
-
-- **Zero Trackers**: No third-party analytics, advertisements, or tracking scripts.
-- **Private Room Codes**: Each room is isolated. Devices only receive updates for the room code they join.
-- **Client-Side Sanitization**: Markdown parsing enforces strict HTML escaping and blocks dangerous URI schemes (like `javascript:`).
-- **Offline Data Sovereignty**: All notes are stored locally in your browser's IndexedDB.
-
----
-
-## 📄 License
-
-MIT License &copy; 2026 Muamer Arifi
+MIT © 2026 Muamer Arifi

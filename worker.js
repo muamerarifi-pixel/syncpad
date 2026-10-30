@@ -1,967 +1,609 @@
 /**
- * SyncPad Cloudflare Worker Backend
- * Serves Static Assets from ./public and provides real-time multi-device sync
- * via WebSockets & REST with Cloudflare Durable Objects.
+ * SyncPad v2 — Cloudflare Worker + Durable Object backend
+ *
+ * One Durable Object instance per "space" (a private, unguessable 144-bit key shared
+ * by all of your devices). Notes, clips and file metadata live in the object's SQLite
+ * database; file bytes are stored in 1 MiB chunks in the same database, so no extra
+ * Cloudflare resources (R2, KV, D1) are needed and everything stays on the free plan.
+ *
+ * A single "__global__" instance handles 6-digit pairing codes and a storage cap that
+ * protects the account-wide 5 GB free Durable Object storage your other apps share.
  */
+import { DurableObject } from 'cloudflare:workers';
+import { getLinkPreview } from './src/linkmeta.js';
 
-// Lightweight WebSocketPair fallback for Node.js test environments
-class SimpleWebSocketPair {
-  constructor() {
-    const listenersA = new Map();
-    const listenersB = new Map();
+const VERSION = '2.0.0';
+const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
+const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
+const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
+const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
+const ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
+const KINDS = new Set(['note', 'clip', 'file', 'settings']);
+const PAIR_TTL = 10 * 60 * 1000;
+const ROUTE = /^\/api\/s\/([A-Za-z0-9_-]{20,64})\/(ws|sync|file\/([A-Za-z0-9_-]{6,64})(?:\/(\d{1,4}|have))?)$/;
 
-    const createEndpoint = (myListeners, peerListeners) => ({
-      readyState: 1, // OPEN
-      accept() {},
-      send(data) {
-        const cbs = peerListeners.get('message') || [];
-        for (const cb of cbs) {
-          try { cb({ data }); } catch (err) { console.error(err); }
-        }
-      },
-      close() {
-        this.readyState = 3; // CLOSED
-        const cbs = peerListeners.get('close') || [];
-        for (const cb of cbs) cb();
-      },
-      addEventListener(type, cb) {
-        if (!myListeners.has(type)) myListeners.set(type, []);
-        myListeners.get(type).push(cb);
-      }
-    });
+const json = (data, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
+  });
 
-    this[0] = createEndpoint(listenersA, listenersB);
-    this[1] = createEndpoint(listenersB, listenersA);
-  }
+const clean = (v, max) => String(v ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, max);
+
+function globalStub(env) {
+  return env.SYNC_ROOM.get(env.SYNC_ROOM.idFromName('__global__'));
 }
 
-const WSPair = typeof WebSocketPair !== 'undefined' ? WebSocketPair : SimpleWebSocketPair;
-
-export class SyncRoom {
-  constructor(ctx, env) {
-    this.ctx = ctx;
-    this.env = env;
-    this.sessions = new Map(); // webSocket -> { deviceId }
-    this.notes = new Map(); // noteId -> note object
-
-    // Load persisted room notes if storage is available
-    if (this.ctx && this.ctx.storage) {
-      this.ctx.blockConcurrencyWhile(async () => {
-        try {
-          const stored = await this.ctx.storage.get('notes');
-          if (stored && typeof stored === 'object') {
-            this.notes = new Map(Object.entries(stored));
-          }
-        } catch (err) {
-          console.error('Failed to load notes from DO storage:', err);
-        }
-      });
-    }
-  }
-
-  shouldApplyNote(incoming, existing) {
-    if (!existing) return true;
-    const incomingTime = new Date(incoming.updatedAt || 0).getTime();
-    const existingTime = new Date(existing.updatedAt || 0).getTime();
-    if (incomingTime > existingTime) return true;
-    if (incomingTime < existingTime) return false;
-    return (incoming.version || 0) >= (existing.version || 0);
-  }
-
-  async fetch(request) {
-    const url = new URL(request.url);
-
-    // WebSocket Upgrade
-    if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
-      const pair = new WSPair();
-      const [client, server] = [pair[0], pair[1]];
-
-      const deviceId = url.searchParams.get('deviceId') || `dev_${Math.random().toString(36).slice(2, 8)}`;
-      await this.handleSession(server, deviceId);
-
-      try {
-        return new Response(null, {
-          status: 101,
-          webSocket: client
-        });
-      } catch (_) {
-        // Fallback for Node.js test environment where undici restricts Response status to 200-599
-        return {
-          status: 101,
-          webSocket: client,
-          headers: new Headers({ Upgrade: 'websocket' })
-        };
+function manifest(url) {
+  const s = url.searchParams.get('s');
+  // The space key in start_url lets iOS home-screen installs (which get their own
+  // storage, separate from Safari) open already connected.
+  const start = s && KEY_RE.test(s) ? `/?s=${s}` : '/';
+  return new Response(
+    JSON.stringify({
+      id: '/',
+      name: 'SyncPad',
+      short_name: 'SyncPad',
+      description: 'Send files, links and notes between all your devices.',
+      start_url: start,
+      scope: '/',
+      display: 'standalone',
+      background_color: '#f6f7f9',
+      theme_color: '#ffffff',
+      icons: [
+        { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+        { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+      ],
+      share_target: {
+        action: '/share-target',
+        method: 'POST',
+        enctype: 'multipart/form-data',
+        params: { title: 'title', text: 'text', url: 'url', files: [{ name: 'files', accept: ['*/*'] }] }
       }
-    }
-
-    // REST Sync Endpoint: POST /api/room/:roomCode/sync or POST /api/sync
-    if (request.method === 'POST') {
-      try {
-        const body = await request.json();
-        const syncResult = await this.handleRestSync(body);
-        return new Response(JSON.stringify(syncResult), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          }
-        });
-      } catch (err) {
-        return new Response(JSON.stringify({ error: err.message }), {
-          status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          }
-        });
-      }
-    }
-
-    return new Response(JSON.stringify({ status: 'ok', roomNotesCount: this.notes.size }), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      }
-    });
-  }
-
-  async handleSession(webSocket, deviceId) {
-    webSocket.accept();
-    this.sessions.set(webSocket, { deviceId });
-
-    // Broadcast presence update to everyone in room
-    this.broadcastPresence();
-
-    webSocket.addEventListener('message', async (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        await this.handleMessage(webSocket, deviceId, msg);
-      } catch (err) {
-        console.error('Error handling WebSocket message in DO:', err);
-      }
-    });
-
-    const cleanup = () => {
-      this.sessions.delete(webSocket);
-      this.broadcastPresence();
-    };
-
-    webSocket.addEventListener('close', cleanup);
-    webSocket.addEventListener('error', cleanup);
-  }
-
-  broadcastPresence() {
-    const count = this.sessions.size;
-    const payload = JSON.stringify({
-      type: 'PEER_PRESENCE',
-      count
-    });
-
-    for (const [ws] of this.sessions) {
-      try {
-        ws.send(payload);
-      } catch (_) {}
-    }
-  }
-
-  async handleMessage(senderWs, senderDeviceId, msg) {
-    switch (msg.type) {
-      case 'PING': {
-        try {
-          senderWs.send(JSON.stringify({ type: 'PONG' }));
-        } catch (_) {}
-        break;
-      }
-
-      case 'JOIN': {
-        // If client sends existing notes on join, merge with room
-        if (Array.isArray(msg.notes)) {
-          for (const note of msg.notes) {
-            if (note && note.id) {
-              const existing = this.notes.get(note.id);
-              if (this.shouldApplyNote(note, existing)) {
-                this.notes.set(note.id, note);
-              }
-            }
-          }
-          await this.persistNotes();
-        }
-
-        // Send active notes and tombstones so newly joined devices delete removed notes
-        const allNotes = Array.from(this.notes.values());
-        try {
-          senderWs.send(JSON.stringify({
-            type: 'ROOM_SYNC_RESPONSE',
-            notes: allNotes.filter((n) => !n.isDeleted),
-            deletedNotes: allNotes.filter((n) => n.isDeleted)
-          }));
-        } catch (_) {}
-        break;
-      }
-
-      case 'ROOM_SYNC_REQUEST': {
-        if (Array.isArray(msg.notes)) {
-          for (const note of msg.notes) {
-            if (note && note.id) {
-              const existing = this.notes.get(note.id);
-              if (this.shouldApplyNote(note, existing)) {
-                this.notes.set(note.id, note);
-              }
-            }
-          }
-          await this.persistNotes();
-        }
-
-        const allNotes = Array.from(this.notes.values());
-        try {
-          senderWs.send(JSON.stringify({
-            type: 'ROOM_SYNC_RESPONSE',
-            notes: allNotes.filter((n) => !n.isDeleted),
-            deletedNotes: allNotes.filter((n) => n.isDeleted)
-          }));
-        } catch (_) {}
-        break;
-      }
-
-      case 'NOTE_UPDATE': {
-        if (!msg.note || !msg.note.id) break;
-        const incoming = msg.note;
-        const existing = this.notes.get(incoming.id);
-
-        if (this.shouldApplyNote(incoming, existing)) {
-          this.notes.set(incoming.id, incoming);
-          await this.persistNotes();
-
-          // Broadcast to all other peers in the room
-          this.broadcast(JSON.stringify({
-            type: 'NOTE_UPDATE',
-            deviceId: senderDeviceId,
-            note: incoming
-          }), senderWs);
-        } else {
-          // Reject stale edit and notify sender of the authoritative current version
-          try {
-            senderWs.send(JSON.stringify({
-              type: 'NOTE_UPDATE',
-              deviceId: 'server',
-              note: existing
-            }));
-          } catch (_) {}
-        }
-        break;
-      }
-
-      case 'NOTE_DELETE': {
-        if (!msg.noteId) break;
-        const existing = this.notes.get(msg.noteId);
-        const tombstone = {
-          id: msg.noteId,
-          updatedAt: msg.updatedAt || new Date().toISOString(),
-          version: msg.version || (existing && existing.version ? existing.version + 1 : 1),
-          isDeleted: true
-        };
-
-        if (this.shouldApplyNote(tombstone, existing)) {
-          this.notes.set(msg.noteId, tombstone);
-          await this.persistNotes();
-
-          this.broadcast(JSON.stringify({
-            type: 'NOTE_DELETE',
-            deviceId: senderDeviceId,
-            noteId: msg.noteId,
-            updatedAt: tombstone.updatedAt,
-            version: tombstone.version
-          }), senderWs);
-        }
-        break;
-      }
-
-      default:
-        break;
-    }
-  }
-
-  broadcast(messageString, excludeWs = null) {
-    for (const [ws] of this.sessions) {
-      if (ws !== excludeWs) {
-        try {
-          ws.send(messageString);
-        } catch (_) {}
-      }
-    }
-  }
-
-  async handleRestSync({ deviceId, changes = [], clientNotes = [] }) {
-    const updatedNotes = [];
-
-    // Apply changes from client
-    for (const note of changes) {
-      if (note && note.id) {
-        const existing = this.notes.get(note.id);
-        if (this.shouldApplyNote(note, existing)) {
-          this.notes.set(note.id, note);
-          updatedNotes.push(note);
-        }
-      }
-    }
-
-    // Apply any newer client notes
-    for (const clientNote of clientNotes) {
-      if (!clientNote || !clientNote.id) continue;
-      const existing = this.notes.get(clientNote.id);
-      if (this.shouldApplyNote(clientNote, existing)) {
-        this.notes.set(clientNote.id, clientNote);
-        updatedNotes.push(clientNote);
-      }
-    }
-
-    if (updatedNotes.length > 0) {
-      await this.persistNotes();
-
-      // Broadcast updates to connected WebSocket peers in this room
-      for (const note of updatedNotes) {
-        this.broadcast(JSON.stringify({
-          type: note.isDeleted ? 'NOTE_DELETE' : 'NOTE_UPDATE',
-          deviceId: deviceId || 'rest_client',
-          noteId: note.id,
-          note: note.isDeleted ? undefined : note,
-          updatedAt: note.updatedAt,
-          version: note.version
-        }));
-      }
-    }
-
-    const all = Array.from(this.notes.values());
-    // Return active notes and tombstones
-    return {
-      notes: all.filter((n) => !n.isDeleted),
-      deletedNotes: all.filter((n) => n.isDeleted)
-    };
-  }
-
-  async persistNotes() {
-    if (this.ctx && this.ctx.storage) {
-      try {
-        const obj = Object.fromEntries(this.notes);
-        await this.ctx.storage.put('notes', obj);
-      } catch (err) {
-        console.error('Error persisting notes in DO:', err);
-      }
-    }
-  }
-}
-
-// In-Memory fallback for environments without Durable Object bindings (e.g. tests, standard workers)
-const memoryRooms = new Map();
-
-function getMemoryRoom(roomCode) {
-  if (!memoryRooms.has(roomCode)) {
-    memoryRooms.set(roomCode, new SyncRoom(null, null));
-  }
-  return memoryRooms.get(roomCode);
-}
-
-/**
- * Safe SSRF check: prevents requests to private, internal or loopback IP ranges
- */
-export function isPrivateOrLocalHost(hostname) {
-  if (!hostname) return true;
-  const raw = hostname.toLowerCase().trim();
-  const host = raw.replace(/^\[|\]$/g, '');
-
-  if (
-    host === 'localhost' ||
-    host === '127.0.0.1' ||
-    host === '0.0.0.0' ||
-    host === '::1' ||
-    host === '::' ||
-    host === '0:0:0:0:0:0:0:1' ||
-    host.endsWith('.localhost') ||
-    host.endsWith('.local') ||
-    host.endsWith('.internal') ||
-    host === 'metadata.google.internal' ||
-    host === 'instance-data'
-  ) {
-    return true;
-  }
-
-  // IPv6 mapped IPv4 or special ranges
-  if (host.startsWith('::ffff:')) {
-    return isPrivateOrLocalHost(host.substring(7));
-  }
-  if (host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) {
-    return true;
-  }
-
-  // IPv4 check: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 (link-local), 100.64.0.0/10
-  const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const a = parseInt(ipv4Match[1], 10);
-    const b = parseInt(ipv4Match[2], 10);
-    if (a === 127 || a === 10 || a === 0) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true; // cloud metadata / link-local
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  }
-
-  return false;
-}
-
-/**
- * Decode HTML entities in extracted metadata
- */
-export function decodeHtmlEntities(str) {
-  if (!str) return '';
-  return str
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&mdash;/g, '—')
-    .replace(/&ndash;/g, '–')
-    .replace(/&hellip;/g, '…')
-    .replace(/&laquo;/g, '«')
-    .replace(/&raquo;/g, '»')
-    .replace(/&copy;/g, '©')
-    .replace(/&reg;/g, '®')
-    .replace(/&trade;/g, '™')
-    .replace(/&#x2F;/gi, '/')
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
-      try { return String.fromCodePoint(parseInt(hex, 16)); } catch (_) { return _; }
-    })
-    .replace(/&#(\d+);/g, (_, dec) => {
-      try { return String.fromCodePoint(parseInt(dec, 10)); } catch (_) { return _; }
-    })
-    .trim();
-}
-
-/**
- * Safe fetch following HTTP redirects with per-hop SSRF validation
- */
-export async function safeFetchWithRedirects(targetUrl, options = {}, maxRedirects = 4) {
-  let currentUrl = targetUrl;
-  let redirects = 0;
-
-  while (redirects <= maxRedirects) {
-    const parsed = new URL(currentUrl);
-    if (!['http:', 'https:'].includes(parsed.protocol) || isPrivateOrLocalHost(parsed.hostname)) {
-      throw new Error('Access to private or restricted network address is forbidden');
-    }
-
-    const fetchOpts = {
-      ...options,
-      redirect: 'manual'
-    };
-
-    const res = await fetch(currentUrl, fetchOpts);
-
-    if (res.status >= 301 && res.status <= 308) {
-      const location = res.headers.get('location');
-      if (!location) return res;
-
-      const nextUrl = new URL(location, currentUrl).href;
-      currentUrl = nextUrl;
-      redirects++;
-      continue;
-    }
-
-    return res;
-  }
-
-  throw new Error('Too many redirects');
-}
-
-/**
- * Extract OpenGraph and HTML metadata from HTML text
- */
-export function extractHtmlMetadata(html, targetUrl) {
-  const result = {
-    title: '',
-    description: '',
-    image: '',
-    siteName: '',
-    favicon: ''
-  };
-
-  try {
-    const baseUrl = new URL(targetUrl);
-    result.siteName = baseUrl.hostname.replace(/^www\./i, '');
-    result.favicon = `${baseUrl.origin}/favicon.ico`;
-
-    // Parse all <meta> tags into key-value attribute maps
-    const metaRegex = /<meta\s+([^>]+)>/gi;
-    let metaMatch;
-    const metas = [];
-    while ((metaMatch = metaRegex.exec(html)) !== null) {
-      const attrStr = metaMatch[1];
-      const attrs = {};
-      const attrRegex = /([a-zA-Z0-9_:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
-      let aMatch;
-      while ((aMatch = attrRegex.exec(attrStr)) !== null) {
-        const k = aMatch[1].toLowerCase();
-        const v = aMatch[2] !== undefined ? aMatch[2] : (aMatch[3] !== undefined ? aMatch[3] : aMatch[4]);
-        attrs[k] = v;
-      }
-      metas.push(attrs);
-    }
-
-    // Helper to find meta tag by property or name
-    const findMeta = (keys) => {
-      for (const m of metas) {
-        const prop = (m.property || m.name || '').toLowerCase();
-        if (keys.includes(prop) && m.content) {
-          return decodeHtmlEntities(m.content);
-        }
-      }
-      return '';
-    };
-
-    // 1. Title (og:title -> twitter:title -> <meta name="title"> -> <title>)
-    let title = findMeta(['og:title', 'twitter:title', 'title']);
-    if (!title) {
-      const titleTagMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-      if (titleTagMatch && titleTagMatch[1]) {
-        title = decodeHtmlEntities(titleTagMatch[1].replace(/<[^>]+>/g, '').trim());
-      }
-    }
-    result.title = title;
-
-    // 2. Description
-    result.description = findMeta(['og:description', 'twitter:description', 'description']);
-
-    // 3. Image (og:image -> twitter:image -> link image_src)
-    let rawImg = findMeta(['og:image', 'og:image:url', 'twitter:image', 'twitter:image:src']);
-    if (!rawImg) {
-      const linkImgMatch = html.match(/<link\s+[^>]*rel=["']image_src["'][^>]*href=["']([^"']+)["']/i) ||
-                           html.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']image_src["']/i);
-      if (linkImgMatch && linkImgMatch[1]) {
-        rawImg = linkImgMatch[1].trim();
-      }
-    }
-    if (rawImg) {
-      try {
-        result.image = new URL(rawImg, targetUrl).href;
-      } catch (_) {
-        result.image = rawImg;
-      }
-    }
-
-    // 4. Site Name
-    const siteName = findMeta(['og:site_name', 'application-name']);
-    if (siteName) {
-      result.siteName = siteName;
-    }
-
-    // 5. Favicon from <link rel="icon">
-    const iconMatch = html.match(/<link\s+[^>]*rel=["'](?:shortcut\s+)?icon["'][^>]*href=["']([^"']+)["']/i) ||
-                      html.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut\s+)?icon["']/i);
-    if (iconMatch && iconMatch[1]) {
-      try {
-        result.favicon = new URL(iconMatch[1].trim(), targetUrl).href;
-      } catch (_) {}
-    }
-  } catch (_) {}
-
-  return result;
+    }),
+    { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' } }
+  );
 }
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url);
+    const p = url.pathname;
+    try {
+      if (p === '/api/health') return json({ ok: true, version: VERSION });
+      if (p === '/app.webmanifest') return manifest(url);
+      // Only reached when the service worker isn't active yet (first visit)
+      if (p === '/share-target') return Response.redirect(new URL('/?shared=0', url).href, 303);
 
-    // API Routes
-    if (url.pathname.startsWith('/api/')) {
-      // CORS Preflight
-      if (request.method === 'OPTIONS') {
-        return new Response(null, {
-          headers: {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Upgrade'
-          }
-        });
+      if (p === '/api/pair' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        if (!KEY_RE.test(body.space || '')) return json({ error: 'bad space' }, 400);
+        return json(await globalStub(env).createCode(body.space));
+      }
+      if (p === '/api/pair/claim' && request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        const ip = request.headers.get('cf-connecting-ip') || 'local';
+        const res = await globalStub(env).claimCode(String(body.code || '').replace(/\D/g, ''), ip);
+        return json(res, res.space ? 200 : res.error === 'slow' ? 429 : 404);
+      }
+      if (p === '/api/link') {
+        if (!KEY_RE.test(url.searchParams.get('s') || '')) return json({ error: 'forbidden' }, 403);
+        return json(await getLinkPreview(url.searchParams.get('url') || ''));
       }
 
-      // Health Check
-      if (url.pathname === '/api/health') {
-        return new Response(JSON.stringify({ status: 'ok', app: 'syncpad' }), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          }
-        });
+      const m = p.match(ROUTE);
+      if (m) {
+        const stub = env.SYNC_ROOM.get(env.SYNC_ROOM.idFromName('space:' + m[1]));
+        return stub.fetch(request);
       }
-
-      // Link Metadata Endpoint: GET /api/link-metadata?url=...
-      if (url.pathname === '/api/link-metadata') {
-        const targetUrl = url.searchParams.get('url');
-        if (!targetUrl) {
-          return new Response(JSON.stringify({ error: 'Missing url parameter' }), {
-            status: 400,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-
-        let parsedTarget;
-        try {
-          parsedTarget = new URL(targetUrl);
-        } catch (_) {
-          return new Response(JSON.stringify({ error: 'Invalid URL' }), {
-            status: 400,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-
-        if (!['http:', 'https:'].includes(parsedTarget.protocol)) {
-          return new Response(JSON.stringify({ error: 'Protocol not allowed' }), {
-            status: 400,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-
-        if (isPrivateOrLocalHost(parsedTarget.hostname)) {
-          return new Response(JSON.stringify({ error: 'Target host is not permitted' }), {
-            status: 403,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-
-        // If target is on same host and ASSETS is available, resolve via ASSETS
-        if (env && env.ASSETS && parsedTarget.hostname === url.hostname) {
-          const assetRes = await env.ASSETS.fetch(new Request(parsedTarget));
-          const contentType = (assetRes.headers.get('content-type') || '').toLowerCase();
-          if (contentType.startsWith('image/')) {
-            const pathname = parsedTarget.pathname;
-            const fileName = pathname.substring(pathname.lastIndexOf('/') + 1) || 'image';
-            return new Response(JSON.stringify({
-              status: 'ok',
-              url: targetUrl,
-              isImage: true,
-              title: fileName,
-              description: '',
-              image: targetUrl,
-              siteName: parsedTarget.hostname.replace(/^www\./i, ''),
-              contentType
-            }), {
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-              }
-            });
-          } else if (assetRes.ok) {
-            const text = await assetRes.text();
-            const sample = text.slice(0, 524288);
-            const meta = extractHtmlMetadata(sample, targetUrl);
-            return new Response(JSON.stringify({
-              status: 'ok',
-              url: targetUrl,
-              isImage: false,
-              title: meta.title || parsedTarget.hostname,
-              description: meta.description || '',
-              image: meta.image || '',
-              siteName: meta.siteName || parsedTarget.hostname.replace(/^www\./i, ''),
-              favicon: meta.favicon || ''
-            }), {
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-              }
-            });
-          }
-        }
-
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 7500);
-
-          const upstreamRes = await safeFetchWithRedirects(targetUrl, {
-            signal: controller.signal,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/*,*/*;q=0.8',
-              'Accept-Language': 'en-US,en;q=0.9'
-            }
-          });
-          clearTimeout(timeoutId);
-
-          if (!upstreamRes.ok) {
-            return new Response(JSON.stringify({
-              error: `Upstream website returned ${upstreamRes.status}`,
-              status: upstreamRes.status
-            }), {
-              status: upstreamRes.status >= 400 && upstreamRes.status < 500 ? upstreamRes.status : 502,
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-              }
-            });
-          }
-
-          const contentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
-
-          // If the URL directly points to an image
-          if (contentType.startsWith('image/')) {
-            const pathname = parsedTarget.pathname;
-            const fileName = pathname.substring(pathname.lastIndexOf('/') + 1) || 'image';
-            return new Response(JSON.stringify({
-              status: 'ok',
-              url: targetUrl,
-              isImage: true,
-              title: fileName,
-              description: '',
-              image: targetUrl,
-              siteName: parsedTarget.hostname.replace(/^www\./i, ''),
-              contentType
-            }), {
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-              }
-            });
-          }
-
-          // Otherwise parse HTML (read first 512KB to avoid memory bloat)
-          const text = await upstreamRes.text();
-          const sample = text.slice(0, 524288);
-          const meta = extractHtmlMetadata(sample, targetUrl);
-
-          return new Response(JSON.stringify({
-            status: 'ok',
-            url: targetUrl,
-            isImage: false,
-            title: meta.title || parsedTarget.hostname,
-            description: meta.description || '',
-            image: meta.image || '',
-            siteName: meta.siteName || parsedTarget.hostname.replace(/^www\./i, ''),
-            favicon: meta.favicon || ''
-          }), {
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        } catch (err) {
-          const isTimeout = err.name === 'AbortError';
-          return new Response(JSON.stringify({
-            error: isTimeout ? 'Request timed out' : (err.message || 'Failed to fetch link metadata')
-          }), {
-            status: isTimeout ? 504 : 502,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-      }
-
-      // Proxy Image / Resource Endpoint: GET /api/proxy?url=...
-      if (url.pathname === '/api/proxy') {
-        const targetUrl = url.searchParams.get('url');
-        if (!targetUrl) {
-          return new Response(JSON.stringify({ error: 'Missing url parameter' }), {
-            status: 400,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-
-        let parsedTarget;
-        try {
-          parsedTarget = new URL(targetUrl);
-        } catch (_) {
-          return new Response(JSON.stringify({ error: 'Invalid URL' }), {
-            status: 400,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-
-        if (!['http:', 'https:'].includes(parsedTarget.protocol)) {
-          return new Response(JSON.stringify({ error: 'Protocol not allowed' }), {
-            status: 400,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-
-        if (isPrivateOrLocalHost(parsedTarget.hostname)) {
-          return new Response(JSON.stringify({ error: 'Target host is not permitted' }), {
-            status: 403,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-
-        // If target is on same host and ASSETS is available, fetch via ASSETS directly
-        if (env && env.ASSETS && parsedTarget.hostname === url.hostname) {
-          const assetRes = await env.ASSETS.fetch(new Request(parsedTarget));
-          const headers = new Headers(assetRes.headers);
-          headers.set('Access-Control-Allow-Origin', '*');
-          headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-          headers.set('Cache-Control', 'public, max-age=86400, s-maxage=86400');
-          headers.set('X-Content-Type-Options', 'nosniff');
-          headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
-          return new Response(assetRes.body, { status: assetRes.status, headers });
-        }
-
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-          const upstreamRes = await safeFetchWithRedirects(targetUrl, {
-            signal: controller.signal,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-              'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-              'Accept-Language': 'en-US,en;q=0.9'
-            }
-          });
-          clearTimeout(timeoutId);
-
-          if (!upstreamRes.ok) {
-            return new Response(JSON.stringify({
-              error: `Upstream returned ${upstreamRes.status}`,
-              status: upstreamRes.status
-            }), {
-              status: upstreamRes.status >= 400 && upstreamRes.status < 500 ? upstreamRes.status : 502,
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-              }
-            });
-          }
-
-          const rawContentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
-          
-          // Disallow proxying raw HTML or JS scripts as executable pages
-          if (rawContentType.includes('text/html') || rawContentType.includes('application/javascript') || rawContentType.includes('text/javascript')) {
-            return new Response(JSON.stringify({ error: 'Direct proxying of HTML or script execution is not permitted' }), {
-              status: 403,
-              headers: {
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-              }
-            });
-          }
-
-          const contentType = upstreamRes.headers.get('content-type') || 'application/octet-stream';
-          const headers = new Headers();
-          headers.set('Content-Type', contentType);
-          headers.set('Access-Control-Allow-Origin', '*');
-          headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-          headers.set('Cache-Control', 'public, max-age=86400, s-maxage=86400');
-          headers.set('X-Content-Type-Options', 'nosniff');
-          headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
-
-          return new Response(upstreamRes.body, {
-            status: 200,
-            headers
-          });
-        } catch (err) {
-          const isTimeout = err.name === 'AbortError';
-          return new Response(JSON.stringify({
-            error: isTimeout ? 'Request timed out' : (err.message || 'Failed to proxy resource')
-          }), {
-            status: isTimeout ? 504 : 502,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*'
-            }
-          });
-        }
-      }
-
-      // Generic /api/room (Generate or inspect room)
-      if (url.pathname === '/api/room' || url.pathname === '/api/room/') {
-        const prefixes = ['PAD', 'SYNC', 'NOTE', 'ROOM', 'FLOW'];
-        const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-        const num = Math.floor(100 + Math.random() * 900);
-        const roomCode = `${prefix}-${num}`;
-        return new Response(JSON.stringify({ status: 'ok', roomCode }), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          }
-        });
-      }
-
-      // Generic /api/sync (Sync with room passed in query or body)
-      if (url.pathname === '/api/sync' || url.pathname === '/api/sync/') {
-        let roomCode = (url.searchParams.get('room') || url.searchParams.get('roomCode') || '').toUpperCase();
-        if (!roomCode && request.method === 'POST') {
-          const cloned = request.clone();
-          try {
-            const body = await cloned.json();
-            if (body && (body.roomCode || body.room)) {
-              roomCode = (body.roomCode || body.room).toUpperCase();
-            }
-          } catch (_) {}
-        }
-        roomCode = roomCode || 'DEFAULT';
-
-        if (env && env.SYNC_ROOM) {
-          const id = env.SYNC_ROOM.idFromName(roomCode);
-          const roomObject = env.SYNC_ROOM.get(id);
-          return roomObject.fetch(request);
-        }
-
-        const memRoom = getMemoryRoom(roomCode);
-        return memRoom.fetch(request);
-      }
-
-      // Room routes: /api/room/:roomCode/ws or /api/room/:roomCode/sync
-      const roomMatch = url.pathname.match(/^\/api\/room\/([A-Za-z0-9_-]+)(?:\/(ws|sync))?$/);
-      if (roomMatch) {
-        const roomCode = roomMatch[1].toUpperCase();
-
-        // If Durable Object binding is configured, use DO
-        if (env && env.SYNC_ROOM) {
-          const id = env.SYNC_ROOM.idFromName(roomCode);
-          const roomObject = env.SYNC_ROOM.get(id);
-          return roomObject.fetch(request);
-        }
-
-        // In-memory fallback
-        const memRoom = getMemoryRoom(roomCode);
-        return memRoom.fetch(request);
-      }
-
-      return new Response(JSON.stringify({ error: 'Endpoint not found' }), {
-        status: 404,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        }
-      });
-    }
-
-    // Static Assets serving (Cloudflare Workers Static Assets)
-    if (env && env.ASSETS) {
+      if (p.startsWith('/api/')) return json({ error: 'not found' }, 404);
       return env.ASSETS.fetch(request);
+    } catch (err) {
+      return json({ error: 'server', message: String(err && err.message || err) }, 500);
     }
-
-    return new Response('SyncPad static assets not bound. Please configure Workers Assets.', { status: 404 });
   }
 };
+
+export class SyncRoom extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.ready = false;
+    this.globalReady = false;
+    this.lastClean = 0;
+    this.globalTotal = null;
+  }
+
+  /* ───────────────────────── space: setup ───────────────────────── */
+
+  init() {
+    if (this.ready) return;
+    const s = this.sql;
+    s.exec(`CREATE TABLE IF NOT EXISTS items (
+      id TEXT PRIMARY KEY, kind TEXT NOT NULL, rev INTEGER NOT NULL, seq INTEGER NOT NULL,
+      created INTEGER NOT NULL, updated INTEGER NOT NULL, device TEXT, deleted INTEGER NOT NULL DEFAULT 0,
+      data TEXT NOT NULL)`);
+    s.exec('CREATE INDEX IF NOT EXISTS items_seq ON items(seq)');
+    s.exec(`CREATE TABLE IF NOT EXISTS chunks (
+      file TEXT NOT NULL, idx INTEGER NOT NULL, size INTEGER NOT NULL, created INTEGER NOT NULL, data BLOB,
+      PRIMARY KEY (file, idx))`);
+    s.exec('CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, name TEXT, seen INTEGER)');
+    this.seq = s.exec('SELECT COALESCE(MAX(seq), 0) AS v FROM items').one().v;
+    this.bytes = s.exec('SELECT COALESCE(SUM(size), 0) AS v FROM chunks').one().v;
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
+    this.ready = true;
+  }
+
+  async fetch(request) {
+    this.init();
+    const url = new URL(request.url);
+    const m = url.pathname.match(ROUTE);
+    if (!m) return json({ error: 'not found' }, 404);
+    const [, , action, fileId, sub] = m;
+    const method = request.method;
+
+    if (action === 'ws') return this.openSocket(request, url);
+    if (action === 'sync' && method === 'POST') {
+      const body = await request.json().catch(() => null);
+      if (!body) return json({ error: 'bad json' }, 400);
+      return json(await this.sync(body, null));
+    }
+    if (fileId) {
+      if (sub === 'have' && method === 'GET') return json({ have: this.haveChunks(fileId) });
+      if (sub !== undefined && sub !== 'have' && method === 'PUT') return this.putChunk(fileId, Number(sub), request);
+      if (sub === undefined && (method === 'GET' || method === 'HEAD')) return this.readFile(fileId, request, url);
+    }
+    return json({ error: 'not found' }, 404);
+  }
+
+  /* ───────────────────────── space: realtime ───────────────────────── */
+
+  openSocket(request, url) {
+    if (request.headers.get('Upgrade') !== 'websocket') return json({ error: 'expected websocket' }, 426);
+    const device = clean(url.searchParams.get('d'), 64) || 'unknown';
+    const name = clean(url.searchParams.get('n'), 40) || 'Device';
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ device, name });
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(ws, raw) {
+    this.init();
+    let m;
+    try { m = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw)); } catch { return; }
+    const att = ws.deserializeAttachment() || {};
+    if (m.t === 'hi') {
+      if (m.name) { att.name = clean(m.name, 40); ws.serializeAttachment(att); }
+      this.touchDevice(att.device, att.name, true);
+      this.broadcastPresence();
+    } else if (m.t === 'sync') {
+      const res = await this.sync({ ...m, device: att.device, name: att.name }, ws);
+      try { ws.send(JSON.stringify({ t: 'sync', rid: m.rid, ...res })); } catch {}
+    }
+  }
+
+  async webSocketClose(ws, code) {
+    this.init();
+    try { ws.close(code === 1005 ? 1000 : code, 'bye'); } catch {}
+    this.broadcastPresence(ws);
+  }
+
+  async webSocketError(ws) {
+    this.init();
+    this.broadcastPresence(ws);
+  }
+
+  touchDevice(id, name, force) {
+    if (!id || id === 'unknown') return;
+    const now = Date.now();
+    const row = this.sql.exec('SELECT name, seen FROM devices WHERE id = ?', id).toArray()[0];
+    if (!force && row && row.name === name && now - row.seen < 10 * 60 * 1000) return;
+    this.sql.exec(
+      'INSERT INTO devices (id, name, seen) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, seen = excluded.seen',
+      id, name || (row && row.name) || 'Device', now
+    );
+  }
+
+  broadcastPresence(exclude) {
+    const online = new Set();
+    for (const s of this.ctx.getWebSockets()) {
+      if (s === exclude) continue;
+      const a = s.deserializeAttachment();
+      if (a && a.device) online.add(a.device);
+    }
+    const devices = this.sql
+      .exec('SELECT id, name, seen FROM devices ORDER BY seen DESC LIMIT 30')
+      .toArray()
+      .map((d) => ({ ...d, online: online.has(d.id) }));
+    const msg = JSON.stringify({ t: 'presence', online: online.size, devices });
+    for (const s of this.ctx.getWebSockets()) {
+      if (s === exclude) continue;
+      try { s.send(msg); } catch {}
+    }
+  }
+
+  poke(exclude) {
+    const msg = JSON.stringify({ t: 'poke', seq: this.seq });
+    for (const s of this.ctx.getWebSockets()) {
+      if (s === exclude) continue;
+      try { s.send(msg); } catch {}
+    }
+  }
+
+  /* ───────────────────────── space: sync ───────────────────────── */
+
+  async sync(body, ws) {
+    const device = clean(body.device, 64) || 'unknown';
+    const since = Math.max(0, Math.floor(Number(body.since) || 0));
+    const ops = Array.isArray(body.ops) ? body.ops.slice(0, 100) : [];
+    const now = Date.now();
+    const acks = [];
+    let changed = false;
+    const bytesBefore = this.bytes;
+
+    for (const op of ops) {
+      let ack;
+      try { ack = this.applyOp(op, device, now); } catch { ack = { id: op && op.id, ok: false, err: 'bad' }; }
+      acks.push(ack);
+      if (ack.ok && !ack.noop) changed = true;
+    }
+    if (now - this.lastClean > 60 * 60 * 1000) {
+      this.lastClean = now;
+      if (this.cleanup(now)) changed = true;
+    }
+    if (!ws) this.touchDevice(device, clean(body.name, 40), false);
+    if (this.bytes !== bytesBefore || this.globalTotal === null) await this.reportUsage();
+
+    const rows = this.sql.exec('SELECT * FROM items WHERE seq > ? ORDER BY seq LIMIT 500', since).toArray();
+    const more = rows.length === 500;
+    if (changed) this.poke(ws);
+    return {
+      seq: more ? rows[rows.length - 1].seq : this.seq,
+      more,
+      changes: rows.map(rowOut),
+      acks,
+      usage: this.bytes,
+      total: this.globalTotal,
+      cap: GLOBAL_CAP,
+      maxFile: MAX_FILE,
+      chunk: CHUNK,
+      now
+    };
+  }
+
+  getRow(id) {
+    return this.sql.exec('SELECT * FROM items WHERE id = ?', id).toArray()[0];
+  }
+
+  applyOp(op, device, now) {
+    const id = String((op && op.id) || '');
+    const kind = op && op.kind;
+    if (!ID_RE.test(id) || !KINDS.has(kind)) return { id, ok: false, err: 'bad' };
+    const deleted = !!op.deleted;
+    const data = deleted ? {} : sanitize(kind, op.data);
+    if (!data) return { id, ok: false, err: 'bad' };
+    const dataStr = JSON.stringify(data);
+    if (dataStr.length > 1_500_000) return { id, ok: false, err: 'too_big' };
+
+    const ex = this.getRow(id);
+    if (ex && ex.kind !== kind) return { id, ok: false, err: 'kind' };
+    const baseRev = Math.floor(Number(op.baseRev) || 0);
+
+    if (ex && ex.deleted && deleted) return { id, ok: true, rev: ex.rev, noop: true };
+
+    if (kind === 'file' && !deleted && (!ex || ex.deleted)) {
+      const missing = this.missingChunks(id, data.size);
+      if (missing) return { id, ok: false, err: 'incomplete', have: this.haveChunks(id) };
+    }
+
+    // Two devices edited the same note without seeing each other's change:
+    // keep the server copy and save the incoming text as a separate "conflict" note.
+    if (ex && !ex.deleted && !deleted && kind === 'note' && baseRev < ex.rev && ex.device !== device) {
+      const old = JSON.parse(ex.data);
+      if (old.body === data.body) {
+        return { id, ok: true, rev: ex.rev, noop: true, item: rowOut(ex) };
+      }
+      const cid = (id.slice(0, 44) + '-c' + now.toString(36)).slice(0, 64);
+      const seq = ++this.seq;
+      this.sql.exec(
+        'INSERT INTO items (id, kind, rev, seq, created, updated, device, deleted, data) VALUES (?, ?, 1, ?, ?, ?, ?, 0, ?)',
+        cid, kind, seq, now, now, device, JSON.stringify({ ...data, pinned: false, conflictOf: id })
+      );
+      return { id, ok: true, rev: ex.rev, conflict: cid, item: rowOut(ex) };
+    }
+
+    const rev = (ex ? ex.rev : 0) + 1;
+    const seq = ++this.seq;
+    const created = ex ? ex.created : clampTime(op.created, now);
+    this.sql.exec(
+      `INSERT INTO items (id, kind, rev, seq, created, updated, device, deleted, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET rev = excluded.rev, seq = excluded.seq, updated = excluded.updated,
+       device = excluded.device, deleted = excluded.deleted, data = excluded.data`,
+      id, kind, rev, seq, created, now, device, deleted ? 1 : 0, dataStr
+    );
+    if (deleted && kind === 'file') this.freeChunks(id);
+    if (deleted && kind === 'note') {
+      // Files attached inside a deleted note go with it
+      const kids = this.sql
+        .exec(`SELECT id FROM items WHERE kind = 'file' AND deleted = 0 AND json_extract(data, '$.parent') = ?`, id)
+        .toArray();
+      for (const k of kids) this.tombstone(k.id, now);
+    }
+    return { id, ok: true, rev };
+  }
+
+  tombstone(id, now) {
+    const seq = ++this.seq;
+    this.sql.exec(
+      `UPDATE items SET deleted = 1, data = '{}', rev = rev + 1, seq = ?, updated = ?, device = 'server' WHERE id = ?`,
+      seq, now, id
+    );
+    this.freeChunks(id);
+  }
+
+  cleanup(now) {
+    let changed = false;
+    // Chunks from uploads that were never finished
+    const orphans = this.sql
+      .exec(
+        `SELECT DISTINCT file FROM chunks WHERE created < ?
+         AND file NOT IN (SELECT id FROM items WHERE kind = 'file' AND deleted = 0)`,
+        now - 24 * 60 * 60 * 1000
+      )
+      .toArray();
+    for (const o of orphans) this.freeChunks(o.file);
+
+    // Optional auto-delete of old drops (files + clips that aren't kept/pinned)
+    const st = this.getRow('settings');
+    const days = st && !st.deleted ? Number(JSON.parse(st.data).autodel) || 0 : 0;
+    if (days > 0) {
+      const old = this.sql
+        .exec(`SELECT id, kind, data FROM items WHERE deleted = 0 AND kind IN ('file', 'clip') AND created < ?`, now - days * 86400000)
+        .toArray();
+      for (const r of old) {
+        const d = JSON.parse(r.data);
+        if (d.keep || (r.kind === 'file' && d.parent)) continue;
+        this.tombstone(r.id, now);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /* ───────────────────────── space: files ───────────────────────── */
+
+  haveChunks(id) {
+    return this.sql.exec('SELECT idx FROM chunks WHERE file = ? ORDER BY idx', id).toArray().map((r) => r.idx);
+  }
+
+  missingChunks(id, size) {
+    const need = Math.ceil(size / CHUNK);
+    const r = this.sql
+      .exec(
+        `SELECT COUNT(*) AS c, COALESCE(SUM(size), 0) AS s, COALESCE(MAX(idx), -1) AS mx,
+         COALESCE(SUM(CASE WHEN idx < ? AND size != ? THEN 1 ELSE 0 END), 0) AS bad FROM chunks WHERE file = ?`,
+        need - 1, CHUNK, id
+      )
+      .one();
+    return !(r.c === need && r.s === size && r.mx === need - 1 && r.bad === 0);
+  }
+
+  freeChunks(id) {
+    const r = this.sql.exec('SELECT COALESCE(SUM(size), 0) AS s FROM chunks WHERE file = ?', id).one();
+    if (r.s > 0 || this.sql.exec('SELECT 1 FROM chunks WHERE file = ? LIMIT 1', id).toArray().length) {
+      this.sql.exec('DELETE FROM chunks WHERE file = ?', id);
+      this.bytes -= r.s;
+    }
+  }
+
+  async reportUsage() {
+    try {
+      const res = await globalStub(this.env).report(this.ctx.id.toString(), this.bytes);
+      this.globalTotal = res.total;
+    } catch {}
+  }
+
+  async putChunk(id, idx, request) {
+    if (!(idx >= 0 && idx < Math.ceil(MAX_FILE / CHUNK))) return json({ error: 'range' }, 400);
+    const ex = this.getRow(id);
+    if (ex && (ex.kind !== 'file' || ex.deleted)) return json({ error: 'gone' }, 410);
+    const buf = await request.arrayBuffer();
+    if (buf.byteLength === 0 || buf.byteLength > CHUNK) return json({ error: 'size' }, 400);
+
+    const prev = this.sql.exec('SELECT size FROM chunks WHERE file = ? AND idx = ?', id, idx).toArray()[0];
+    const delta = buf.byteLength - (prev ? prev.size : 0);
+    if (delta > 0) {
+      let res;
+      try { res = await globalStub(this.env).reserve(this.ctx.id.toString(), this.bytes, delta); } catch { res = { ok: true }; }
+      if (res.total != null) this.globalTotal = res.total;
+      if (!res.ok) return json({ error: 'full', total: res.total, cap: GLOBAL_CAP }, 507);
+    }
+    this.sql.exec(
+      'INSERT OR REPLACE INTO chunks (file, idx, size, created, data) VALUES (?, ?, ?, ?, ?)',
+      id, idx, buf.byteLength, Date.now(), buf
+    );
+    this.bytes += delta;
+    return json({ ok: true });
+  }
+
+  readFile(id, request, url) {
+    const row = this.getRow(id);
+    if (!row || row.deleted || row.kind !== 'file') return new Response('Not found', { status: 404 });
+    const d = JSON.parse(row.data);
+    const size = d.size;
+    let start = 0;
+    let end = size - 1;
+    let status = 200;
+    const headers = new Headers({
+      'accept-ranges': 'bytes',
+      'cache-control': 'private, max-age=31536000, immutable',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer'
+    });
+    const range = request.headers.get('range');
+    if (range && size > 0) {
+      const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+      if (m && (m[1] !== '' || m[2] !== '')) {
+        if (m[1] === '') start = Math.max(0, size - Number(m[2]));
+        else {
+          start = Number(m[1]);
+          if (m[2] !== '') end = Math.min(Number(m[2]), size - 1);
+        }
+        if (start > end || start >= size) {
+          return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
+        }
+        status = 206;
+        headers.set('content-range', `bytes ${start}-${end}/${size}`);
+      }
+    }
+    const { type, disposition } = serveType(d.type, url.searchParams.has('dl'));
+    headers.set('content-type', type);
+    headers.set('content-disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(d.name || 'file')}`);
+    if (!type.startsWith('application/pdf')) {
+      // Uploaded HTML/SVG can never run scripts on the app's origin
+      headers.set('content-security-policy', "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'");
+    }
+    const length = size === 0 ? 0 : end - start + 1;
+    headers.set('content-length', String(length));
+    if (request.method === 'HEAD' || length === 0) return new Response(null, { status, headers });
+
+    const sql = this.sql;
+    let pos = start;
+    const source = new ReadableStream({
+      pull(controller) {
+        if (pos > end) { controller.close(); return; }
+        const idx = Math.floor(pos / CHUNK);
+        const r = sql.exec('SELECT data FROM chunks WHERE file = ? AND idx = ?', id, idx).toArray()[0];
+        if (!r) { controller.error(new Error('missing chunk')); return; }
+        const off = pos - idx * CHUNK;
+        const len = Math.min(r.data.byteLength - off, end - pos + 1);
+        controller.enqueue(new Uint8Array(r.data, off, len));
+        pos += len;
+      }
+    });
+    const { readable, writable } = new FixedLengthStream(length);
+    source.pipeTo(writable).catch(() => {});
+    return new Response(readable, { status, headers });
+  }
+
+  /* ───────────────────────── global: pairing + storage cap ───────────────────────── */
+
+  initGlobal() {
+    if (this.globalReady) return;
+    const s = this.sql;
+    s.exec('CREATE TABLE IF NOT EXISTS codes (code TEXT PRIMARY KEY, space TEXT NOT NULL, expires INTEGER NOT NULL)');
+    s.exec('CREATE TABLE IF NOT EXISTS tries (ip TEXT PRIMARY KEY, n INTEGER NOT NULL, reset INTEGER NOT NULL)');
+    s.exec('CREATE TABLE IF NOT EXISTS spaces (sid TEXT PRIMARY KEY, bytes INTEGER NOT NULL)');
+    this.total = s.exec('SELECT COALESCE(SUM(bytes), 0) AS v FROM spaces').one().v;
+    this.globalReady = true;
+  }
+
+  async createCode(space) {
+    this.initGlobal();
+    const now = Date.now();
+    this.sql.exec('DELETE FROM codes WHERE expires < ?', now);
+    const ex = this.sql.exec('SELECT code, expires FROM codes WHERE space = ? ORDER BY expires DESC LIMIT 1', space).toArray()[0];
+    if (ex && ex.expires - now > 3 * 60 * 1000) return { code: ex.code, expires: ex.expires };
+    let code = '';
+    for (let i = 0; i < 25; i++) {
+      code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0');
+      if (!this.sql.exec('SELECT 1 FROM codes WHERE code = ?', code).toArray().length) break;
+    }
+    const expires = now + PAIR_TTL;
+    this.sql.exec('INSERT OR REPLACE INTO codes (code, space, expires) VALUES (?, ?, ?)', code, space, expires);
+    return { code, expires };
+  }
+
+  async claimCode(code, ip) {
+    this.initGlobal();
+    const now = Date.now();
+    const t = this.sql.exec('SELECT n, reset FROM tries WHERE ip = ?', ip).toArray()[0];
+    if (t && t.reset > now && t.n >= 12) return { error: 'slow', retry: t.reset - now };
+    const row = /^\d{6}$/.test(code)
+      ? this.sql.exec('SELECT space, expires FROM codes WHERE code = ?', code).toArray()[0]
+      : null;
+    if (!row || row.expires < now) {
+      if (!t || t.reset <= now) this.sql.exec('INSERT OR REPLACE INTO tries (ip, n, reset) VALUES (?, 1, ?)', ip, now + 10 * 60 * 1000);
+      else this.sql.exec('UPDATE tries SET n = n + 1 WHERE ip = ?', ip);
+      return { error: 'invalid' };
+    }
+    return { space: row.space };
+  }
+
+  setSpaceBytes(sid, bytes) {
+    const row = this.sql.exec('SELECT bytes FROM spaces WHERE sid = ?', sid).toArray()[0];
+    const old = row ? row.bytes : 0;
+    if (row && old === bytes) return;
+    this.sql.exec('INSERT INTO spaces (sid, bytes) VALUES (?, ?) ON CONFLICT(sid) DO UPDATE SET bytes = excluded.bytes', sid, bytes);
+    this.total += bytes - old;
+  }
+
+  async reserve(sid, current, incoming) {
+    this.initGlobal();
+    const row = this.sql.exec('SELECT bytes FROM spaces WHERE sid = ?', sid).toArray()[0];
+    const projected = this.total - (row ? row.bytes : 0) + current + incoming;
+    if (projected > GLOBAL_CAP) {
+      this.setSpaceBytes(sid, current);
+      return { ok: false, total: this.total };
+    }
+    this.setSpaceBytes(sid, current + incoming);
+    return { ok: true, total: this.total };
+  }
+
+  async report(sid, current) {
+    this.initGlobal();
+    this.setSpaceBytes(sid, current);
+    return { total: this.total };
+  }
+}
+
+/* ───────────────────────── helpers ───────────────────────── */
+
+function rowOut(r) {
+  return {
+    id: r.id,
+    kind: r.kind,
+    rev: r.rev,
+    seq: r.seq,
+    created: r.created,
+    updated: r.updated,
+    device: r.device,
+    deleted: !!r.deleted,
+    data: JSON.parse(r.data)
+  };
+}
+
+function clampTime(t, now) {
+  const n = Number(t);
+  return Number.isFinite(n) && n > 1420070400000 && n < now + 86400000 ? Math.floor(n) : now;
+}
+
+function sanitize(kind, d) {
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
+  if (kind === 'file') {
+    const size = Math.floor(Number(d.size));
+    if (!(size >= 0 && size <= MAX_FILE)) return null;
+    const out = {
+      name: clean(d.name, 255) || 'file',
+      size,
+      type: /^[\w.+-]+\/[\w.+-]+$/.test(d.type || '') ? String(d.type).slice(0, 100) : '',
+      parent: d.parent && ID_RE.test(d.parent) ? d.parent : null,
+      keep: !!d.keep
+    };
+    if (typeof d.thumb === 'string' && d.thumb.startsWith('data:image/') && d.thumb.length < 200000) out.thumb = d.thumb;
+    if (Number.isFinite(d.w) && Number.isFinite(d.h)) { out.w = Math.floor(d.w); out.h = Math.floor(d.h); }
+    return out;
+  }
+  return d;
+}
+
+function serveType(type, download) {
+  const t = String(type || '').toLowerCase();
+  const valid = /^[\w.+-]+\/[\w.+-]+$/.test(t);
+  const inlineOk = /^(image\/(png|jpe?g|gif|webp|avif|bmp|svg\+xml|x-icon)|video\/[\w.+-]+|audio\/[\w.+-]+|application\/pdf|text\/plain)$/.test(t);
+  if (download || !inlineOk) return { type: download && valid ? t : 'application/octet-stream', disposition: 'attachment' };
+  return { type: t === 'text/plain' ? 'text/plain; charset=utf-8' : t, disposition: 'inline' };
+}
