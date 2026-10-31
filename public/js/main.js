@@ -12,7 +12,7 @@ import { Markup } from './markup.js';
 import { Collage } from './collage.js';
 import { ZoomView } from './zoom.js';
 
-const VERSION = '2.10.0';
+const VERSION = '2.11.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
