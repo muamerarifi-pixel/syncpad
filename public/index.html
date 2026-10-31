@@ -48,6 +48,16 @@
       <symbol id="i-line" viewBox="0 0 24 24"><path d="M5 19 19 5"/></symbol>
       <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 19 19 5"/><path d="M10 5h9v9"/></symbol>
       <symbol id="i-paste" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4.5V3h6v1.5"/><path d="M9 10h6M9 14h4"/></symbol>
+      <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 12v6M9 15h6"/></symbol>
+      <symbol id="i-al-left" viewBox="0 0 24 24"><path d="M4 6h16M4 10h10M4 14h16M4 18h10"/></symbol>
+      <symbol id="i-al-center" viewBox="0 0 24 24"><path d="M4 6h16M7 10h10M4 14h16M7 18h10"/></symbol>
+      <symbol id="i-al-right" viewBox="0 0 24 24"><path d="M4 6h16M10 10h10M4 14h16M10 18h10"/></symbol>
+      <symbol id="i-al-justify" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"/></symbol>
+      <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/></symbol>
+      <symbol id="i-marker" viewBox="0 0 24 24"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></symbol>
+      <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></symbol>
+      <symbol id="i-indent" viewBox="0 0 24 24"><path d="M3 6h18M11 12h10M11 18h10M3 9l4 3-4 3"/></symbol>
+      <symbol id="i-outdent" viewBox="0 0 24 24"><path d="M3 6h18M11 12h10M11 18h10M7 9l-4 3 4 3"/></symbol>
       <symbol id="i-box" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h10M7 14h6"/></symbol>
       <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
@@ -143,6 +153,7 @@
           </div>
           <form class="composer" id="composer" autocomplete="off">
             <button type="button" class="icon-btn composer-attach" id="btn-attach" aria-label="Attach files"><svg class="ic"><use href="#i-clip"/></svg></button>
+            <button type="button" class="icon-btn composer-attach" id="btn-new-doc" aria-label="New document" title="New document (Word or PDF)"><svg class="ic"><use href="#i-doc"/></svg></button>
             <textarea id="composer-input" rows="1" placeholder="Type, paste or drop anything…" aria-label="Message to your devices" enterkeyhint="send"></textarea>
             <button type="submit" class="send-btn" id="btn-send" aria-label="Send" disabled><svg class="ic"><use href="#i-send"/></svg></button>
           </form>
@@ -151,10 +162,10 @@
             <span class="sel-count" id="sel-count"></span>
             <button class="btn btn-sm" data-sel="all">All</button>
             <div class="spacer"></div>
-            <button class="btn btn-sm btn-soft" data-sel="collage" hidden><svg class="ic"><use href="#i-grid"/></svg><span class="hide-xs">Collage</span></button>
-            <button class="btn btn-sm btn-soft" data-sel="move"><svg class="ic"><use href="#i-folder"/></svg><span>Move</span></button>
-            <button class="btn btn-sm btn-soft" data-sel="download"><svg class="ic"><use href="#i-download"/></svg><span class="hide-xs">Download</span></button>
-            <button class="btn btn-sm btn-danger-soft" data-sel="trash"><svg class="ic"><use href="#i-trash"/></svg><span class="hide-xs">Delete</span></button>
+            <button class="btn btn-sm btn-soft" data-sel="collage" aria-label="Make a collage" hidden><svg class="ic"><use href="#i-grid"/></svg><span class="sel-lbl">Collage</span></button>
+            <button class="btn btn-sm btn-soft" data-sel="move" aria-label="Move to folder"><svg class="ic"><use href="#i-folder"/></svg><span class="sel-lbl">Move</span></button>
+            <button class="btn btn-sm btn-soft" data-sel="download" aria-label="Download"><svg class="ic"><use href="#i-download"/></svg><span class="sel-lbl">Download</span></button>
+            <button class="btn btn-sm btn-danger-soft" data-sel="trash" aria-label="Move to Trash"><svg class="ic"><use href="#i-trash"/></svg><span class="sel-lbl">Delete</span></button>
           </div>
         </div>
       </section>
@@ -417,6 +428,53 @@
       </div>
       <label class="mk-keep"><input type="checkbox" id="mk-keep"> Keep the original too</label>
     </div>
+  </dialog>
+
+  <!-- Document editor: Word / Google Docs (.docx) or PDF -->
+  <dialog class="docedit" id="dlg-doc" aria-label="Document">
+    <div class="de-bar">
+      <button class="icon-btn" id="de-cancel" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      <div class="de-head">
+        <input class="de-name" id="de-name" maxlength="120" aria-label="Document name" spellcheck="false">
+        <span class="de-status" id="de-status"></span>
+      </div>
+      <div class="spacer"></div>
+      <select class="de-format" id="de-format" aria-label="Save as">
+        <option value="docx">Word / Google Docs (.docx)</option>
+        <option value="pdf">PDF</option>
+      </select>
+      <button class="btn btn-primary btn-sm" id="de-save">Save</button>
+    </div>
+    <div class="de-toolbar" role="toolbar" aria-label="Formatting">
+      <select id="de-style" aria-label="Paragraph style"><option value="p">Normal</option><option value="h1">Heading 1</option><option value="h2">Heading 2</option><option value="h3">Heading 3</option></select>
+      <select id="de-size" aria-label="Text size"><option>9</option><option>10</option><option selected>11</option><option>12</option><option>14</option><option>16</option><option>18</option><option>20</option><option>24</option><option>28</option><option>36</option><option>48</option></select>
+      <span class="de-sep"></span>
+      <button class="icon-btn sm" data-cmd="bold" data-state title="Bold (Ctrl+B)"><svg class="ic"><use href="#i-bold"/></svg></button>
+      <button class="icon-btn sm" data-cmd="italic" data-state title="Italic (Ctrl+I)"><svg class="ic"><use href="#i-italic"/></svg></button>
+      <button class="icon-btn sm" data-cmd="underline" data-state title="Underline (Ctrl+U)"><svg class="ic"><use href="#i-underline"/></svg></button>
+      <button class="icon-btn sm" data-cmd="strikeThrough" data-state title="Strikethrough"><svg class="ic"><use href="#i-strike"/></svg></button>
+      <label class="de-color" title="Text colour"><span>A</span><input type="color" id="de-color" value="#c00000" aria-label="Text colour"></label>
+      <button class="icon-btn sm" data-cmd="hilite" aria-pressed="false" title="Highlight"><svg class="ic"><use href="#i-marker"/></svg></button>
+      <span class="de-sep"></span>
+      <button class="icon-btn sm" data-cmd="justifyLeft" data-state title="Align left"><svg class="ic"><use href="#i-al-left"/></svg></button>
+      <button class="icon-btn sm" data-cmd="justifyCenter" data-state title="Centre"><svg class="ic"><use href="#i-al-center"/></svg></button>
+      <button class="icon-btn sm" data-cmd="justifyRight" data-state title="Align right"><svg class="ic"><use href="#i-al-right"/></svg></button>
+      <button class="icon-btn sm" data-cmd="justifyFull" data-state title="Justify"><svg class="ic"><use href="#i-al-justify"/></svg></button>
+      <span class="de-sep"></span>
+      <button class="icon-btn sm" data-cmd="insertUnorderedList" data-state title="Bullet list"><svg class="ic"><use href="#i-list"/></svg></button>
+      <button class="icon-btn sm" data-cmd="insertOrderedList" data-state title="Numbered list"><svg class="ic"><use href="#i-olist"/></svg></button>
+      <button class="icon-btn sm" data-cmd="outdent" title="Less indent (Shift+Tab)"><svg class="ic"><use href="#i-outdent"/></svg></button>
+      <button class="icon-btn sm" data-cmd="indent" title="More indent (Tab)"><svg class="ic"><use href="#i-indent"/></svg></button>
+      <span class="de-sep"></span>
+      <button class="icon-btn sm" data-cmd="picture" title="Add a picture"><svg class="ic"><use href="#i-image"/></svg></button>
+      <button class="icon-btn sm" data-cmd="table" title="Add a table"><svg class="ic"><use href="#i-table"/></svg></button>
+      <span class="de-sep"></span>
+      <button class="icon-btn sm" data-cmd="undo" title="Undo (Ctrl+Z)"><svg class="ic"><use href="#i-undo"/></svg></button>
+      <button class="icon-btn sm" data-cmd="redo" title="Redo (Ctrl+Y)"><svg class="ic"><use href="#i-redo"/></svg></button>
+      <button class="icon-btn sm" data-cmd="removeFormat" title="Clear formatting"><svg class="ic"><use href="#i-eraser"/></svg></button>
+      <input type="file" id="de-pic-input" accept="image/*" hidden>
+    </div>
+    <div class="de-scroll"><div class="doc-page de-page" id="de-page" contenteditable="true" spellcheck="true" aria-label="Document text"></div></div>
   </dialog>
 
   <!-- PDF text editor -->

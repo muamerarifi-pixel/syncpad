@@ -12,7 +12,7 @@ import { Markup } from './markup.js';
 import { Collage } from './collage.js';
 import { ZoomView } from './zoom.js';
 
-const VERSION = '2.11.0';
+const VERSION = '2.12.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -20,6 +20,7 @@ let files;
 let markup;
 let collage;
 let pdfEditor = null;
+let docEditor = null;
 const el = {};
 const ui = {
   tab: 'drops',
@@ -291,6 +292,10 @@ function wire() {
   });
   // right-click / two-finger tap on a touchpad → SyncPad's own menus (Shift + right-click = browser menu)
   addEventListener('pointerdown', (e) => { ui.lastPointer = e.pointerType; }, true);
+  // phones: while the keyboard is up, hide the bottom tab bar so it doesn't sit on top of the keyboard
+  const typing = (t) => t && (t.matches('input:not([type=checkbox]):not([type=radio]), textarea, select') || t.isContentEditable);
+  document.addEventListener('focusin', (e) => { if (isTouch() && typing(e.target)) el.app.classList.add('kb'); });
+  document.addEventListener('focusout', () => setTimeout(() => { if (!typing(document.activeElement)) el.app.classList.remove('kb'); }, 60));
   el.feedInner.addEventListener('contextmenu', onFeedContext);
   el.dropsSide.addEventListener('contextmenu', onSideContext);
   el.noteList.addEventListener('contextmenu', onNoteListContext);
@@ -386,19 +391,28 @@ function wire() {
   // viewer
   el.viewerDownload.addEventListener('click', () => ui.viewing && files.download(ui.viewing));
   el.viewerShare.addEventListener('click', () => ui.viewing && files.share(ui.viewing).catch(() => {}));
-  el.viewerMarkup.addEventListener('click', () => ui.viewing && (canEditPdf(ui.viewing) ? openPdfEdit(ui.viewing) : openMarkup(ui.viewing)));
+  el.viewerMarkup.addEventListener('click', () => {
+    const it = ui.viewing;
+    if (!it) return;
+    if (canEditDoc(it)) openDocEdit(it);
+    else if (canEditPdf(it)) (ui.docSource ? editDocument(it, { kind: 'html', html: ui.docSource }) : openPdfEdit(it));
+    else openMarkup(it);
+  });
+  el.btnNewDoc.addEventListener('click', newDocument);
   el.dlgViewer.addEventListener('close', () => {
     if (ui.zoom) { ui.zoom.destroy(); ui.zoom = null; }
     el.viewerBody.innerHTML = '';
-    el.viewerBody.classList.remove('is-zoom');
+    el.viewerBody.classList.remove('is-zoom', 'is-docv');
     ui.viewing = null;
+    ui.docSource = null;
   });
   el.viewerBody.addEventListener('click', (e) => {
     const b = e.target.closest('[data-zoom]');
     if (!b || !ui.zoom) return;
     if (b.dataset.zoom === 'in') ui.zoom.zoomBy(1.6);
     else if (b.dataset.zoom === 'out') ui.zoom.zoomBy(1 / 1.6);
-    else ui.zoom.toggle();
+    else if (ui.zoom.toggle) ui.zoom.toggle();
+    else ui.zoom.fit();
   });
   el.dlgViewer.addEventListener('keydown', (e) => {
     if (!ui.zoom || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1064,6 +1078,7 @@ function dropMenu(anchor, it, at) {
     }
     if (canMarkup(it)) m.splice(1, 0, { icon: 'crop', label: 'Edit (crop / hide details)', run: () => openMarkup(it) });
     if (canEditPdf(it)) m.splice(1, 0, { icon: 'pen', label: 'Edit text', run: () => openPdfEdit(it) });
+    if (canEditDoc(it)) m.splice(1, 0, { icon: 'pen', label: 'Edit document', run: () => openDocEdit(it) });
     if (kind === 'image' && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
       m.push({ icon: 'copy', label: 'Copy image', run: () => files.copyImage(it).then(() => toast('Image copied')).catch(() => toast('Copy is not supported for this image.')) });
     }
@@ -1169,12 +1184,12 @@ async function openMarkup(it) {
 }
 
 /** Store an edited version: replaces the original in place (and deletes it everywhere), or adds a copy */
-async function saveEdited(it, blob, keepOriginal) {
+async function saveEdited(it, blob, keepOriginal, newName) {
   const res = { blob, keep: keepOriginal };
-  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[res.blob.type] || 'png';
+  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx' }[res.blob.type] || 'png';
   const base = String(it.data.name || 'file').replace(/\.[a-z0-9]{2,5}$/i, '');
   const sameExt = new RegExp(`\\.(${ext === 'jpg' ? 'jpe?g' : ext})$`, 'i').test(it.data.name || '');
-  const name = sameExt ? it.data.name : `${base}.${ext}`;
+  const name = newName || (sameExt ? it.data.name : `${base}.${ext}`);
   const file = new File([res.blob], name, { type: res.blob.type });
   const f = folderOf(it);
   const added = await files.add([file], res.keep
@@ -1199,6 +1214,11 @@ async function openPdfEdit(it) {
   let blob = null;
   try { blob = await files.blobOf(it); } catch {}
   if (!blob) { toast('Could not load this PDF. Check your connection and try again.'); return; }
+  try {
+    const { pdfSource } = await import('./docview.js');
+    const html = await pdfSource(blob);
+    if (html) { editDocument(it, { kind: 'html', html }); return; }
+  } catch {}
   toast('Opening the PDF editor…', { duration: 1500 });
   let res;
   try {
@@ -1213,6 +1233,97 @@ async function openPdfEdit(it) {
   }
   if (!res) return;
   await saveEdited(it, res.blob, res.keep);
+}
+
+/* ───────── documents: view in the app, write / edit Word & PDF ───────── */
+
+const DOC_EXT = /\.(pdf|docx|docm|dotx|xlsx|xlsm|csv|tsv|pptx)$/i;
+function docKindOf(kind, name) {
+  if (kind === 'pdf') return 'pdf';
+  const m = DOC_EXT.exec(name || '');
+  if (!m) return null;
+  const e = m[1].toLowerCase();
+  return e === 'pdf' ? 'pdf' : /^do/.test(e) ? 'docx' : /^xls/.test(e) ? 'xlsx' : /sv$/.test(e) ? 'csv' : 'pptx';
+}
+function canEditDoc(it) {
+  return it && it.kind === 'file' && !it.data.parent && !files.progress.get(it.id) && /\.docx$/i.test(it.data.name || '');
+}
+
+async function openDocViewer(it, dk) {
+  ui.viewing = it;
+  ui.docSource = null;
+  el.viewerDownload.hidden = false;
+  el.viewerTitle.textContent = it.data.name;
+  el.viewerShare.hidden = !files.canShare();
+  el.viewerMarkup.hidden = !(dk === 'pdf' ? canEditPdf(it) : canEditDoc(it));
+  if (files.canShare()) files.prefetch(it);
+  if (ui.zoom) { ui.zoom.destroy(); ui.zoom = null; }
+  el.viewerBody.classList.remove('is-zoom');
+  el.viewerBody.classList.add('is-docv');
+  el.viewerBody.innerHTML = `<div class="dv-host"><div class="dv-loading">Opening…</div></div>
+    <div class="zoom-bar" role="group" aria-label="Zoom">
+      <button data-zoom="out" aria-label="Zoom out" title="Zoom out (−)">−</button>
+      <button class="zoom-pct" data-zoom="fit" title="Fit to the screen">Fit</button>
+      <button data-zoom="in" aria-label="Zoom in" title="Zoom in (+)">+</button>
+    </div>`;
+  openDialog(el.dlgViewer);
+  const host = el.viewerBody.querySelector('.dv-host');
+  const pct = el.viewerBody.querySelector('.zoom-pct');
+  let blob = null;
+  try { blob = await files.blobOf(it); } catch {}
+  if (ui.viewing !== it) return;
+  if (!blob) { host.innerHTML = '<div class="dv-empty">Could not load this file. Check your connection.</div>'; return; }
+  try {
+    const { viewDocument } = await import('./docview.js');
+    const ctl = await viewDocument(host, blob, { kind: dk, onLabel: (t) => { pct.textContent = t; } });
+    if (ui.viewing !== it) { ctl.destroy(); return; }
+    ui.zoom = ctl;
+    ui.docSource = ctl.source || null;
+  } catch (e) {
+    console.warn('view document', e);
+    if (ui.viewing === it) host.innerHTML = '<div class="dv-empty">This file can’t be shown here. Use Download to open it.</div>';
+  }
+}
+
+async function getDocEditor() {
+  if (!docEditor) {
+    const { DocEditor } = await import('./docedit.js');
+    docEditor = new DocEditor(el.dlgDoc);
+  }
+  return docEditor;
+}
+
+async function newDocument() {
+  let res;
+  try { res = await (await getDocEditor()).open(null, 'Untitled document', 'docx', openDialog); }
+  catch (e) { console.warn(e); toast('Could not open the document editor.'); return; }
+  if (!res) return;
+  const added = await files.add([new File([res.blob], res.name, { type: res.blob.type })], { folder: currentFolder() });
+  if (added.length) toast(`Saved “${res.name}”.`);
+  scheduleRender(true, false);
+}
+
+async function editDocument(it, src) {
+  const fmt = src.kind === 'docx' ? 'docx' : 'pdf';
+  let res;
+  try { res = await (await getDocEditor()).open(src, it.data.name, fmt, openDialog); }
+  catch (e) { console.warn(e); toast('Could not open this document for editing.'); return; }
+  if (!res) return;
+  if (ui.viewing && ui.viewing.id === it.id) el.dlgViewer.close();
+  if (res.format === fmt) await saveEdited(it, res.blob, false, res.name);
+  else {
+    const f = folderOf(it);
+    await files.add([new File([res.blob], res.name, { type: res.blob.type })], { folder: f && f.id });
+    toast(`Saved as a new file “${res.name}”.`);
+    scheduleRender(true, false);
+  }
+}
+
+async function openDocEdit(it) {
+  let blob = null;
+  try { blob = await files.blobOf(it); } catch {}
+  if (!blob) { toast('Could not load this document. Check your connection and try again.'); return; }
+  await editDocument(it, { kind: 'docx', bytes: new Uint8Array(await blob.arrayBuffer()) });
 }
 
 /* ───────── refresh: fresh connection + sync now ───────── */
@@ -1289,6 +1400,7 @@ function onFeedContext(e) {
   if (!it) {
     openMenu(null, [
       { icon: 'clip', label: 'Send files…', run: () => el.fileInput.click() },
+      { icon: 'doc', label: 'New document…', run: newDocument },
       { icon: 'folder', label: 'New folder…', run: async () => { const f = await createFolder(); if (f) setDropView('f:' + f.id); } },
       { icon: 'check', label: 'Select all', run: () => setSelection(new Set(visibleDrops().map((i) => i.id))) }
     ], { at });
@@ -1312,15 +1424,17 @@ function onFeedContext(e) {
 }
 
 function onSideContext(e) {
+  if (ui.lastPointer === 'touch') { e.preventDefault(); return; }
   const f = e.target.closest('[data-folder-drop]');
-  if (!f || e.shiftKey || ui.lastPointer === 'touch') return;
+  if (!f || e.shiftKey) return;
   e.preventDefault();
   folderMenu(null, f.dataset.folderDrop, { x: e.clientX, y: e.clientY });
 }
 
 function onNoteListContext(e) {
+  if (ui.lastPointer === 'touch') { e.preventDefault(); return; }
   const b = e.target.closest('.note-item');
-  if (!b || e.shiftKey || ui.lastPointer === 'touch') return;
+  if (!b || e.shiftKey) return;
   e.preventDefault();
   const n = store.items.get(b.dataset.id);
   if (!n) return;
@@ -2104,7 +2218,8 @@ async function openFile(it) {
   const src = files.src(it.id);
   const textual = (kind === 'doc' || kind === 'code') && d.size <= 1024 * 1024 &&
     (/^text\/|json|xml|javascript/.test(d.type || '') || /^(txt|md|csv|tsv|json|js|mjs|ts|css|html?|py|xml|ya?ml|sh|log|ini|sql|dart|kt|java|c|cpp|h|go|rs|php|rb)$/.test(extOf(d.name)));
-  if (kind === 'pdf' && (isTouch() || isMobileLayout())) { window.open(files.mem.has(it.id) ? src : files.url(it.id), '_blank', 'noopener'); return; }
+  const dk = docKindOf(kind, d.name);
+  if (dk) { openDocViewer(it, dk); return; }
   if (!['image', 'video', 'audio', 'pdf'].includes(kind) && !textual) { files.download(it); return; }
   ui.viewing = it;
   el.viewerDownload.hidden = false;
@@ -3080,7 +3195,10 @@ function downloadText(text, name, type = 'text/plain') {
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   const had = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  navigator.serviceWorker.register('/sw.js').then((reg) => {
+    // the app now opens from the device, so look for a newer version whenever it comes back to the front
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && navigator.onLine) reg.update().catch(() => {}); });
+  }).catch(() => {});
   let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (had && !reloaded && !ui.dirty && !files.queue.length) { reloaded = true; location.reload(); }

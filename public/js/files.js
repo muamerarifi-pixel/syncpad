@@ -58,6 +58,11 @@ export class Files extends EventTarget {
     try { await (await caches.open('sp-offline')).delete(this.cacheKey(id)); } catch {}
     this.emit('offline', { id });
   }
+  /** Files added on this device stay viewable offline (small ones; big ones via "Keep offline") */
+  cacheCopy(id, blob, type) {
+    if (!('caches' in window) || !blob || blob.size === 0 || blob.size >= 15 * 1024 * 1024) return;
+    caches.open('sp-files').then((c) => c.put(this.cacheKey(id), new Response(blob, { headers: { 'content-type': type || blob.type || 'application/octet-stream', 'content-length': String(blob.size) } }))).catch(() => {});
+  }
   async cachedBlob(id) {
     try {
       for (const name of ['sp-offline', 'sp-files']) {
@@ -96,6 +101,7 @@ export class Files extends EventTarget {
       try { Object.assign(data, (await withTimeout(makeThumb(file), 3000)) || {}); } catch {}
       const item = { id, kind: 'file', rev: 0, created: at || now, updated: now, device: this.store.get('device'), data, local: { up: true } };
       this.mem.set(id, file);
+      this.cacheCopy(id, file, data.type);
       await this.store.save(item, { sync: false });
       this.store.putBlob(id, file).catch(() => {});
       this.progress.set(id, { sent: 0, total: file.size, state: 'up' });

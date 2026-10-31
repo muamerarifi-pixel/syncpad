@@ -1,7 +1,9 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v2.11.0';
+const VERSION = 'v2.12.0';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
+const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
+const WARM = ['/vendor/pdf/pdf.min.mjs', '/vendor/pdf/pdf.worker.min.mjs'];
 const SHELL = [
   '/',
   '/css/app.css',
@@ -16,6 +18,10 @@ const SHELL = [
   '/js/zoom.js',
   '/js/pdfedit.js',
   '/js/pdfcore.js',
+  '/js/docview.js',
+  '/js/docmodel.js',
+  '/js/docedit.js',
+  '/vendor/doc/fflate.mjs',
   '/js/md.js',
   '/vendor/marked.esm.js',
   '/vendor/purify.min.js',
@@ -30,11 +36,21 @@ self.addEventListener('install', (event) => {
   );
 });
 
+// after the app is ready, quietly keep the document viewer's library too, so PDFs open offline
+async function warmAssets() {
+  const c = await caches.open(ASSET_CACHE);
+  for (const u of WARM) {
+    if (await c.match(u)) continue;
+    try { const r = await fetch(u); if (r.ok) await c.put(u, r); } catch {}
+  }
+}
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== SHELL_CACHE && k !== FILE_CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== SHELL_CACHE && k !== FILE_CACHE && k !== ASSET_CACHE && k !== 'sp-offline').map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
+      .then(() => { warmAssets(); })
   );
 });
 
@@ -57,20 +73,37 @@ self.addEventListener('fetch', (event) => {
   }
   if (url.pathname.startsWith('/api/') || url.pathname === '/app.webmanifest') return;
 
-  // App shell: network first (always fresh when online), cache when offline
-  event.respondWith(networkFirst(req, url));
+  // Big libraries and fonts: from the device once fetched
+  if (url.pathname.startsWith('/vendor/pdf/')) {
+    event.respondWith(assetFirst(req, url));
+    return;
+  }
+  // App shell: straight from the device (instant, works offline / on weak signal).
+  // New versions arrive as a new service worker that stores the whole new app at once.
+  event.respondWith(shellFirst(req, url));
 });
 
-async function networkFirst(req, url) {
+async function shellFirst(req, url) {
   const cache = await caches.open(SHELL_CACHE);
+  const nav = req.mode === 'navigate';
+  const hit = nav ? (await cache.match('/')) : (await cache.match(req, { ignoreSearch: true }));
+  if (hit) return hit;
   try {
-    const res = await fetchWithTimeout(req, 4000);
-    if (res.ok && res.type === 'basic') cache.put(url.pathname === '/index.html' ? '/' : req, res.clone());
+    const res = await fetchWithTimeout(req, 8000);
+    if (res.ok && res.type === 'basic' && !nav) cache.put(url.pathname, res.clone()).catch(() => {});
     return res;
   } catch {
-    const hit = (await cache.match(req, { ignoreSearch: req.mode === 'navigate' })) || (req.mode === 'navigate' ? await cache.match('/') : null);
-    return hit || new Response('Offline', { status: 503 });
+    return (nav && (await cache.match('/'))) || new Response('Offline', { status: 503, headers: { 'content-type': 'text/plain' } });
   }
+}
+
+async function assetFirst(req, url) {
+  const cache = await caches.open(ASSET_CACHE);
+  const hit = await cache.match(url.pathname);
+  if (hit) return hit;
+  const res = await fetch(req);
+  if (res.ok && res.type === 'basic') cache.put(url.pathname, res.clone()).catch(() => {});
+  return res;
 }
 
 async function fileFirst(req, url) {
