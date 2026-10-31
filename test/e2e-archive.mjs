@@ -10,6 +10,16 @@ P.on('pageerror', (e) => errors.push(e.message));
 P.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
 await P.goto(BASE + '/');
 await P.waitForSelector('.status-chip[data-state="online"]', { timeout: 15000 });
+// typed text in the Drops box becomes a note (files still go to Drops)
+await P.tap('#composer-input');
+await P.keyboard.type('Buy chalk\nand markers');
+await P.tap('#btn-send');
+await P.waitForSelector('.toast >> text=Saved as a note');
+if (await P.$('.ri')) throw new Error('text became a drop');
+await P.click('.toast button:has-text("Open")');
+await P.waitForSelector('#editor-text >> text=and markers');
+await P.click('#btn-editor-back');
+step('Drops box: typed text + send → a new note (toast with Open)');
 await P.click('.tabbar-btn[data-tab="notes"]');
 for (const t of ['Alpha note', 'Beta note', 'Gamma note']) { await P.click('#fab-new-note'); await P.keyboard.type(t); await P.click('#btn-editor-back'); await P.waitForSelector(`.note-item:has-text("${t}")`); }
 const cdp = await P.context().newCDPSession(P);

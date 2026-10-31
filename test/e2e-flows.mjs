@@ -3,6 +3,8 @@ import fs from 'node:fs';
 const BASE = process.env.BASE || 'http://127.0.0.1:8787';
 const OUT = process.env.SHOTS || 'test/shots';
 const browser = await chromium.launch();
+// these checks send text drops from the Drops box
+browser.newContext = ((orig) => async (o) => { const c = await orig.call(browser, o); await c.addInitScript(() => localStorage.setItem('sp-send-as', 'drop')); return c; })(browser.newContext);
 const errors = [];
 const watch = (page, name) => { page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`)); page.on('console', (m) => { if (m.type() === 'error') errors.push(`${name} console: ${m.text()}`); }); };
 const step = (s) => console.log('•', s);

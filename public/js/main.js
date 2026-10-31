@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.20.0';
+const VERSION = '2.21.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -429,6 +429,8 @@ function wire() {
     item.data = { ...item.data, autodel: Number(el.setAutodel.value) };
     store.save(item).then(() => sync.schedule());
   });
+  el.setSendAs.addEventListener('change', () => { lsSet('sp-send-as', el.setSendAs.value); renderComposerHint(); });
+  renderComposerHint();
   el.setDeclutter.addEventListener('change', () => {
     const cur = store.items.get('settings');
     const item = cur || { id: 'settings', kind: 'settings', rev: 0, created: Date.now(), data: {} };
@@ -1688,12 +1690,21 @@ async function sendText() {
   el.composerInput.value = '';
   autosize();
   updateSend();
-  if (text.length > 50000) {
-    await createNote(text);
-    toast('Long text saved as a note instead.', { action: 'Open', onAction: () => { setTab('notes'); } });
+  if (sendAs() === 'note' || text.length > 50000) {
+    const n = await createNote(text);
+    if (ui.nfolder && ui.nfolder !== 'archive') setNoteData(n, { nf: ui.nfolder });
+    renderNotesList();
+    toast('Saved as a note', { action: 'Open', onAction: () => { setTab('notes'); openNote(n.id); } });
     return;
   }
   sendClip(text);
+}
+/** what typed text in the Drops box becomes on this device: 'note' (default) or 'drop' */
+function sendAs() { return lsGet('sp-send-as', 'note') === 'drop' ? 'drop' : 'note'; }
+function renderComposerHint() {
+  el.composerInput.placeholder = sendAs() === 'note' ? 'Write a note… (files and photos go to Drops)' : 'Type, paste or drop anything…';
+  el.btnSend.title = sendAs() === 'note' ? 'Save as a note' : 'Send to your devices';
+  el.btnSend.setAttribute('aria-label', el.btnSend.title);
 }
 
 async function sendClip(text, folder = currentFolder()) {
@@ -3262,6 +3273,7 @@ function openSettings() {
   const st = store.items.get('settings');
   el.setAutodel.value = String((st && st.data.autodel) || 0);
   el.setDeclutter.value = (st && st.data.declutter) || 'on';
+  el.setSendAs.value = sendAs();
   el.installField.hidden = !ui.installPrompt || isStandalone();
   renderOpenWith();
   el.versionText.textContent = `SyncPad ${VERSION} · ${store.get('deviceName')}`;

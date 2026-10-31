@@ -7,6 +7,8 @@ const OUT = process.env.SHOTS || 'test/shots';
 fs.mkdirSync(OUT, { recursive: true });
 const step = (s) => console.log('•', s);
 const browser = await chromium.launch();
+// these checks send text drops from the Drops box
+browser.newContext = ((orig) => async (o) => { const c = await orig.call(browser, o); await c.addInitScript(() => localStorage.setItem('sp-send-as', 'drop')); return c; })(browser.newContext);
 const errors = [];
 const A = await (await browser.newContext({ viewport: { width: 1280, height: 860 } })).newPage();
 A.on('pageerror', (e) => errors.push(e.message));

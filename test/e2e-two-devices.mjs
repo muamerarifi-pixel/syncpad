@@ -4,6 +4,8 @@ const BASE = process.env.BASE || 'http://127.0.0.1:8787';
 const OUT = process.env.SHOTS || 'test/shots';
 fs.mkdirSync(OUT, { recursive: true });
 const browser = await chromium.launch();
+// these checks send text drops from the Drops box
+browser.newContext = ((orig) => async (o) => { const c = await orig.call(browser, o); await c.addInitScript(() => localStorage.setItem('sp-send-as', 'drop')); return c; })(browser.newContext);
 const errors = [];
 const watch = (page, name) => {
   page.on('pageerror', (e) => errors.push(`${name} pageerror: ${e.message}`));

@@ -9,6 +9,8 @@ const FX = (n) => new URL(`./fixtures-${n}`, import.meta.url).pathname;
 fs.mkdirSync(OUT, { recursive: true });
 const step = (s) => console.log('•', s);
 const browser = await chromium.launch();
+// these checks send text drops from the Drops box
+browser.newContext = ((orig) => async (o) => { const c = await orig.call(browser, o); await c.addInitScript(() => localStorage.setItem('sp-send-as', 'drop')); return c; })(browser.newContext);
 const errors = [];
 const watch = (p, n) => { p.on('pageerror', (e) => errors.push(`${n}: ${e.message}`)); p.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errors.push(`${n}: ${m.text()}`); }); p.on('dialog', (d) => d.accept()); };
 const A = await (await browser.newContext({ viewport: { width: 1280, height: 860 } })).newPage(); watch(A, 'A');
