@@ -570,6 +570,24 @@ a { color: var(--accent-text); }
   .ri { padding: 8px 6px 8px 10px; }
 }
 
+/* type filter + selection box */
+.type-row { width: 100%; max-width: 1000px; margin: 0 auto; padding: 0 20px; flex: none; }
+.chips.type-chips { padding: 8px 0 0; }
+.chip .cnt { color: var(--faint); font-weight: 700; margin-left: 2px; }
+.chip[aria-pressed="true"] .cnt { color: var(--accent-text); }
+.type-btn { display: none; }
+.type-btn.on { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+.type-btn .ic { width: 15px; height: 15px; }
+.feed { position: relative; }
+.marquee { position: absolute; z-index: 6; border: 1px solid var(--accent); background: rgba(99, 102, 241, .14); border-radius: 4px; pointer-events: none; }
+.app.marquee-on .feed { user-select: none; -webkit-user-select: none; }
+@media (hover: hover) and (pointer: fine) { .ri, .tile { user-select: none; -webkit-user-select: none; } .ri-text { user-select: text; -webkit-user-select: text; } }
+@media (max-width: 860px) {
+  .type-row { display: none; }
+  .type-btn { display: inline-flex; padding: 0 10px; }
+  .type-btn span { max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+}
+
 /* PIN lock */
 html.locked .app, html.privacy .app { visibility: hidden; }
 .lock { position: fixed; inset: 0; z-index: 200; background: var(--bg); display: grid; place-items: center; padding: 24px; overflow-y: auto; }

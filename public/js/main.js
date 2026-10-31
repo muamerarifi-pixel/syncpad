@@ -9,7 +9,7 @@ import { Files } from './files.js';
 import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js';
 import qrcode from '/vendor/qrcode.mjs';
 
-const VERSION = '2.5.0';
+const VERSION = '2.5.1';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -28,7 +28,8 @@ const ui = {
   fresh: new Set(),
   expanded: new Set(),
   stickBottom: true,
-  dview: (() => { try { return localStorage.getItem('sp-dview') || 'all'; } catch { return 'all'; } })(),
+  dloc: (() => { try { const v = localStorage.getItem('sp-dloc') || localStorage.getItem('sp-dview') || 'home'; return v.startsWith('f:') ? v : 'home'; } catch { return 'home'; } })(),
+  dtype: (() => { try { return localStorage.getItem('sp-dtype') || 'all'; } catch { return 'all'; } })(),
   layout: (() => { try { return localStorage.getItem('sp-layout') || 'list'; } catch { return 'list'; } })(),
   selecting: false,
   selected: new Set(),
@@ -220,6 +221,9 @@ function wire() {
   };
   el.dropsSide.addEventListener('click', navClick);
   el.dropChips.addEventListener('click', navClick);
+  el.typeChips.addEventListener('click', (e) => { const b = e.target.closest('[data-type]'); if (b) setDropType(b.dataset.type); });
+  el.btnType.addEventListener('click', () => typeMenu(el.btnType));
+  initMarquee();
   el.viewToggle.addEventListener('click', (e) => { const b = e.target.closest('[data-layout]'); if (b) setLayout(b.dataset.layout); });
   el.btnSelect.addEventListener('click', () => (ui.selecting ? exitSelect() : enterSelect()));
   el.btnFolderMore.addEventListener('click', () => folderMenu(el.btnFolderMore));
@@ -471,6 +475,9 @@ function wire() {
       closeMenu();
     } else if (e.key === 'Escape' && ui.selecting && !$('dialog[open]')) {
       exitSelect();
+    } else if (ui.tab === 'drops' && !$('dialog[open]') && !(e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]'))) {
+      if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); setSelection(new Set(visibleDrops().map((i) => i.id))); }
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && ui.selecting && ui.selected.size) { e.preventDefault(); selAction('trash'); }
     }
   });
 
@@ -633,13 +640,13 @@ function renderStatus() {
 /* ───────── drops (home screen): filters, folders, compact list / grid ───────── */
 
 const isDrop = (i) => i.kind === 'clip' || (i.kind === 'file' && !i.data.parent);
-const FILTERS = [
-  ['all', 'All drops', 'drops'],
-  ['media', 'Photos & videos', 'image'],
-  ['files', 'Files', 'file'],
-  ['links', 'Links', 'link'],
-  ['text', 'Text', 'note'],
-  ['pinned', 'Pinned', 'pin']
+const TYPES = [
+  ['all', 'All'],
+  ['media', 'Photos & videos'],
+  ['files', 'Files'],
+  ['links', 'Links'],
+  ['text', 'Text'],
+  ['pinned', 'Pinned']
 ];
 
 function dropType(it) {
@@ -655,27 +662,45 @@ function folderOf(it) {
   return f && f.kind === 'folder' ? f : null;
 }
 function currentFolder() {
-  return ui.dview.startsWith('f:') && store.items.get(ui.dview.slice(2)) ? ui.dview.slice(2) : null;
+  return ui.dloc.startsWith('f:') && store.items.get(ui.dloc.slice(2)) ? ui.dloc.slice(2) : null;
 }
 function dropItems() {
   return store.list().filter((i) => isDrop(i) && !i.data.trashed).sort((a, b) => b.created - a.created);
 }
-function matchesView(it, view = ui.dview) {
-  if (view.startsWith('f:')) { const f = folderOf(it); return !!f && f.id === view.slice(2); }
-  if (view === 'all') return true;
-  if (view === 'pinned') return !!it.data.keep;
-  return dropType(it) === view;
+/** Home shows only drops that aren't in a folder; a folder shows only its own drops */
+function inLocation(it, loc = ui.dloc) {
+  const f = folderOf(it);
+  return loc === 'home' ? !f : !!f && f.id === loc.slice(2);
+}
+function ofType(it, type = ui.dtype) {
+  if (type === 'all') return true;
+  if (type === 'pinned') return !!it.data.keep;
+  return dropType(it) === type;
+}
+function visibleDrops(all = dropItems()) {
+  const q = ui.query.toLowerCase();
+  if (q) {
+    // search looks everywhere, folders included
+    return all.filter((i) => ofType(i) && [i.data.text, i.data.name, i.data.link && i.data.link.title].some((s) => s && s.toLowerCase().includes(q)));
+  }
+  return all.filter((i) => inLocation(i) && ofType(i));
 }
 function viewTitle() {
+  if (ui.query) return 'Search results';
   const f = currentFolder();
-  if (f) return store.items.get(f).data.name || 'Folder';
-  return (FILTERS.find((x) => x[0] === ui.dview) || FILTERS[0])[1];
+  return f ? store.items.get(f).data.name || 'Folder' : 'Home';
 }
-function setDropView(v) {
-  ui.dview = v;
-  try { localStorage.setItem('sp-dview', v); } catch {}
+function setDropView(loc) {
+  ui.dloc = loc;
+  try { localStorage.setItem('sp-dloc', loc); } catch {}
   exitSelect();
   el.feed.scrollTop = 0;
+  renderDrops();
+}
+function setDropType(type) {
+  ui.dtype = type;
+  try { localStorage.setItem('sp-dtype', type); } catch {}
+  exitSelect();
   renderDrops();
 }
 function setLayout(l) {
@@ -686,46 +711,61 @@ function setLayout(l) {
 }
 
 function renderDropsNav(all) {
-  if (ui.dview.startsWith('f:') && !currentFolder()) ui.dview = 'all';
-  const count = (v) => all.filter((i) => matchesView(i, v)).length;
+  if (ui.dloc.startsWith('f:') && !currentFolder()) ui.dloc = 'home';
+  const countLoc = (loc) => all.filter((i) => inLocation(i, loc)).length;
   const fl = folders();
-  const nav = (v, label, icon, n, folderId) => `<button class="nav-item${ui.dview === v ? ' on' : ''}" data-view="${v}"${folderId ? ` data-folder-drop="${folderId}"` : ''}>
+  const nav = (loc, label, icon, n, folderId) => `<button class="nav-item${ui.dloc === loc && !ui.query ? ' on' : ''}" data-view="${loc}"${folderId ? ` data-folder-drop="${folderId}"` : ''}>
       <svg class="ic"><use href="#i-${icon}"/></svg><span class="nav-label">${esc(label)}</span><span class="nav-count">${n || ''}</span></button>`;
   el.dropsSide.innerHTML =
-    FILTERS.map(([v, l, ic]) => nav(v, l, ic, count(v))).join('') +
+    nav('home', 'Home', 'drops', countLoc('home')) +
     `<div class="nav-head"><span>Folders</span><button class="icon-btn sm" data-act="new-folder" aria-label="New folder" title="New folder"><svg class="ic"><use href="#i-plus"/></svg></button></div>` +
     (fl.length
-      ? fl.map((f) => nav('f:' + f.id, f.data.name || 'Folder', 'folder', count('f:' + f.id), f.id)).join('') +
-        (isTouch() ? '' : '<p class="nav-hint">Tip: drag drops onto a folder to move them.</p>')
+      ? fl.map((f) => nav('f:' + f.id, f.data.name || 'Folder', 'folder', countLoc('f:' + f.id), f.id)).join('') +
+        (isTouch() ? '' : '<p class="nav-hint">Drag drops onto a folder to move them. Drag across empty space to select several.</p>')
       : '<button class="nav-empty" data-act="new-folder"><svg class="ic"><use href="#i-plus"/></svg>New folder</button>');
-  const chip = (v, label) => `<button class="chip" data-view="${v}" aria-pressed="${ui.dview === v}">${label}</button>`;
+  const chip = (loc, label) => `<button class="chip" data-view="${loc}" aria-pressed="${ui.dloc === loc}">${label}</button>`;
   el.dropChips.innerHTML = [
-    ...FILTERS.filter(([v]) => v === 'all' || v === ui.dview || count(v)).map(([v, l]) => chip(v, esc(l))),
+    chip('home', `<svg class="ic"><use href="#i-drops"/></svg>Home`),
     ...fl.map((f) => chip('f:' + f.id, `<svg class="ic"><use href="#i-folder"/></svg>${esc(f.data.name || 'Folder')}`)),
     '<button class="chip add" data-act="new-folder"><svg class="ic"><use href="#i-plus"/></svg>Folder</button>'
   ].join('');
+  // type filter: chips on a computer, one button on a phone
+  const here = ui.query ? all : all.filter((i) => inLocation(i));
+  const typeCount = (t) => here.filter((i) => ofType(i, t)).length;
+  el.typeChips.innerHTML = TYPES.filter(([t]) => t === 'all' || t === ui.dtype || typeCount(t))
+    .map(([t, l]) => `<button class="chip" data-type="${t}" aria-pressed="${ui.dtype === t}">${esc(l)}${t === 'all' ? '' : ` <span class="cnt">${typeCount(t)}</span>`}</button>`)
+    .join('');
+  el.typeChips.hidden = here.length === 0;
+  el.btnType.querySelector('span').textContent = ui.dtype === 'all' ? 'All types' : TYPES.find((x) => x[0] === ui.dtype)[1];
+  el.btnType.classList.toggle('on', ui.dtype !== 'all');
+  el.btnType.hidden = here.length === 0 && ui.dtype === 'all';
   el.dhTitle.textContent = viewTitle();
-  el.btnFolderMore.hidden = !currentFolder();
+  el.btnFolderMore.hidden = !currentFolder() || !!ui.query;
   for (const b of $$('[data-layout]', el.viewToggle)) b.setAttribute('aria-pressed', String(b.dataset.layout === ui.layout));
   el.composerInput.placeholder = currentFolder() ? `Send to “${viewTitle()}” — type, paste or drop…` : 'Type, paste or drop anything…';
+}
+
+function typeMenu(anchor) {
+  openMenu(anchor, TYPES.map(([t, l]) => ({ icon: { all: 'drops', media: 'image', files: 'file', links: 'link', text: 'note', pinned: 'pin' }[t], label: (ui.dtype === t ? '✓ ' : '') + l, run: () => setDropType(t) })));
 }
 
 function renderDrops() {
   const all = dropItems();
   renderDropsNav(all);
-  const q = ui.query.toLowerCase();
-  let list = all.filter((i) => matchesView(i));
-  if (q) list = list.filter((i) => [i.data.text, i.data.name, i.data.link && i.data.link.title].some((s) => s && s.toLowerCase().includes(q)));
+  const list = visibleDrops(all);
   el.dhCount.textContent = list.length ? `${list.length} item${list.length === 1 ? '' : 's'}` : '';
   el.feed.classList.toggle('grid-mode', ui.layout === 'grid');
-  if (!all.length && !q) {
+  if (!all.length && !ui.query) {
     cards.clear();
     el.feedInner.innerHTML = emptyDrops();
     return;
   }
   if (!list.length) {
-    el.feedInner.innerHTML = `<div class="empty small"><p>${q ? `Nothing matches “${esc(ui.query)}”.`
-      : currentFolder() ? 'This folder is empty. Drop files here while it’s open, or use “Move to folder” on any drop.'
+    const inFolders = all.filter((i) => folderOf(i)).length;
+    el.feedInner.innerHTML = `<div class="empty small"><p>${ui.query ? `Nothing matches “${esc(ui.query)}”.`
+      : ui.dtype !== 'all' ? `No ${esc(TYPES.find((x) => x[0] === ui.dtype)[1].toLowerCase())} here. <button class="more-link" data-act="all-types">Show all types</button>`
+      : currentFolder() ? 'This folder is empty. Anything you send or drop while it’s open goes into it, or use “Move to folder” on any drop.'
+      : inFolders ? 'All tidy — everything is in folders. New drops arrive here.'
       : 'Nothing here yet.'}</p></div>`;
     return;
   }
@@ -781,7 +821,7 @@ function rememberDevices() {
 function cardNode(it) {
   const prog = files.progress.get(it.id);
   const f = folderOf(it);
-  const sig = [ui.namesVer || 0, ui.layout, ui.selecting ? 1 : 0, ui.selected.has(it.id) ? 1 : 0, f ? f.data.name : '', ui.dview.startsWith('f:') ? 1 : 0,
+  const sig = [ui.namesVer || 0, ui.layout, ui.selecting ? 1 : 0, ui.selected.has(it.id) ? 1 : 0, f ? f.data.name : '', ui.dloc,
     it.kind === 'file' && files.isOffline(it.id) ? 'off' : '', it.rev, it.updated, it.data.keep ? 1 : 0,
     prog ? prog.state + (prog.err || '') : '', ui.expanded.has(it.id) ? 1 : 0].join('|');
   const c = cards.get(it.id);
@@ -831,7 +871,7 @@ function metaParts(it, prog) {
   parts.push(esc(deviceLabel(it.device)), clock(it.created));
   const f = folderOf(it);
   let extra = '';
-  if (f && !ui.dview.startsWith('f:')) extra += `<span class="fchip"><svg class="ic"><use href="#i-folder"/></svg>${esc(f.data.name || 'Folder')}</span>`;
+  if (f && ui.dloc !== 'f:' + f.id) extra += `<span class="fchip"><svg class="ic"><use href="#i-folder"/></svg>${esc(f.data.name || 'Folder')}</span>`;
   if (it.kind === 'file' && files.isOffline(it.id)) extra += '<span class="pin-flag off" title="Saved on this device — opens without internet"><svg class="ic"><use href="#i-ondevice"/></svg></span>';
   if (it.data.keep) extra += '<span class="pin-flag" title="Pinned — never cleaned up"><svg class="ic"><use href="#i-pin"/></svg></span>';
   return parts.join('<span class="sep"></span>') + extra;
@@ -856,13 +896,14 @@ function rowHTML(it, prog) {
   const isText = it.kind === 'clip' && !singleUrl(it.data.text || '');
   const expanded = ui.expanded.has(it.id);
   const sel = ui.selected.has(it.id);
-  return `<article class="ri${sel ? ' selected' : ''}${ui.selecting ? ' selecting' : ''}" data-id="${it.id}" draggable="${!isTouch()}">
+  const dr = !isTouch();
+  return `<article class="ri${sel ? ' selected' : ''}${ui.selecting ? ' selecting' : ''}" data-id="${it.id}">
     ${ui.selecting ? `<span class="ri-check" aria-hidden="true"><svg class="ic"><use href="#i-check"/></svg></span>` : ''}
-    <button class="ri-thumb" data-act="open" aria-label="Open">${thumbHTML(it)}</button>
+    <button class="ri-thumb" data-act="open" aria-label="Open" draggable="${dr}">${thumbHTML(it)}</button>
     <div class="ri-main" data-act="${isText ? 'expand' : 'open'}">
       ${isText && expanded
         ? `<div class="ri-text">${linkify(it.data.text || '')}</div>`
-        : `<div class="ri-title${isText ? ' is-text' : ''}" title="${esc(dropTitle(it).slice(0, 300))}">${esc(dropTitle(it).slice(0, 400))}</div>`}
+        : `<div class="ri-title${isText ? ' is-text' : ''}" draggable="${dr}" title="${esc(dropTitle(it).slice(0, 300))}">${esc(dropTitle(it).slice(0, 400))}</div>`}
       <div class="ri-meta">${metaParts(it, prog)}</div>
       ${prog && prog.state !== 'err' ? `<div class="progress"><span style="width:${pct(prog)}%"></span></div>` : ''}
     </div>
@@ -873,8 +914,8 @@ function rowHTML(it, prog) {
 function tileHTML(it, prog) {
   const sel = ui.selected.has(it.id);
   const isText = it.kind === 'clip' && !singleUrl(it.data.text || '');
-  return `<article class="tile${sel ? ' selected' : ''}${ui.selecting ? ' selecting' : ''}" data-id="${it.id}" draggable="${!isTouch()}">
-    <button class="tile-media" data-act="${isText ? 'expand-tile' : 'open'}" aria-label="Open">
+  return `<article class="tile${sel ? ' selected' : ''}${ui.selecting ? ' selecting' : ''}" data-id="${it.id}">
+    <button class="tile-media" data-act="${isText ? 'expand-tile' : 'open'}" aria-label="Open" draggable="${!isTouch()}">
       ${isText ? `<span class="tile-text">${esc((it.data.text || '').slice(0, 220))}</span>` : thumbHTML(it)}
     </button>
     ${ui.selecting ? `<span class="ri-check" aria-hidden="true"><svg class="ic"><use href="#i-check"/></svg></span>` : ''}
@@ -903,11 +944,28 @@ async function onFeedClick(e) {
   const a = e.target.closest('[data-act]');
   const card = e.target.closest('[data-id]');
   const it = card && store.items.get(card.dataset.id);
+  if (a && a.dataset.act === 'all-types') return setDropType('all');
+  if (it && !isTouch() && (e.ctrlKey || e.metaKey || e.shiftKey) && !(a && a.dataset.act === 'menu')) {
+    e.preventDefault();
+    const order = visibleDrops().map((i) => i.id);
+    if (e.shiftKey && ui.lastPicked && order.includes(ui.lastPicked)) {
+      const [x, y] = [order.indexOf(ui.lastPicked), order.indexOf(it.id)].sort((p, q) => p - q);
+      setSelection(new Set([...ui.selected, ...order.slice(x, y + 1)]));
+    } else {
+      const next = new Set(ui.selected);
+      next.has(it.id) ? next.delete(it.id) : next.add(it.id);
+      setSelection(next);
+    }
+    ui.lastPicked = it.id;
+    return;
+  }
   if (ui.selecting && it && !(a && a.dataset.act === 'menu')) {
     e.preventDefault();
     toggleSelect(it.id);
+    ui.lastPicked = it.id;
     return;
   }
+  if (ui.selecting && !it && !a) { exitSelect(); return; }
   if (!a) return;
   const act = a.dataset.act;
   if (act === 'pick') return el.fileInput.click();
@@ -981,6 +1039,81 @@ function dropMenu(anchor, it) {
   openMenu(anchor, m);
 }
 
+/* ───────── drag a box across empty space to select drops (mouse) ───────── */
+
+function initMarquee() {
+  const feed = el.feed;
+  let st = null;
+  feed.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse' || e.button !== 0 || ui.tab !== 'drops') return;
+    if (e.target.closest('button, a, input, textarea, [draggable="true"], .ri-text, .empty')) return;
+    const fr = feed.getBoundingClientRect();
+    if (e.clientX > fr.right - 14) return; // scrollbar
+    st = {
+      x: e.clientX - fr.left + feed.scrollLeft,
+      y: e.clientY - fr.top + feed.scrollTop,
+      cx: e.clientX,
+      cy: e.clientY,
+      base: e.ctrlKey || e.metaKey || e.shiftKey ? new Set(ui.selected) : new Set(),
+      active: false
+    };
+  });
+  addEventListener('pointermove', (e) => {
+    if (!st) return;
+    if (!st.active) {
+      if (Math.hypot(e.clientX - st.cx, e.clientY - st.cy) < 6) return;
+      st.active = true;
+      el.app.classList.add('marquee-on');
+      try { getSelection().removeAllRanges(); } catch {}
+      st.box = document.createElement('div');
+      st.box.className = 'marquee';
+      feed.appendChild(st.box);
+      if (!ui.selecting) {
+        ui.selecting = true;
+        ui.selected = new Set(st.base);
+        el.app.classList.add('selecting');
+        renderDrops();
+      }
+    }
+    e.preventDefault();
+    const fr = feed.getBoundingClientRect();
+    if (e.clientY > fr.bottom - 36) feed.scrollTop += 18;
+    else if (e.clientY < fr.top + 36) feed.scrollTop -= 18;
+    const x = Math.max(0, Math.min(e.clientX - fr.left, fr.width)) + feed.scrollLeft;
+    const y = Math.max(0, Math.min(e.clientY - fr.top, fr.height)) + feed.scrollTop;
+    const L = Math.min(st.x, x);
+    const T = Math.min(st.y, y);
+    const R = Math.max(st.x, x);
+    const B = Math.max(st.y, y);
+    Object.assign(st.box.style, { left: `${L}px`, top: `${T}px`, width: `${R - L}px`, height: `${B - T}px` });
+    const sel = new Set(st.base);
+    for (const [id, c] of cards) {
+      if (!c.node.isConnected) continue;
+      const r = c.node.getBoundingClientRect();
+      const l = r.left - fr.left + feed.scrollLeft;
+      const t = r.top - fr.top + feed.scrollTop;
+      if (l < R && l + r.width > L && t < B && t + r.height > T) sel.add(id);
+    }
+    for (const [id, c] of cards) c.node.classList.toggle('selected', sel.has(id));
+    ui.selected = sel;
+    renderSelectBar();
+  });
+  const end = () => {
+    if (!st) return;
+    const was = st.active;
+    if (st.box) st.box.remove();
+    st = null;
+    el.app.classList.remove('marquee-on');
+    if (!was) return;
+    ui.suppressClick = true; // the click that ends a drag shouldn't open anything
+    setTimeout(() => { ui.suppressClick = false; }, 0);
+    if (!ui.selected.size) exitSelect();
+    else { renderSelectBar(); renderDrops(); }
+  };
+  addEventListener('pointerup', end);
+  addEventListener('pointercancel', end);
+}
+
 /* ───────── folders ───────── */
 
 async function createFolder() {
@@ -1007,7 +1140,7 @@ async function deleteFolder(id) {
   const n = dropItems().filter((i) => i.data.folder === id).length;
   const ok = await confirmDialog(`Delete the folder “${f.data.name}”?`, n ? `The ${n} item${n === 1 ? '' : 's'} inside stay${n === 1 ? 's' : ''} in All drops.` : 'It is empty.', 'Delete folder', true);
   if (!ok) return;
-  if (ui.dview === 'f:' + id) ui.dview = 'all';
+  if (ui.dloc === 'f:' + id) ui.dloc = 'home';
   await store.remove(f);
   sync.schedule();
   renderDrops();
@@ -1060,6 +1193,15 @@ function exitSelect() {
   renderSelectBar();
   renderDrops();
 }
+function setSelection(set) {
+  ui.selected = set;
+  if (!ui.selecting && set.size) {
+    ui.selecting = true;
+    el.app.classList.add('selecting');
+  }
+  renderSelectBar();
+  renderDrops();
+}
 function toggleSelect(id) {
   ui.selected.has(id) ? ui.selected.delete(id) : ui.selected.add(id);
   renderSelectBar();
@@ -1075,12 +1217,13 @@ function renderSelectBar() {
 }
 async function onSelectBar(e) {
   const b = e.target.closest('[data-sel]');
-  if (!b) return;
+  if (b) selAction(b.dataset.sel, b);
+}
+async function selAction(act, b) {
   const ids = [...ui.selected].filter((id) => store.items.has(id));
-  const act = b.dataset.sel;
   if (act === 'cancel') return exitSelect();
   if (act === 'all') {
-    const visible = dropItems().filter((i) => matchesView(i)).map((i) => i.id);
+    const visible = visibleDrops().map((i) => i.id);
     const allOn = visible.every((id) => ui.selected.has(id));
     ui.selected = new Set(allOn ? [] : visible);
     renderSelectBar();
