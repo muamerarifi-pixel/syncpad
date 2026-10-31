@@ -383,7 +383,13 @@ a { color: var(--accent-text); }
 .zoom .zo { font-size: 12.5px; }
 .zoom .zi { font-size: 16.5px; }
 .zoom .zv { font-size: 12px; color: var(--muted); min-width: 46px; font-weight: 600; }
-.editor-text { zoom: var(--note-zoom, 1); }
+.editor-text {
+  /* A−/A+ zoom: text grows, but the side margins stay the same on screen and big text may use the full width */
+  --z: var(--note-zoom, 1);
+  zoom: var(--z);
+  padding: calc(22px / var(--z)) calc(28px / var(--z)) calc(80px / var(--z));
+  max-width: calc(820px * max(1, var(--z) / 1.5) / var(--z));
+}
 
 /* devices list (settings) */
 .field-head { display: flex; align-items: center; gap: 8px; }
@@ -858,7 +864,7 @@ kbd { font: 600 12px var(--font); padding: 1px 6px; border-radius: 6px; border: 
   .app.editing .editor-pane { display: flex; animation: slide .2s ease-out; }
   .app.editing .tabbar, .app.editing .fab { display: none !important; }
   .editor-empty { display: none; }
-  .editor-text { padding: 16px 18px 60px; }
+  .editor-text { padding: calc(16px / var(--z)) calc(18px / var(--z)) calc(60px / var(--z)); }
   .editor-bar { padding: 8px 8px; gap: 4px; }
   .seg-btn span { display: none; }
   .seg-btn { padding: 0 10px; }

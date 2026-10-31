@@ -12,7 +12,7 @@ import { Markup } from './markup.js';
 import { Collage } from './collage.js';
 import { ZoomView } from './zoom.js';
 
-const VERSION = '2.9.0';
+const VERSION = '2.9.1';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2442,11 +2442,11 @@ function dataUrlToBlob(u) {
 
 /* ═════════════════════════ text zoom (this device) ═════════════════════════ */
 
-const ZOOMS = [0.8, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2];
+const ZOOMS = [0.7, 0.8, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2, 2.5, 3, 3.5, 4, 5];
 function getZoom() {
   let z = 1;
   try { z = Number(localStorage.getItem('sp-zoom')) || 1; } catch {}
-  return Math.min(2, Math.max(0.8, z));
+  return Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z));
 }
 function applyZoom() {
   const z = getZoom();
