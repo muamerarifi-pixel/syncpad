@@ -72,7 +72,7 @@ step(`Present: only the note on screen (no list or titles); you can still type a
 
 // canvas presents too
 await A.click('#btn-new-canvas');
-await A.click('[data-cv="text"]');
+await A.click('[data-cv="text"]'); await A.click('.cv-world', { position: { x: 120, y: 80 } });
 await A.keyboard.type('Projector canvas');
 await A.keyboard.press('Escape');
 await A.click('#btn-present');

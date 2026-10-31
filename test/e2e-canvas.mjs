@@ -53,7 +53,7 @@ step(`Normal note: picture floats right with text wrapping, − / + and corner d
 await A.click('#btn-new-canvas');
 await A.waitForSelector('#note-canvas:not([hidden]) .cv-world');
 if (!(await A.isVisible('#cv-bar')) || (await A.isVisible('#fmt-bar'))) throw new Error('canvas toolbar');
-await A.click('[data-cv="text"]');
+await A.click('[data-cv="text"]'); await A.click('.cv-world', { position: { x: 120, y: 80 } });
 await A.keyboard.type('Unit 5 – mind map');
 await A.keyboard.press('Escape');
 let o = await objs();

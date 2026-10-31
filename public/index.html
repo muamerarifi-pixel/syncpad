@@ -81,6 +81,7 @@
       <symbol id="i-underline" viewBox="0 0 24 24"><path d="M6 4v6a6 6 0 0 0 12 0V4"/><path d="M4 20h16"/></symbol>
       <symbol id="i-strike" viewBox="0 0 24 24"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><path d="M4 12h16"/></symbol>
       <symbol id="i-olist" viewBox="0 0 24 24"><path d="M10 6h11M10 12h11M10 18h11"/><path d="M4 5h1v4M3.5 9h2.5M6 19H3.8c0-1 2.2-2 2.2-3.2 0-.7-.6-1.3-1.4-1.3-.6 0-1 .3-1.3.7"/></symbol>
+      <symbol id="i-note-plus" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M12 12v6M9 15h6"/></symbol>
       <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/><path d="M5.5 8h1.5M5.5 11h1.5"/></symbol>
       <symbol id="i-present" viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M12 16.5V20M8 20.5h8"/><path d="m10 7.5 4.5 2.5-4.5 2.5z"/></symbol>
       <symbol id="i-canvas" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9.5" r="2.5"/><path d="m13 18 3-5 3 5z"/><path d="M6 17h4"/></symbol>
@@ -124,6 +125,7 @@
 
       <div class="top-actions">
         <button class="icon-btn only-mobile" id="btn-search" aria-label="Search"><svg class="ic"><use href="#i-search"/></svg></button>
+        <button class="icon-btn" id="btn-quick-note" aria-label="New note" title="New note"><svg class="ic"><use href="#i-note-plus"/></svg></button>
         <button class="status-chip" id="status-chip" aria-label="Devices and sync status">
           <span class="dot"></span><span class="status-text">Connecting…</span>
         </button>
@@ -155,7 +157,7 @@
           <div class="feed" id="feed" tabindex="-1">
             <div class="feed-inner" id="feed-inner"></div>
           </div>
-          <form class="composer" id="composer" autocomplete="off">
+          <form class="composer" id="composer">
             <button type="button" class="icon-btn composer-attach" id="btn-attach" aria-label="Attach files"><svg class="ic"><use href="#i-clip"/></svg></button>
             <button type="button" class="icon-btn composer-attach" id="btn-new-doc" aria-label="New document" title="New document (Word or PDF)"><svg class="ic"><use href="#i-doc"/></svg></button>
             <textarea id="composer-input" rows="1" placeholder="Type, paste or drop anything…" aria-label="Message to your devices" enterkeyhint="send"></textarea>
@@ -180,10 +182,12 @@
           <div class="notes-head">
             <h2>Notes</h2>
             <div class="row-btns">
+              <button class="icon-btn" id="btn-notes-view" aria-label="View, size and sort" title="View, size and sort"><svg class="ic"><use href="#i-grid"/></svg></button>
               <button class="btn btn-soft btn-sm" id="btn-new-canvas" title="New canvas: place text, pictures, shapes and arrows anywhere"><svg class="ic"><use href="#i-canvas"/></svg><span>Canvas</span></button>
               <button class="btn btn-primary btn-sm" id="btn-new-note"><svg class="ic"><use href="#i-plus"/></svg><span>New</span></button>
             </div>
           </div>
+          <div class="chips nf-chips" id="nfolder-chips"></div>
           <div class="chips" id="tag-chips" hidden></div>
           <div class="note-list" id="note-list" role="list"></div>
         </aside>
@@ -230,6 +234,7 @@
               <span class="fmt-sep"></span>
               <button class="icon-btn sm" data-fmt="link" title="Link"><svg class="ic"><use href="#i-link"/></svg></button>
               <button class="icon-btn sm" data-fmt="attach" title="Attach a file or photo"><svg class="ic"><use href="#i-clip"/></svg></button>
+              <button class="icon-btn sm fmt-case" data-fmt="case" title="Sentence case → UPPERCASE → lowercase (one click each)"><b>Aa</b></button>
               <button class="icon-btn sm" data-fmt="clear" title="Clear formatting"><svg class="ic"><use href="#i-eraser"/></svg></button>
             </div>
             <div class="cv-bar" id="cv-bar" role="toolbar" aria-label="Canvas tools" hidden></div>

@@ -1,3 +1,5 @@
+import { cycleCase, CASE_LABEL } from './textcase.js';
+
 // Canvas notes: a fixed-width page (1000 units, scaled to the screen so it looks the same on every device)
 // where text boxes, pictures, shapes, lines/arrows, emojis and pen strokes can be placed, moved,
 // resized and rotated freely. Stored in note.data.canvas = { v: 1, items: [...] }.
@@ -167,6 +169,7 @@ function fillItem(e, o, fileSrc, sanitize) {
   else if (o.t === 'line') e.innerHTML = lineSvg(o);
   else if (o.t === 'pen') e.innerHTML = penSvg(o);
   else if (o.t === 'emoji') e.innerHTML = `<span class="cv-emo" style="font-size:${o.h * 0.82}px;line-height:${o.h}px">${esc(o.ch || '🙂')}</span>`;
+  else if (o.t === 'file') e.innerHTML = `<div class="cv-filecard"><svg class="ic"><use href="#i-file"/></svg><span>${esc(o.name || 'File')}</span></div>`;
   place(e, o);
 }
 function place(e, o) {
@@ -180,6 +183,13 @@ function place(e, o) {
   e.style.width = o.w + 'px';
   e.style.height = o.t === 'text' ? '' : o.h + 'px';
   e.style.transform = o.r ? `rotate(${o.r}deg)` : '';
+}
+
+export { shapeSvg, lineSvg, penSvg, lineGeom, extent };
+export function pageHeight(data) {
+  let h = MIN_H;
+  for (const o of (data && data.items) || []) { const b = extent(o); h = Math.max(h, b.y + b.h + 320); }
+  return Math.ceil(h);
 }
 
 /** Read-only picture of a canvas (version history preview) */
@@ -201,12 +211,13 @@ export function renderStatic(host, data, { fileSrc, sanitize }) {
 
 /** Text and pictures in reading order: used for the note title, search, previews and older app versions */
 export function fallback(data, sanitize) {
-  const items = [...((data && data.items) || [])].filter((o) => o.t === 'text' || o.t === 'img' || o.t === 'emoji')
+  const items = [...((data && data.items) || [])].filter((o) => o.t === 'text' || o.t === 'img' || o.t === 'emoji' || o.t === 'file')
     .sort((a, b) => (Math.abs(a.y - b.y) < 20 ? a.x - b.x : a.y - b.y));
   const parts = [];
   const lines = [];
   for (const o of items) {
     if (o.t === 'img') parts.push(`<p><img data-file="${esc(o.file)}" alt=""></p>`);
+    else if (o.t === 'file') parts.push(`<p><a data-file="${esc(o.file)}" class="file-chip" contenteditable="false">📎 ${esc(o.name || 'File')}</a></p>`);
     else if (o.t === 'emoji') { parts.push(`<p>${esc(o.ch)}</p>`); }
     else {
       const html = sanitize(o.html || '');
@@ -255,8 +266,8 @@ export async function fromHtml(html, { imageSize }) {
 /* ───────────── the editor ───────────── */
 
 export class NoteCanvas {
-  constructor({ host, bar, fileSrc, upload, sanitize, menu, onChange, cleanText }) {
-    Object.assign(this, { host, bar, fileSrc, upload, sanitize, menu, onChange, cleanText });
+  constructor({ host, bar, fileSrc, upload, sanitize, menu, onChange, cleanText, onOpen, onExport, toast }) {
+    Object.assign(this, { host, bar, fileSrc, upload, sanitize, menu, onChange, cleanText, onOpen, onExport, toast });
     this.items = [];
     this.sel = null;
     this.editing = null;
@@ -294,6 +305,11 @@ export class NoteCanvas {
     this.ro.observe(this.scroll);
     this.closePop = (e) => { if (this.pop && !this.pop.contains(e.target) && !e.target.closest('[data-pop]')) this.hidePop(); };
     document.addEventListener('pointerdown', this.closePop, true);
+    if (window.visualViewport) visualViewport.addEventListener('resize', () => {
+      if (!this.editing) return;
+      const e = this.elOf(this.editing);
+      if (e) setTimeout(() => e.scrollIntoView({ block: 'nearest', inline: 'nearest' }), 60);
+    });
     this.touches = new Map();
     const lift = (e) => this.touches.delete(e.pointerId);
     this.world.addEventListener('pointerup', lift);
@@ -438,9 +454,10 @@ export class NoteCanvas {
   }
 
   /* ───── adding things ───── */
-  add(o, at) {
+  add(o, at, exact) {
     this.remember();
     const c = at || this.centre();
+    if (exact && o.t !== 'line') { o.w = Math.min(o.w, W - Math.max(0, c.x)); c.x += o.w / 2; c.y += (o.h || 40) / 2; }
     o.id = uid();
     if (o.t === 'line') {
       const dx = (o.x2 || 0) - (o.x1 || 0);
@@ -451,7 +468,7 @@ export class NoteCanvas {
       o.y = Math.max(0, c.y - (o.h || 40) / 2);
     }
     // don't land exactly on top of something just added
-    for (let k = 0; k < 12 && this.items.some((q) => q.t === o.t && Math.abs(bbox(q).x - bbox(o).x) < 4 && Math.abs(bbox(q).y - bbox(o).y) < 4); k++) this.move(o, 24, 24);
+    for (let k = 0; k < 12 && !exact && this.items.some((q) => q.t === o.t && Math.abs(bbox(q).x - bbox(o).x) < 4 && Math.abs(bbox(q).y - bbox(o).y) < 4); k++) this.move(o, 24, 24);
     this.items.push(o);
     this.world.insertBefore(drawItem(o, this.fileSrc, this.sanitize), this.guides);
     if (o.t === 'text') o.h = this.elOf(o.id).offsetHeight;
@@ -459,8 +476,8 @@ export class NoteCanvas {
     this.commit();
     return o;
   }
-  addText(at) {
-    const o = this.add({ t: 'text', w: 360, h: 40, fs: 26, html: '' }, at);
+  addText(at, exact) {
+    const o = this.add({ t: 'text', w: 360, h: 40, fs: 26, html: '' }, at, exact);
     this.startEdit(o.id);
   }
   addShape(kind) {
@@ -473,14 +490,15 @@ export class NoteCanvas {
     this.add({ t: 'emoji', ch, w: 110, h: 110 });
   }
   async addFiles(list, at) {
-    const pics = list.filter((f) => /^image\//.test(f.type));
-    if (!pics.length) return;
-    const made = await this.upload(pics);
+    if (!list.length) return;
+    const made = await this.upload(list);
     let c = at || this.centre();
     for (const m of made) {
-      const w = Math.min(560, Math.max(120, m.w || 480));
-      const h = Math.round((w * (m.h || 3)) / (m.w || 4));
-      this.add({ t: 'img', file: m.id, w, h }, c);
+      if (m.image) {
+        const w = Math.min(560, Math.max(120, m.w || 480));
+        const h = Math.round((w * (m.h || 3)) / (m.w || 4));
+        this.add({ t: 'img', file: m.id, w, h }, c);
+      } else this.add({ t: 'file', file: m.id, name: m.name, w: 320, h: 64 }, c);
       c = { x: c.x + 30, y: c.y + 30 };
     }
   }
@@ -566,6 +584,15 @@ export class NoteCanvas {
     if (objEl && this.editing === objEl.dataset.id && e.target.closest('.cv-tx')) return; // caret / text selection
     this.world.focus({ preventScroll: true });
     if (this.tool === 'pen' && !h) { this.drawPen(e); return; }
+    if (this.tool === 'text' && !h) {
+      e.preventDefault();
+      const p = this.pt(e);
+      this.setTool(null);
+      const hit = objEl && this.get(objEl.dataset.id);
+      if (hit && hit.t === 'text') { this.select(hit.id); this.startEdit(hit.id, e); return; }
+      this.addText({ x: p.x - 8, y: p.y - 20 }, true);
+      return;
+    }
     if (h) { this.dragHandle(e, h.dataset.h); return; }
     if (objEl) {
       const id = objEl.dataset.id;
@@ -590,7 +617,12 @@ export class NoteCanvas {
   }
   dbl(e) {
     const objEl = e.target.closest('.cv-obj');
-    if (objEl) { const o = this.get(objEl.dataset.id); if (o && o.t === 'text' && this.editing !== o.id) this.startEdit(o.id, e); return; }
+    if (objEl) {
+      const o = this.get(objEl.dataset.id);
+      if (o && o.t === 'text' && this.editing !== o.id) this.startEdit(o.id, e);
+      else if (o && (o.t === 'img' || o.t === 'file') && this.onOpen) this.onOpen(o.file);
+      return;
+    }
     if (!this.tool && !e.target.closest('.cv-sel')) this.addText(this.pt(e));
   }
   context(e) {
@@ -603,7 +635,9 @@ export class NoteCanvas {
   objMenu(at) {
     const id = this.sel;
     if (!id || !this.menu) return;
+    const o = this.get(id);
     this.menu(at, [
+      ...((o.t === 'img' || o.t === 'file') && this.onOpen ? [{ icon: 'eye', label: 'Open', run: () => this.onOpen(o.file) }] : []),
       { icon: 'copy', label: 'Duplicate', run: () => this.duplicate() },
       { icon: 'box', label: 'Bring to front', run: () => this.order(1) },
       { icon: 'box', label: 'Send to back', run: () => this.order(-1) },
@@ -657,6 +691,7 @@ export class NoteCanvas {
       if (moved) { this.commit(); return; }
       if (hold === 'menu') return;
       if (wasSelected && o.t === 'text' && this.editing !== id) this.startEdit(id, ev);
+      else if (wasSelected && o.t === 'file' && this.onOpen) this.onOpen(o.file);
     });
   }
 
@@ -942,7 +977,7 @@ export class NoteCanvas {
     this.bar.innerHTML =
       `<div class="cv-tools">${b('text', 'text', 'Text box')}${b('shapes', 'square', 'Shapes', 'data-pop')}${b('lines', 'arrow', 'Lines and arrows', 'data-pop')}` +
       `<button class="icon-btn sm cv-emoji-btn" data-cv="emoji" data-pop title="Emoji" aria-label="Emoji">🙂</button>${b('pic', 'image', 'Picture')}${b('pen', 'pen', 'Draw')}` +
-      '<span class="fmt-sep"></span>' + b('undo', 'undo', 'Undo (Ctrl+Z)') + b('redo', 'redo', 'Redo (Ctrl+Y)') + '</div>' +
+      '<span class="fmt-sep"></span>' + b('undo', 'undo', 'Undo (Ctrl+Z)') + b('redo', 'redo', 'Redo (Ctrl+Y)') + b('export', 'download', 'Save as PNG or PDF') + '</div>' +
       '<div class="cv-props"></div>';
     this.props = this.bar.querySelector('.cv-props');
     this.bar.addEventListener('mousedown', (e) => { if (e.target.closest('button') && this.editing) e.preventDefault(); });
@@ -952,7 +987,10 @@ export class NoteCanvas {
       const c = btn.dataset.cv;
       const o = this.get(this.sel);
       switch (c) {
-        case 'text': this.setTool(null); this.addText(); break;
+        case 'text': this.setTool(this.tool === 'text' ? null : 'text'); break;
+        case 'export': this.setTool(null); if (this.editing) this.stopEdit(); this.onExport && this.onExport(); break;
+        case 'open': if (o && this.onOpen) this.onOpen(o.file); break;
+        case 'case': this.textCase(); break;
         case 'shapes': this.showPop(btn, this.gridPop(SHAPES.map(([k, l]) => [k, l, shapeSvg({ kind: k, w: 30, h: 26, fill: 'none', stroke: '', sw: 2 })]), (k) => { this.setTool(null); this.addShape(k); })); break;
         case 'lines': this.showPop(btn, this.gridPop(LINES.map(([k, l]) => [k, l, `<svg width="30" height="26" viewBox="0 0 30 26">${lineSvg({ t: 'line', kind: k, x1: 4, y1: 22, x2: 26, y2: 4, sw: 2 }).replace(/^<svg[^>]*>|<\/svg>$/g, '')}</svg>`]), (k) => { this.setTool(null); this.addLine(k); })); break;
         case 'emoji': this.showPop(btn, this.emojiPop()); break;
@@ -983,6 +1021,24 @@ export class NoteCanvas {
       }
     });
   }
+  textCase() {
+    const o = this.get(this.sel);
+    if (!o || o.t !== 'text') return;
+    const t = this.elOf(o.id).firstElementChild;
+    if (!this.editing) {
+      const r = document.createRange();
+      r.selectNodeContents(t);
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+    }
+    this.remember();
+    const mode = cycleCase(t);
+    if (!mode) { this.undoStack.pop(); return; }
+    o.html = this.editing ? t.innerHTML : this.sanitize(t.innerHTML);
+    if (!this.editing) getSelection().removeAllRanges();
+    this.commit();
+    if (this.toast) this.toast(CASE_LABEL[mode]);
+  }
   scaled(o, k) {
     const nw = clamp(o.w * k, 24, 900);
     return { x: o.x + (o.w - nw) / 2, y: o.y + (o.h - nw) / 2, w: nw, h: nw };
@@ -991,6 +1047,8 @@ export class NoteCanvas {
     const o = this.get(this.sel);
     const pen = this.tool === 'pen';
     for (const b of this.bar.querySelectorAll('[data-cv="pen"]')) b.setAttribute('aria-pressed', String(pen));
+    for (const b of this.bar.querySelectorAll('[data-cv="text"]')) b.setAttribute('aria-pressed', String(this.tool === 'text'));
+    this.world.classList.toggle('text-mode', this.tool === 'text');
     const und = this.bar.querySelector('[data-cv="undo"]');
     const red = this.bar.querySelector('[data-cv="redo"]');
     if (und) und.disabled = !this.undoStack.length && !this.editing;
@@ -1003,11 +1061,12 @@ export class NoteCanvas {
     else if (o) {
       if (o.t === 'text') {
         h = btn('smaller', '<b>A−</b>', 'Smaller text') + btn('bigger', '<b>A+</b>', 'Bigger text') + btn('bold', ic('bold'), 'Bold', !!o.bold) + btn('italic', ic('italic'), 'Italic', !!o.italic) +
-          btn('align', ic(`al-${o.align === 'center' ? 'center' : o.align === 'right' ? 'right' : 'left'}`), 'Alignment') + btn('color', sw(o.color), 'Text colour') + btn('fill', sw(o.bg || 'none', 'fill'), 'Background');
+          btn('case', '<b>Aa</b>', 'Sentence case / UPPERCASE / lowercase') + btn('align', ic(`al-${o.align === 'center' ? 'center' : o.align === 'right' ? 'right' : 'left'}`), 'Alignment') + btn('color', sw(o.color), 'Text colour') + btn('fill', sw(o.bg || 'none', 'fill'), 'Background');
       } else if (o.t === 'shape') h = btn('fill', sw(o.fill || '#ffe8a3', 'fill'), 'Fill') + btn('outline', sw(o.stroke, 'ring'), 'Outline') + btn('width', `<b class="cv-w">${o.sw != null ? o.sw : 3}</b>`, 'Outline width');
       else if (o.t === 'line') h = btn('color', sw(o.stroke), 'Colour') + btn('width', `<b class="cv-w">${o.sw != null ? o.sw : 5}</b>`, 'Thickness') + btn('kind', ic(o.kind === 'line' ? 'line' : 'arrow'), 'Line / arrow type');
       else if (o.t === 'pen') h = btn('color', sw(o.stroke), 'Colour') + btn('width', `<b class="cv-w">${o.sw}</b>`, 'Thickness');
       else if (o.t === 'emoji') h = btn('smaller', '<b>A−</b>', 'Smaller') + btn('bigger', '<b>A+</b>', 'Bigger');
+      else if (o.t === 'img' || o.t === 'file') h = btn('open', ic('eye'), 'Open');
       h += (h ? '<span class="fmt-sep"></span>' : '') + btn('front', '<b class="cv-lyr">⬆</b>', 'Bring to front') + btn('back', '<b class="cv-lyr">⬇</b>', 'Send to back') + btn('dup', ic('copy'), 'Duplicate (Ctrl+D)') + btn('del', ic('trash'), 'Delete');
     }
     this.props.innerHTML = h ? '<span class="fmt-sep"></span>' + h : '';

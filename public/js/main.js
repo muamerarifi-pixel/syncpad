@@ -14,8 +14,10 @@ import { ZoomView } from './zoom.js';
 import * as De from './declutter.js';
 import { NoteCanvas, renderStatic as renderCanvasStatic, fallback as canvasFallback, fromHtml as canvasFromHtml } from './canvas.js';
 import { ImageTools } from './noteimg.js';
+import { openExport } from './cvexport.js';
+import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.15.0';
+const VERSION = '2.16.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -309,6 +311,7 @@ function wire() {
   // notes
   el.noteList.addEventListener('click', (e) => {
     const b = e.target.closest('.note-item');
+    if (ui.swiped && Date.now() - ui.swiped < 400) return;
     if (b) openNote(b.dataset.id);
   });
   el.tagChips.addEventListener('click', (e) => {
@@ -337,6 +340,32 @@ function wire() {
   });
   el.btnNewCanvas.addEventListener('click', () => newNote({ canvas: true }));
   el.btnToggleList.addEventListener('click', () => toggleNotesList());
+  el.btnQuickNote.addEventListener('click', () => newNote());
+  el.btnNotesView.addEventListener('click', () => notesViewMenu(el.btnNotesView));
+  el.nfolderChips.addEventListener('click', onFolderChipClick);
+  el.nfolderChips.addEventListener('contextmenu', onFolderChipContext);
+  el.nfolderChips.addEventListener('dragover', (e) => { const c = e.target.closest('[data-nf]'); if (c && [...e.dataTransfer.types].includes('application/x-syncpad-note')) { e.preventDefault(); c.classList.add('drop-on'); } });
+  el.nfolderChips.addEventListener('dragleave', (e) => { const c = e.target.closest('[data-nf]'); if (c) c.classList.remove('drop-on'); });
+  el.nfolderChips.addEventListener('drop', (e) => {
+    const c = e.target.closest('[data-nf]');
+    const id = e.dataTransfer.getData('application/x-syncpad-note');
+    if (!c || !id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    c.classList.remove('drop-on');
+    moveNoteToFolder(store.items.get(id), c.dataset.nf === 'all' ? null : c.dataset.nf);
+  });
+  el.noteList.addEventListener('dragstart', (e) => {
+    const b = e.target.closest('.note-item');
+    if (!b) return;
+    e.dataTransfer.setData('application/x-syncpad-note', b.dataset.id);
+    e.dataTransfer.effectAllowed = 'move';
+    el.app.classList.add('dragging-note');
+  });
+  el.noteList.addEventListener('dragend', () => el.app.classList.remove('dragging-note'));
+  setupNoteSwipe();
+  fitToKeyboard();
+  setupPasteChip();
   el.btnShowList.addEventListener('click', () => toggleNotesList(false));
   el.btnPresent.addEventListener('click', startPresent);
   applyNotesList();
@@ -709,7 +738,8 @@ function renderStatus() {
   }
   el.statusChip.dataset.state = state;
   el.statusChip.querySelector('.status-text').textContent = text;
-  el.statusChip.title = state === 'offline' ? 'You are offline. Everything is saved on this device and will sync when you are back online.' : 'Devices & sync';
+  el.statusChip.setAttribute('aria-label', text);
+  el.statusChip.title = state === 'offline' ? `${text}. Everything is saved on this device and will sync when you are back online.` : `${text} · Devices & sync`;
 }
 
 /* ───────── drops (home screen): filters, folders, compact list / grid ───────── */
@@ -1473,6 +1503,8 @@ function onNoteListContext(e) {
     { icon: 'note', label: 'Open', run: () => openNote(n.id) },
     { icon: 'pin', label: n.data.pinned ? 'Unpin' : 'Pin to top', run: () => { n.data = { ...n.data, pinned: !n.data.pinned }; store.save(n).then(() => { sync.schedule(); if (ui.noteId === n.id) renderEditor(false); }); } },
     { icon: 'copy', label: 'Copy text', run: async () => { await copyText(noteText(n)); toast('Copied'); } },
+    { icon: 'folder', label: 'Move to folder…', run: () => folderPick(n, null, { x: e.clientX, y: e.clientY }) },
+    { icon: 'marker', label: 'Colour…', run: () => colorPick(n, null, { x: e.clientX, y: e.clientY }) },
     { icon: 'trash', label: 'Move to Trash', danger: true, run: () => deleteWithUndo(n, 'Note') }
   ], { at: { x: e.clientX, y: e.clientY } });
 }
@@ -1702,11 +1734,241 @@ function noteHtml(n) {
   return n.data.html != null ? sanitizeNote(n.data.html) : markdownToHtml(n.data.body || '');
 }
 
+const NOTE_COLORS = [['red', '#e03131', 'Red'], ['orange', '#f08c00', 'Orange'], ['yellow', '#f5b700', 'Yellow'], ['green', '#2f9e44', 'Green'], ['blue', '#1c7ed6', 'Blue'], ['purple', '#7048e8', 'Purple'], ['pink', '#d6336c', 'Pink']];
+const NOTE_FONTS = [['', 'Default'], ['outfit', 'Outfit — modern'], ['lora', 'Lora — elegant serif'], ['caveat', 'Caveat — handwriting']];
+const NOTE_PAPERS = [['', 'Plain'], ['sepia', 'Sepia paper'], ['sepia-lined', 'Sepia, lined']];
+const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+function noteFolders() { const st = store.items.get('settings'); return (st && st.data.noteFolders) || []; }
+async function saveNoteFolders(list) {
+  const cur = store.items.get('settings');
+  const item = cur || { id: 'settings', kind: 'settings', rev: 0, created: Date.now(), data: {} };
+  item.data = { ...item.data, noteFolders: list };
+  await store.save(item);
+  sync.schedule();
+}
 function notesSorted() {
+  const sort = lsGet('sp-nsort', 'edited');
+  const ci = (n) => { const i = NOTE_COLORS.findIndex((c) => c[0] === n.data.color); return i < 0 ? 99 : i; };
+  const by = {
+    edited: (a, b) => b.updated - a.updated,
+    created: (a, b) => b.created - a.created,
+    title: (a, b) => noteTitle(noteText(a)).localeCompare(noteTitle(noteText(b)), undefined, { sensitivity: 'base', numeric: true }),
+    color: (a, b) => ci(a) - ci(b) || b.updated - a.updated
+  }[sort] || ((a, b) => b.updated - a.updated);
   return store
     .list('note')
     .filter((n) => !n.data.trashed)
-    .sort((a, b) => (b.data.pinned ? 1 : 0) - (a.data.pinned ? 1 : 0) || b.updated - a.updated);
+    .sort((a, b) => (b.data.pinned ? 1 : 0) - (a.data.pinned ? 1 : 0) || by(a, b));
+}
+function setNoteData(n, patch) {
+  if (!n) return;
+  n.data = { ...n.data, ...patch };
+  for (const k of Object.keys(patch)) if (patch[k] == null) delete n.data[k];
+  if (ui.noteId === n.id) renderEditor(false);
+  if (!store.items.has(n.id)) return;
+  store.save(n).then(() => { sync.schedule(); renderNotesList(); });
+}
+function pickMenu(anchor, title, list, cur, apply, at) {
+  openMenu(anchor, list.map(([v, label, color]) => ({
+    html: `${color ? `<span class="menu-swatch" style="--c:${color}"></span>` : `<svg class="ic"><use href="#i-${v === cur ? 'check' : 'box'}"/></svg>`}<span>${esc(label)}${v === cur ? ' ✓' : ''}</span>`,
+    run: () => apply(v)
+  })), at ? { at } : {});
+}
+function colorPick(n, anchor, at) { pickMenu(anchor, 'Colour', [['', 'No colour', 'transparent'], ...NOTE_COLORS.map(([v, c, l]) => [v, l, c])], n.data.color || '', (v) => setNoteData(n, { color: v || null }), at); }
+function fontPick(n, anchor, at) { pickMenu(anchor, 'Font', NOTE_FONTS, n.data.font || '', (v) => setNoteData(n, { font: v || null }), at); }
+function paperPick(n, anchor, at) { pickMenu(anchor, 'Paper', NOTE_PAPERS, n.data.paper || '', (v) => setNoteData(n, { paper: v || null }), at); }
+function folderPick(n, anchor, at) {
+  const fs = noteFolders();
+  pickMenu(anchor, 'Folder', [['', 'No folder'], ...fs.map((f) => [f.id, f.name]), ['+new', '＋ New folder…']], n.data.nf || '', async (v) => {
+    if (v === '+new') { const f = await newNoteFolder(); if (f) moveNoteToFolder(n, f.id); return; }
+    moveNoteToFolder(n, v || null);
+  }, at);
+}
+function moveNoteToFolder(n, id) {
+  if (!n) return;
+  setNoteData(n, { nf: id || null });
+  const f = noteFolders().find((x) => x.id === id);
+  toast(f ? `Moved to “${f.name}”` : 'Removed from its folder');
+}
+async function newNoteFolder() {
+  const name = await promptDialog('New notes folder', 'e.g. Class 9B, Lessons, Private', '');
+  if (!name || !name.trim()) return null;
+  const f = { id: rid(10), name: name.trim().slice(0, 40) };
+  await saveNoteFolders([...noteFolders(), f]);
+  renderNotesList();
+  return f;
+}
+function onFolderChipClick(e) {
+  const c = e.target.closest('[data-nf]');
+  if (!c) return;
+  if (c.dataset.nf === '+new') { newNoteFolder(); return; }
+  ui.nfolder = c.dataset.nf === 'all' ? null : c.dataset.nf;
+  renderNotesList();
+}
+function onFolderChipContext(e) {
+  const c = e.target.closest('[data-nf]');
+  if (!c || c.dataset.nf === 'all' || c.dataset.nf === '+new') return;
+  e.preventDefault();
+  const f = noteFolders().find((x) => x.id === c.dataset.nf);
+  if (!f) return;
+  openMenu(null, [
+    { icon: 'pen', label: 'Rename', run: async () => { const name = await promptDialog('Rename folder', '', f.name); if (name && name.trim()) { await saveNoteFolders(noteFolders().map((x) => (x.id === f.id ? { ...x, name: name.trim().slice(0, 40) } : x))); renderNotesList(); } } },
+    { icon: 'trash', label: 'Delete folder (keeps the notes)', danger: true, run: async () => { await saveNoteFolders(noteFolders().filter((x) => x.id !== f.id)); if (ui.nfolder === f.id) ui.nfolder = null; renderNotesList(); } }
+  ], { at: { x: e.clientX, y: e.clientY } });
+}
+function notesViewMenu(anchor) {
+  const view = lsGet('sp-nview', 'list');
+  const size = lsGet('sp-nsize', 'm');
+  const sort = lsGet('sp-nsort', 'edited');
+  const it = (on, label, run) => ({ html: `<svg class="ic"><use href="#i-${on ? 'check' : 'box'}"/></svg><span>${label}</span>`, run });
+  const set = (k, v) => () => { lsSet(k, v); renderNotesList(); };
+  openMenu(anchor, [
+    it(view === 'list', 'List', set('sp-nview', 'list')),
+    it(view === 'grid', 'Grid', set('sp-nview', 'grid')),
+    it(size === 's', 'Size: small', set('sp-nsize', 's')),
+    it(size === 'm', 'Size: medium', set('sp-nsize', 'm')),
+    it(size === 'l', 'Size: large', set('sp-nsize', 'l')),
+    it(sort === 'edited', 'Sort: last edited', set('sp-nsort', 'edited')),
+    it(sort === 'created', 'Sort: date created', set('sp-nsort', 'created')),
+    it(sort === 'title', 'Sort: title A–Z', set('sp-nsort', 'title')),
+    it(sort === 'color', 'Sort: colour', set('sp-nsort', 'color'))
+  ]);
+}
+
+/* swipe a note left or right on a phone: it goes to Trash (Undo brings it back) */
+function setupNoteSwipe() {
+  let s = null;
+  el.noteList.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') return;
+    const b = e.target.closest('.note-item');
+    if (!b) return;
+    s = { b, x: e.clientX, y: e.clientY, id: e.pointerId, on: false };
+  });
+  el.noteList.addEventListener('pointermove', (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    if (!s.on) {
+      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { s = null; return; }
+      if (Math.abs(dx) < 14) return;
+      s.on = true;
+      s.b.classList.add('swiping');
+      try { s.b.setPointerCapture(e.pointerId); } catch {}
+    }
+    s.b.style.transform = `translateX(${dx}px)`;
+    s.b.style.opacity = String(Math.max(0.35, 1 - Math.abs(dx) / s.b.offsetWidth));
+    s.b.dataset.swipe = dx < 0 ? 'left' : 'right';
+  });
+  const end = (e) => {
+    if (!s || e.pointerId !== s.id) return;
+    const { b, on } = s;
+    const dx = e.clientX - s.x;
+    s = null;
+    if (!on) return;
+    ui.swiped = Date.now();
+    const gone = Math.abs(dx) > b.offsetWidth * 0.35;
+    b.style.transition = 'transform .18s ease, opacity .18s ease';
+    b.style.transform = gone ? `translateX(${dx < 0 ? -110 : 110}%)` : '';
+    b.style.opacity = gone ? '0' : '';
+    setTimeout(() => {
+      b.classList.remove('swiping');
+      b.style.transition = '';
+      if (gone) { const n = store.items.get(b.dataset.id); if (n) deleteWithUndo(n, 'Note'); }
+    }, 190);
+  };
+  el.noteList.addEventListener('pointerup', end);
+  el.noteList.addEventListener('pointercancel', end);
+}
+
+/* phones: keep the editor and its bars above the keyboard */
+function fitToKeyboard() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const fit = () => {
+    ui.vvMax = Math.max(ui.vvMax || 0, vv.height);
+    const open = vv.height < ui.vvMax - 150;
+    const overlay = window.innerHeight - vv.height - vv.offsetTop > 90; // keyboard drawn over the page instead of resizing it
+    el.app.classList.toggle('kb-open', open);
+    el.app.classList.toggle('kb-overlay', overlay);
+    document.documentElement.style.setProperty('--vvh', vv.height + 'px');
+    if (overlay && window.scrollY) window.scrollTo(0, 0);
+    if (document.activeElement === el.editorText) {
+      const sel = getSelection();
+      const r = sel.rangeCount && sel.getRangeAt(0).getBoundingClientRect();
+      const box = el.editorText.getBoundingClientRect();
+      if (r && r.height) {
+        const bottom = Math.min(box.bottom, vv.offsetTop + vv.height) - 24;
+        if (r.bottom > bottom) el.editorText.scrollTop += r.bottom - bottom;
+      }
+    }
+    positionPasteChip();
+  };
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+  addEventListener('orientationchange', () => { ui.vvMax = 0; setTimeout(fit, 400); });
+  fit();
+}
+
+/* "Paste" chip above the keyboard (also pastes photos) */
+function setupPasteChip() {
+  const chip = document.createElement('button');
+  chip.className = 'paste-chip';
+  chip.hidden = true;
+  chip.innerHTML = '<svg class="ic"><use href="#i-paste"/></svg><span>Paste</span>';
+  document.body.appendChild(chip);
+  ui.pasteChip = chip;
+  chip.addEventListener('pointerdown', (e) => e.preventDefault()); // keep the keyboard open
+  chip.addEventListener('click', pasteFromClipboard);
+  const update = () => setTimeout(positionPasteChip, 30);
+  document.addEventListener('focusin', update);
+  document.addEventListener('focusout', update);
+}
+function pasteTarget() {
+  const a = document.activeElement;
+  if (!a || !isTouch()) return null;
+  if (a === el.composerInput || a === el.editorText) return a;
+  return null;
+}
+function positionPasteChip() {
+  const chip = ui.pasteChip;
+  if (!chip) return;
+  const t = pasteTarget();
+  const vv = window.visualViewport;
+  const show = !!t && el.app.classList.contains('kb-open') && !!(navigator.clipboard && navigator.clipboard.read) && !ui.presenting;
+  chip.hidden = !show;
+  if (!show) return;
+  chip.style.top = (vv ? vv.offsetTop + vv.height : innerHeight) - chip.offsetHeight - 10 + 'px';
+}
+async function pasteFromClipboard() {
+  const t = pasteTarget();
+  if (!t) return;
+  let items;
+  try { items = await navigator.clipboard.read(); } catch { toast('Allow SyncPad to see what you copied, then try again.'); return; }
+  const fl = [];
+  let text = '';
+  let html = '';
+  for (const it of items) {
+    const img = it.types.find((ty) => ty.startsWith('image/'));
+    if (img) { const b = await it.getType(img); fl.push(new File([b], `Pasted ${new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '.')}.${img.split('/')[1] || 'png'}`, { type: img })); continue; }
+    if (it.types.includes('text/html')) html = await (await it.getType('text/html')).text();
+    if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+  }
+  if (!fl.length && !text && !html) { toast('Nothing copied yet'); return; }
+  if (t === el.composerInput) {
+    if (fl.length) { sendFiles(fl); return; }
+    const dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    if (html) dt.setData('text/html', html);
+    const ev = { clipboardData: dt, preventDefault() {} };
+    if (!cleanComposerPaste(ev)) { el.composerInput.focus(); document.execCommand('insertText', false, text); autosize(); updateSend(); }
+    return;
+  }
+  if (fl.length) { attachToNote(fl); return; }
+  const dt = new DataTransfer();
+  dt.setData('text/plain', text);
+  if (html) dt.setData('text/html', html);
+  pasteIntoEditor({ clipboardData: dt, preventDefault() {} });
 }
 
 function renderNotesList() {
@@ -1720,14 +1982,21 @@ function renderNotesList() {
     .slice(0, 20)
     .map(([t]) => `<button class="chip" data-tag="${esc(t)}" aria-pressed="${ui.tag === t}">#${esc(t)}</button>`)
     .join('');
+  const fs = noteFolders();
+  if (ui.nfolder && !fs.some((f) => f.id === ui.nfolder)) ui.nfolder = null;
+  el.nfolderChips.innerHTML = `<button class="chip" data-nf="all" aria-pressed="${!ui.nfolder}">All</button>` +
+    fs.map((f) => `<button class="chip" data-nf="${f.id}" aria-pressed="${ui.nfolder === f.id}"><svg class="ic"><use href="#i-folder"/></svg>${esc(f.name)} <b>${all.filter((n) => n.data.nf === f.id).length}</b></button>`).join('') +
+    '<button class="chip chip-add" data-nf="+new" title="New folder"><svg class="ic"><use href="#i-plus"/></svg><span>Folder</span></button>';
+  const view = lsGet('sp-nview', 'list');
+  el.noteList.className = `note-list view-${view} size-${lsGet('sp-nsize', 'm')}`;
   const q = ui.query.toLowerCase();
-  const list = all.filter((n) => (!ui.tag || noteTags(noteText(n)).includes(ui.tag)) && (!q || noteText(n).toLowerCase().includes(q)));
+  const list = all.filter((n) => (!ui.nfolder || n.data.nf === ui.nfolder) && (!ui.tag || noteTags(noteText(n)).includes(ui.tag)) && (!q || noteText(n).toLowerCase().includes(q)));
   if (!list.length) {
-    el.noteList.innerHTML = `<div class="list-empty">${q || ui.tag ? 'No notes match.' : 'No notes yet.<br>Notes sync to all your devices as you type.'}</div>`;
+    el.noteList.innerHTML = `<div class="list-empty">${q || ui.tag ? 'No notes match.' : ui.nfolder ? 'No notes in this folder yet.<br>Drag notes onto the folder, or use ⋯ → Move to folder.' : 'No notes yet.<br>Notes sync to all your devices as you type.'}</div>`;
     return;
   }
   el.noteList.innerHTML = list
-    .map((n) => `<button class="note-item" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}">
+    .map((n) => `<button class="note-item" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}"${n.data.color ? ` data-color="${esc(n.data.color)}"` : ''}${isTouch() ? '' : ' draggable="true"'}>
       <div class="t">${n.data.pinned ? '<svg class="ic"><use href="#i-pin"/></svg>' : ''}${n.data.canvas ? '<svg class="ic"><use href="#i-canvas"/></svg>' : ''}<span>${esc(noteTitle(noteText(n)))}</span></div>
       <div class="s">${esc(noteSnippet(noteText(n))) || '&nbsp;'}</div>
       <div class="d">${esc(shortDate(n.updated))}${n.data.conflictOf ? ' · <span class="warn">Conflict copy</span>' : ''}</div>
@@ -1752,7 +2021,7 @@ function newNote(opts) {
   const canvas = !!(opts && opts.canvas);
   if (ui.tab !== 'notes') setTab('notes');
   const now = Date.now();
-  ui.newNote = { id: rid(16), kind: 'note', rev: 0, created: now, updated: now, device: me(), data: { html: '', text: '', pinned: false, ...(canvas ? { canvas: { v: 1, items: [] } } : {}) } };
+  ui.newNote = { id: rid(16), kind: 'note', rev: 0, created: now, updated: now, device: me(), data: { html: '', text: '', pinned: false, ...(ui.nfolder ? { nf: ui.nfolder } : {}), ...(canvas ? { canvas: { v: 1, items: [] } } : {}) } };
   openNote(ui.newNote.id, { focus: false });
   if (!canvas) focusEditorEnd();
 }
@@ -1808,6 +2077,9 @@ function renderEditor(force) {
   const ed = el.editorText;
   const isCanvas = !!n.data.canvas;
   el.editor.classList.toggle('is-canvas', isCanvas);
+  el.editor.dataset.font = n.data.font || '';
+  el.editor.dataset.paper = n.data.paper || '';
+  el.editor.dataset.color = n.data.color || '';
   el.noteCanvas.hidden = el.cvBar.hidden = !isCanvas;
   el.fmtBar.hidden = isCanvas;
   if (isCanvas) {
@@ -2009,8 +2281,13 @@ function getCanvas() {
       if (!n) return [];
       if (!store.items.has(n.id)) { await saveCanvasNow(n); n = openNoteItem(); }
       const items = await files.add(list, { parent: n.id });
-      return Promise.all(items.map(async (it) => ({ id: it.id, ...(await imageSize(it.id)) })));
+      return Promise.all(items.map(async (it) => (fileKind(it.data.type, it.data.name) === 'image'
+        ? { id: it.id, image: true, ...(await imageSize(it.id)) }
+        : { id: it.id, name: it.data.name })));
     },
+    onOpen: (id) => { const it = store.items.get(id); if (it) openFile(it); else toast('This file is still on its way'); },
+    onExport: () => exportCanvas(),
+    toast: (m) => toast(m, { duration: 1500 }),
     onChange: () => { ui.dirty = true; renderSaveState(); saveNote(); }
   });
   ui.canvas.onZoom = () => applyZoom();
@@ -2038,14 +2315,39 @@ async function turnIntoCanvas() {
   if (!n || n.data.canvas) return;
   saveNote.flush();
   const before = { ...n.data };
-  const canvas = await canvasFromHtml(sanitizeNote(el.editorText.innerHTML), { imageSize });
+  const html = sanitizeNote(el.editorText.innerHTML);
+  const fresh = await canvasFromHtml(html, { imageSize });
+  const prev = n.data.lastCanvas;
+  let canvas = fresh;
+  let restack = true;
+  if (prev && prev.items && prev.items.length) {
+    // bring back the layout made earlier; text edited meanwhile keeps the old boxes' places and styles
+    if (sanitizeNote(canvasFallback(prev, sanitizeNote).html).replace(/\s+/g, '') === html.replace(/\s+/g, '')) { canvas = prev; restack = false; }
+    else {
+      const used = new Set([...html.matchAll(/data-file="([^"]+)"/g)].map((m) => m[1]));
+      const keep = prev.items.filter((o) => o.t !== 'text' && (!o.file || used.has(o.file)));
+      const had = new Set(keep.filter((o) => o.file).map((o) => o.file));
+      const oldText = prev.items.filter((o) => o.t === 'text');
+      const texts = fresh.items.filter((o) => o.t === 'text').map((o, i) => {
+        const p = oldText[i];
+        return p ? { ...o, x: p.x, y: p.y, w: p.w, r: p.r, fs: p.fs, color: p.color, align: p.align, bold: p.bold, italic: p.italic, bg: p.bg, placed: true } : o;
+      });
+      const extra = fresh.items.filter((o) => o.t !== 'text' && !had.has(o.file));
+      canvas = { v: 1, items: [...keep, ...texts, ...extra] };
+    }
+  }
   const cv = getCanvas();
-  n.data = { ...n.data, canvas };
+  const { lastCanvas, ...restData } = n.data;
+  n.data = { ...restData, canvas };
   renderEditor(true);
-  // stack the blocks from top to bottom now that their real heights are known
-  let y = 70;
-  for (const o of cv.items) { o.y = y; y += (o.h || 40) + 24; }
-  cv.renderAll();
+  if (restack) {
+    // place new blocks from top to bottom (below what is already placed) now that their heights are known
+    const placed = cv.items.filter((o) => o.placed || (prev && prev.items.some((q) => q.id === o.id)));
+    let y = 70;
+    for (const o of placed) { const b = o.t === 'line' ? { y: Math.max(o.y1, o.y2), h: 0 } : o; y = Math.max(y, b.y + (b.h || 40) + 24); }
+    for (const o of cv.items) { if (placed.includes(o)) { delete o.placed; continue; } o.y = y; y += (o.h || 40) + 24; }
+    cv.renderAll();
+  }
   ui.dirty = true;
   await saveCanvas(n);
   renderNotesList();
@@ -2058,6 +2360,28 @@ async function turnIntoCanvas() {
     renderNotesList();
   } });
 }
+function exportCanvas() {
+  const n = openNoteItem();
+  if (!n || !n.data.canvas || !ui.canvas) return;
+  saveNote.flush();
+  openExport({
+    data: ui.canvas.data(),
+    title: noteTitle(n.data.text || '') || 'Canvas',
+    paper: n.data.paper || '',
+    font: n.data.font || '',
+    sanitize: sanitizeNote,
+    loadImage: async (id) => {
+      const it = store.items.get(id);
+      const b = it ? await files.blobOf(it).catch(() => null) : null;
+      return b ? createImageBitmap(b).catch(() => null) : null;
+    },
+    save: async (blob, name, drops) => {
+      downloadText(blob, name, blob.type);
+      if (drops) await sendFiles([new File([blob], name, { type: blob.type })]);
+      toast(drops ? `Saved ${name} and added it to Drops` : `Saved ${name}`);
+    }
+  });
+}
 async function turnIntoPage() {
   const n = openNoteItem();
   if (!n || !n.data.canvas) return;
@@ -2066,7 +2390,7 @@ async function turnIntoPage() {
   saveNote.flush();
   const { html, text } = canvasFallback(n.data.canvas, sanitizeNote);
   const { canvas, ...rest } = n.data;
-  n.data = { ...rest, html, text };
+  n.data = { ...rest, html, text, lastCanvas: canvas };
   await store.save(n, { snap: true });
   sync.schedule();
   renderEditor(true);
@@ -2131,6 +2455,11 @@ function noteMenu(anchor) {
     { icon: 'copy', label: 'Copy text', run: async () => { await copyText(text()); toast('Copied'); } },
     { icon: 'drops', label: 'Send as a drop', run: () => { sendClip(text()); toast('Sent to Drops'); } },
     { icon: 'present', label: 'Present (full screen)', run: startPresent },
+    { icon: 'folder', label: 'Move to folder…', run: () => folderPick(n, anchor) },
+    { icon: 'marker', label: 'Colour…', run: () => colorPick(n, anchor) },
+    { icon: 'text', label: 'Font…', run: () => fontPick(n, anchor) },
+    { icon: 'file', label: 'Paper…', run: () => paperPick(n, anchor) },
+    ...(n.data.canvas ? [{ icon: 'download', label: 'Save as PNG or PDF…', run: exportCanvas }] : []),
     n.data.canvas
       ? { icon: 'note', label: 'Turn into normal note', run: turnIntoPage }
       : { icon: 'canvas', label: 'Turn into canvas', run: turnIntoCanvas },
@@ -2335,6 +2664,12 @@ function format(kind, btn) {
   if (kind === 'heading') return toggleHeading();
   if (kind === 'link') return addLink();
   if (kind === 'attach') { saveSel(); return el.noteFileInput.click(); }
+  if (kind === 'case') {
+    el.editorText.focus();
+    const mode = cycleCase(el.editorText);
+    if (mode) { onEditorInput(); toast(CASE_LABEL[mode], { duration: 1500 }); }
+    return;
+  }
   if (kind === 'clear') return clearFormat();
   exec(kind);
 }
@@ -2828,6 +3163,8 @@ function applyTheme() {
   try { t = localStorage.getItem('sp-theme') || 'system'; } catch {}
   const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  for (const m of document.querySelectorAll('meta[name="theme-color"]')) { m.removeAttribute('media'); m.content = dark ? '#14161c' : '#ffffff'; }
 }
 function renderStorage() {
   const i = sync.info;

@@ -22,7 +22,7 @@ export class ImageTools {
       `<button class="icon-btn sm" data-act="bigger" title="Bigger" aria-label="Bigger"><b>+</b></button>` +
       `<button class="icon-btn sm img-move" data-act="move" title="Drag to move the picture" aria-label="Move">${ic('cursor')}</button>` +
       `<button class="icon-btn sm" data-act="view" title="Open" aria-label="Open">${ic('eye')}</button>` +
-      `<button class="icon-btn sm" data-act="del" title="Delete picture" aria-label="Delete picture">${ic('trash')}</button>`;
+      `<button class="icon-btn sm" data-act="del" title="Remove from the note" aria-label="Remove from the note">${ic('trash')}</button>`;
     this.grip = document.createElement('div');
     this.grip.className = 'img-grip';
     this.grip.hidden = true;
@@ -33,13 +33,13 @@ export class ImageTools {
     document.body.append(this.bar, this.grip, this.caret);
 
     editor.addEventListener('click', (e) => {
-      const im = e.target.closest('img[data-file]');
+      const im = e.target.closest('img[data-file], a[data-file]');
       if (!im) return;
       e.preventDefault();
       e.stopPropagation();
       this.select(im);
     }, true);
-    editor.addEventListener('dblclick', (e) => { const im = e.target.closest('img[data-file]'); if (im) { e.preventDefault(); this.onView(im); } });
+    editor.addEventListener('dblclick', (e) => { const im = e.target.closest('img[data-file], a[data-file]'); if (im) { e.preventDefault(); this.onView(im); } });
     document.addEventListener('pointerdown', (e) => {
       if (!this.img) return;
       if (this.bar.contains(e.target) || e.target === this.grip || e.target === this.img) return;
@@ -65,6 +65,9 @@ export class ImageTools {
     this.img = im && this.ed.contains(im) ? im : null;
     this.bar.hidden = this.grip.hidden = !this.img;
     if (!this.img) return;
+    this.chip = this.img.tagName === 'A';
+    this.bar.classList.toggle('is-chip', this.chip);
+    this.grip.hidden = this.chip;
     this.img.classList.add('img-on');
     const r = document.createRange();
     r.setStartAfter(this.img);
@@ -85,7 +88,8 @@ export class ImageTools {
     const r = this.img.getBoundingClientRect();
     const er = this.ed.getBoundingClientRect();
     const visible = r.bottom > er.top && r.top < er.bottom;
-    this.bar.hidden = this.grip.hidden = !visible;
+    this.bar.hidden = !visible;
+    this.grip.hidden = !visible || this.chip;
     if (!visible) return;
     const bw = this.bar.offsetWidth;
     const bh = this.bar.offsetHeight;
@@ -194,7 +198,8 @@ export class ImageTools {
       clearInterval(timer);
       if (ev.clientY < er.top + 40) timer = setInterval(() => { this.ed.scrollTop -= 14; }, 16);
       else if (ev.clientY > er.bottom - 40) timer = setInterval(() => { this.ed.scrollTop += 14; }, 16);
-      this.bar.hidden = this.grip.hidden = true;
+      this.bar.hidden = true;
+      this.grip.hidden = true;
       range = at(ev.clientX, ev.clientY);
       if (!range) { this.caret.hidden = true; return; }
       const rr = range.getClientRects()[0] || range.startContainer.nodeType === 1 && range.startContainer.getBoundingClientRect();

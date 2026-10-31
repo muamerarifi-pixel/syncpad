@@ -1,9 +1,9 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v2.15.0';
+const VERSION = 'v2.16.0';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
-const WARM = ['/vendor/pdf/pdf.min.mjs', '/vendor/pdf/pdf.worker.min.mjs'];
+const WARM = ['/vendor/pdf/pdf.min.mjs', '/vendor/pdf/pdf.worker.min.mjs', '/vendor/fonts/outfit-latin-wght-normal.woff2', '/vendor/fonts/lora-latin-wght-normal.woff2', '/vendor/fonts/caveat-latin-wght-normal.woff2'];
 const SHELL = [
   '/',
   '/css/app.css',
@@ -20,7 +20,7 @@ const SHELL = [
   '/js/pdfcore.js',
   '/js/docview.js',
   '/js/docmodel.js',
-  '/js/docedit.js', '/js/declutter.js', '/js/canvas.js', '/js/noteimg.js',
+  '/js/docedit.js', '/js/declutter.js', '/js/canvas.js', '/js/noteimg.js', '/js/cvexport.js', '/js/textcase.js',
   '/vendor/doc/fflate.mjs',
   '/js/md.js',
   '/vendor/marked.esm.js',
@@ -74,7 +74,7 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/') || url.pathname === '/app.webmanifest') return;
 
   // Big libraries and fonts: from the device once fetched
-  if (url.pathname.startsWith('/vendor/pdf/')) {
+  if (url.pathname.startsWith('/vendor/pdf/') || url.pathname.startsWith('/vendor/fonts/')) {
     event.respondWith(assetFirst(req, url));
     return;
   }
