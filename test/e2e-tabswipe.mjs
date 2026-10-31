@@ -12,17 +12,27 @@ const A = await (await browser.newContext({ viewport: { width: 1280, height: 860
 await A.goto(BASE + '/');
 await A.waitForSelector('.status-chip[data-state="online"]', { timeout: 15000 });
 await A.mouse.move(700, 400);
-for (let k = 0; k < 6; k++) await A.mouse.wheel(40, 2);
-await A.waitForTimeout(300);
-if ((await tab(A)) !== 'notes') throw new Error('trackpad → notes');
+// a real touchpad: many small, slightly diagonal steps, then momentum
+const t0 = Date.now();
+for (let k = 0; k < 14; k++) await A.mouse.wheel(6, (k % 3) - 1);
+const firstMs = Date.now() - t0;
+await A.waitForTimeout(150);
+if ((await tab(A)) !== 'notes') throw new Error('touchpad → notes');
+for (let k = 0; k < 30; k++) await A.mouse.wheel(3, 0); // momentum must not swipe twice
+if ((await tab(A)) !== 'notes') throw new Error('momentum switched again');
 await A.waitForTimeout(400);
 await A.mouse.move(160, 400);
-for (let k = 0; k < 6; k++) await A.mouse.wheel(-40, 1);
-await A.waitForTimeout(300);
-if ((await tab(A)) !== 'drops') throw new Error('trackpad → drops');
+for (let k = 0; k < 14; k++) await A.mouse.wheel(-6, 1);
+await A.waitForTimeout(150);
+if ((await tab(A)) !== 'drops') throw new Error('touchpad → drops');
+await A.waitForTimeout(400);
 await A.mouse.move(700, 400);
-for (let k = 0; k < 6; k++) await A.mouse.wheel(2, 40); // ordinary scrolling stays put
+for (let k = 0; k < 10; k++) await A.mouse.wheel(2, 30); // ordinary scrolling stays put
 if ((await tab(A)) !== 'drops') throw new Error('vertical scroll switched tabs');
+await A.waitForTimeout(400);
+for (let k = 0; k < 3; k++) await A.mouse.wheel(4, 0); // a tiny nudge doesn't switch
+await A.waitForTimeout(300);
+if ((await tab(A)) !== 'drops') throw new Error('tiny nudge switched');
 step('Computer: two-finger swipe left → Notes, right → Drops; normal scrolling unaffected');
 
 // phone: finger

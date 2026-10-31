@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.19.0';
+const VERSION = '2.19.1';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1887,7 +1887,7 @@ function tabSwipeBlocked(target, dir) {
   if (target.closest('input, textarea, select, [contenteditable="true"], .editor-pane, .cv-scroll, .composer, .menu, .toasts, .paste-chip, .img-bar')) return true;
   // let anything that scrolls sideways (chip rows, wide tables…) keep its own swipe
   for (let n = target; n && n !== document.body; n = n.parentElement) {
-    if (n.scrollWidth > n.clientWidth + 2) {
+    if (n.scrollWidth > n.clientWidth + 8) {
       const ox = getComputedStyle(n).overflowX;
       if (ox === 'auto' || ox === 'scroll') {
         if (dir == null) return true;
@@ -1944,22 +1944,45 @@ function setupTabSwipe() {
   };
   views.addEventListener('touchend', end, { passive: true });
   views.addEventListener('touchcancel', end, { passive: true });
-  // trackpad: two fingers sideways
-  let acc = 0;
-  let idle = null;
-  let locked = false;
-  views.addEventListener('wheel', (e) => {
-    if (e.ctrlKey || Math.abs(e.deltaX) <= Math.abs(e.deltaY) * 1.2 || !e.deltaX) return;
-    if (tabSwipeBlocked(e.target, e.deltaX > 0 ? 1 : -1)) return;
+  // trackpad: two fingers sideways — the page follows the fingers, then switches
+  let g = null;
+  const settle = () => {
+    if (!g) return;
+    const v = g.view;
+    v.style.transition = 'transform .16s ease, opacity .16s ease';
+    v.style.transform = '';
+    v.style.opacity = '';
+    setTimeout(() => { v.style.transition = ''; }, 170);
+    g = null;
+  };
+  document.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) return;
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerHeight : 1;
+    const dx = e.deltaX * unit;
+    const dy = e.deltaY * unit;
+    const now = performance.now();
+    if (g && now - g.last > 220) settle();
+    if (!g) {
+      if (!dx || Math.abs(dx) < Math.abs(dy)) return;
+      if (tabSwipeBlocked(e.target, dx > 0 ? 1 : -1)) return;
+      g = { x: 0, y: 0, last: now, done: false, view: ui.tab === 'notes' ? el.viewNotes : el.viewDrops };
+    }
+    g.x += dx;
+    g.y += dy;
+    g.last = now;
+    if (Math.abs(g.y) > Math.abs(g.x) * 1.4 && Math.abs(g.y) > 30) { settle(); return; } // it's a scroll after all
     e.preventDefault(); // no browser back/forward
-    clearTimeout(idle);
-    idle = setTimeout(() => { acc = 0; locked = false; }, 260);
-    if (locked) return;
-    acc += e.deltaX;
-    if (Math.abs(acc) > 120) {
-      const next = acc > 0 ? 'notes' : 'drops';
-      locked = true;
-      acc = 0;
+    clearTimeout(g.timer);
+    g.timer = setTimeout(settle, 230);
+    if (g.done) return; // the rest of this swipe (momentum) is ignored
+    const next = g.x > 0 ? 'notes' : 'drops';
+    if (next === ui.tab) { g.view.style.transform = `translateX(${-Math.sign(g.x) * Math.min(18, Math.abs(g.x) * 0.15)}px)`; return; }
+    g.view.style.transform = `translateX(${-Math.sign(g.x) * Math.min(70, Math.abs(g.x) * 0.45)}px)`;
+    g.view.style.opacity = String(Math.max(0.6, 1 - Math.abs(g.x) / 400));
+    if (Math.abs(g.x) > 60) {
+      g.done = true;
+      g.view.style.transform = '';
+      g.view.style.opacity = '';
       swipeToTab(next, next === 'notes' ? -1 : 1);
     }
   }, { passive: false });
