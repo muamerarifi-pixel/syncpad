@@ -1184,3 +1184,34 @@ kbd { font: 600 12px var(--font); padding: 1px 6px; border-radius: 6px; border: 
 .cv-static { position: relative; overflow: hidden; }
 .cv-static .cv-world { box-shadow: none; }
 .cv-static .cv-obj { cursor: default; }
+
+/* ───────── privacy: hidden notes list, presenting ───────── */
+#btn-show-list { display: none; }
+@media (min-width: 861px) {
+  .app.notes-hidden .notes-pane { display: none; }
+  .app.notes-hidden #btn-show-list { display: inline-flex; }
+}
+#btn-toggle-list[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.app.presenting .topbar, .app.presenting .notes-pane, .app.presenting .tabbar, .app.presenting .fab,
+.app.presenting .editor-bar, .app.presenting .editor-foot, .app.presenting .conflict-bar, .app.presenting .view-drops { display: none !important; }
+/* the formatting / canvas tools stay usable, and fade away while the mouse rests */
+.app.presenting .fmt-bar:not([hidden]), .app.presenting .cv-bar:not([hidden]) {
+  justify-content: center; border-bottom-color: transparent; transition: opacity .25s;
+}
+.app.presenting.idle .fmt-bar, .app.presenting.idle .cv-bar { opacity: 0; pointer-events: none; }
+.app.presenting .editor-pane { position: fixed; inset: 0; z-index: 50; display: flex !important; background: var(--surface); }
+.app.presenting .editor-text { padding-top: calc(36px / var(--z)); }
+.app.presenting .cv-scroll { background: var(--surface); }
+.app.presenting .cv-world { box-shadow: none; }
+.app.presenting.idle .editor-pane, .app.presenting.idle .editor-pane * { cursor: none !important; }
+.present-bar {
+  position: fixed; right: 18px; bottom: calc(18px + var(--safe-b, 0px)); z-index: 70; display: flex; align-items: center; gap: 2px; padding: 4px;
+  background: rgba(22, 24, 29, .86); color: #fff; border-radius: 14px; box-shadow: var(--shadow-lg); opacity: 0; transition: opacity .25s; pointer-events: none;
+}
+.present-bar.show { opacity: 1; pointer-events: auto; }
+.present-bar[hidden] { display: none; }
+.present-bar button { border: 0; background: transparent; color: inherit; height: 38px; min-width: 40px; padding: 0 10px; border-radius: 10px; font: 600 14px/1 inherit; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.present-bar button:hover { background: rgba(255, 255, 255, .12); }
+.present-bar .zv { font-size: 12px; opacity: .8; min-width: 50px; }
+.present-bar .px { background: rgba(255, 255, 255, .14); }
+.present-bar .ic { width: 18px; height: 18px; }

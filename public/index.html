@@ -81,6 +81,8 @@
       <symbol id="i-underline" viewBox="0 0 24 24"><path d="M6 4v6a6 6 0 0 0 12 0V4"/><path d="M4 20h16"/></symbol>
       <symbol id="i-strike" viewBox="0 0 24 24"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><path d="M4 12h16"/></symbol>
       <symbol id="i-olist" viewBox="0 0 24 24"><path d="M10 6h11M10 12h11M10 18h11"/><path d="M4 5h1v4M3.5 9h2.5M6 19H3.8c0-1 2.2-2 2.2-3.2 0-.7-.6-1.3-1.4-1.3-.6 0-1 .3-1.3.7"/></symbol>
+      <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9 4v16"/><path d="M5.5 8h1.5M5.5 11h1.5"/></symbol>
+      <symbol id="i-present" viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M12 16.5V20M8 20.5h8"/><path d="m10 7.5 4.5 2.5-4.5 2.5z"/></symbol>
       <symbol id="i-canvas" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9.5" r="2.5"/><path d="m13 18 3-5 3 5z"/><path d="M6 17h4"/></symbol>
       <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9z"/><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9z"/></symbol>
       <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3a2.4 2.4 0 0 1 0-3.4l9.6-9.6a2.4 2.4 0 0 1 3.4 0l5.6 5.6a2.4 2.4 0 0 1 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></symbol>
@@ -190,10 +192,12 @@
             <svg class="ic ic-xl"><use href="#i-note"/></svg>
             <p>Select a note or create a new one</p>
             <button class="btn btn-primary" data-act="new-note"><svg class="ic"><use href="#i-plus"/></svg><span>New note</span></button>
+            <button class="btn btn-soft" id="btn-show-list"><svg class="ic"><use href="#i-sidebar"/></svg><span>Show the notes list</span></button>
           </div>
           <div class="editor" id="editor" hidden>
             <div class="editor-bar">
               <button class="icon-btn only-mobile" id="btn-editor-back" aria-label="Back to notes"><svg class="ic"><use href="#i-back"/></svg></button>
+              <button class="icon-btn hide-mobile" id="btn-toggle-list" aria-label="Hide the notes list" aria-pressed="false" title="Hide the notes list (Ctrl+\)"><svg class="ic"><use href="#i-sidebar"/></svg></button>
               <span class="save-state" id="save-state"></span>
               <div class="spacer"></div>
               <div class="zoom" role="group" aria-label="Text zoom">
@@ -201,6 +205,7 @@
                 <button class="zv" id="btn-zoom-reset" title="Reset zoom">100%</button>
                 <button class="zi" id="btn-zoom-in" aria-label="Bigger text" title="Bigger text">A+</button>
               </div>
+              <button class="icon-btn" id="btn-present" aria-label="Present full screen" title="Present: full screen, only this note"><svg class="ic"><use href="#i-present"/></svg></button>
               <button class="icon-btn" id="btn-pin" aria-label="Pin note" aria-pressed="false"><svg class="ic"><use href="#i-pin"/></svg></button>
               <button class="icon-btn" id="btn-note-more" aria-label="More note actions"><svg class="ic"><use href="#i-more"/></svg></button>
             </div>

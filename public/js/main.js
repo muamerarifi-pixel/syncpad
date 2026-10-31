@@ -15,7 +15,7 @@ import * as De from './declutter.js';
 import { NoteCanvas, renderStatic as renderCanvasStatic, fallback as canvasFallback, fromHtml as canvasFromHtml } from './canvas.js';
 import { ImageTools } from './noteimg.js';
 
-const VERSION = '2.14.0';
+const VERSION = '2.15.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -336,6 +336,11 @@ function wire() {
     onView: (im) => { const it = store.items.get(im.dataset.file); if (it) openFile(it); }
   });
   el.btnNewCanvas.addEventListener('click', () => newNote({ canvas: true }));
+  el.btnToggleList.addEventListener('click', () => toggleNotesList());
+  el.btnShowList.addEventListener('click', () => toggleNotesList(false));
+  el.btnPresent.addEventListener('click', startPresent);
+  applyNotesList();
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && ui.presenting && ui.presentFs) stopPresent(); });
   document.addEventListener('selectionchange', () => {
     if (ui.selRaf) return;
     ui.selRaf = requestAnimationFrame(() => { ui.selRaf = 0; if (caretElement()) { saveSel(); updateToolbar(); } });
@@ -534,6 +539,8 @@ function wire() {
       return;
     }
     const mod = e.ctrlKey || e.metaKey;
+    if (ui.presenting && e.key === 'Escape') { e.preventDefault(); stopPresent(); return; }
+    if (mod && e.key === '\\' && ui.tab === 'notes') { e.preventDefault(); toggleNotesList(); return; }
     if (mod && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       el.app.classList.add('searching');
@@ -1772,7 +1779,7 @@ function openNoteItem() {
 function closeEditor(fromLayer = false) {
   saveNote.flush();
   const n = openNoteItem();
-  if (n && store.items.has(n.id) && !noteText(n).trim() && !/data-file/.test(n.data.html || '')) {
+  if (n && store.items.has(n.id) && !noteText(n).trim() && !/data-file/.test(n.data.html || '') && !(n.data.canvas && n.data.canvas.items.length)) {
     store.remove(n).then(() => sync.schedule()); // leaving an empty note removes it
   }
   if (isMobileLayout()) {
@@ -1912,6 +1919,80 @@ async function saveCanvas(n) {
   renderFoot();
 }
 
+/* ───── privacy: hide the notes list, present one note full screen ───── */
+function applyNotesList() {
+  let hidden = false;
+  try { hidden = localStorage.getItem('sp-notes-list') === 'hidden'; } catch {}
+  el.app.classList.toggle('notes-hidden', hidden);
+  el.btnToggleList.setAttribute('aria-pressed', String(hidden));
+  el.btnToggleList.title = hidden ? 'Show the notes list (Ctrl+\\)' : 'Hide the notes list (Ctrl+\\)';
+  el.btnToggleList.setAttribute('aria-label', hidden ? 'Show the notes list' : 'Hide the notes list');
+  if (ui.canvas) ui.canvas.layout();
+}
+function toggleNotesList(hide) {
+  const now = el.app.classList.contains('notes-hidden');
+  const next = hide == null ? !now : hide;
+  try { localStorage.setItem('sp-notes-list', next ? 'hidden' : 'shown'); } catch {}
+  applyNotesList();
+}
+function startPresent() {
+  const n = openNoteItem();
+  if (!n || ui.presenting) return;
+  closeMenu();
+  saveNote.flush();
+  ui.presenting = true;
+  if (ui.imgTools) ui.imgTools.select(null);
+  for (const t of $$('.toast', el.toasts)) t.remove();
+  el.app.classList.add('presenting');
+  let bar = $('.present-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'present-bar';
+    bar.innerHTML = '<button class="zo" aria-label="Smaller">A−</button><button class="zv" title="Reset zoom"></button><button class="zi" aria-label="Bigger">A+</button>' +
+      '<button class="px" aria-label="Stop presenting"><svg class="ic"><use href="#i-x"/></svg><span>Exit</span></button>';
+    bar.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.classList.contains('zo')) el.btnZoomOut.click();
+      else if (b.classList.contains('zi')) el.btnZoomIn.click();
+      else if (b.classList.contains('zv')) el.btnZoomReset.click();
+      else stopPresent();
+    });
+    document.body.appendChild(bar);
+    const wake = () => {
+      if (!ui.presenting) return;
+      bar.classList.add('show');
+      el.app.classList.remove('idle');
+      clearTimeout(ui.presentIdle);
+      ui.presentIdle = setTimeout(() => { bar.classList.remove('show'); el.app.classList.add('idle'); }, 2500);
+    };
+    // typing doesn't bring the bars back; moving the mouse or tapping does
+    for (const ev of ['pointermove', 'pointerdown', 'wheel']) addEventListener(ev, wake, { passive: true });
+    ui.presentWake = wake;
+  }
+  bar.hidden = false;
+  ui.presentWake();
+  applyZoom();
+  ui.presentFs = false;
+  const root = document.documentElement;
+  if (root.requestFullscreen) root.requestFullscreen({ navigationUI: 'hide' }).then(() => { ui.presentFs = true; }).catch(() => {});
+  pushLayer({ key: 'present', close: () => stopPresent(true) });
+  if (ui.canvas && n.data.canvas) requestAnimationFrame(() => ui.canvas.layout());
+  else if (!isTouch()) focusEditorEnd();
+}
+function stopPresent(fromLayer = false) {
+  if (!ui.presenting) return;
+  ui.presenting = false;
+  el.app.classList.remove('presenting', 'idle');
+  const bar = $('.present-bar');
+  if (bar) bar.hidden = true;
+  clearTimeout(ui.presentIdle);
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  ui.presentFs = false;
+  if (!fromLayer) closeLayer('present');
+  if (ui.canvas) requestAnimationFrame(() => ui.canvas.layout());
+}
+
 /* ───── canvas notes ───── */
 function canvasOpen() { return !!(ui.canvas && !el.noteCanvas.hidden && ui.tab === 'notes'); }
 function getCanvas() {
@@ -2049,6 +2130,7 @@ function noteMenu(anchor) {
   const m = [
     { icon: 'copy', label: 'Copy text', run: async () => { await copyText(text()); toast('Copied'); } },
     { icon: 'drops', label: 'Send as a drop', run: () => { sendClip(text()); toast('Sent to Drops'); } },
+    { icon: 'present', label: 'Present (full screen)', run: startPresent },
     n.data.canvas
       ? { icon: 'note', label: 'Turn into normal note', run: turnIntoPage }
       : { icon: 'canvas', label: 'Turn into canvas', run: turnIntoCanvas },
@@ -2857,6 +2939,7 @@ function getZoom() {
   return Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z));
 }
 function applyZoom() {
+  queueMicrotask(() => { const pz = document.querySelector('.present-bar .zv'); if (pz) pz.textContent = el.btnZoomReset.textContent; });
   const z = getZoom();
   document.documentElement.style.setProperty('--note-zoom', String(z));
   if (canvasOpen()) {
