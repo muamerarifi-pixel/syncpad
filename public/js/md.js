@@ -4,7 +4,7 @@ import { marked } from '/vendor/marked.esm.js';
 
 marked.use({ gfm: true, breaks: true });
 
-const STYLE_OK = new Set(['color', 'background-color', 'font-size', 'font-weight', 'font-style', 'text-decoration', 'text-decoration-line', 'text-align']);
+const STYLE_OK = new Set(['color', 'background-color', 'font-size', 'font-weight', 'font-style', 'text-decoration', 'text-decoration-line', 'text-align', 'width']);
 const VALUE_OK = /^[#a-z0-9(),.%\s-]+$|^var\(--text\)$/i;
 
 let hooked = false;
@@ -46,7 +46,7 @@ function P() {
 const BASE = {
   ALLOWED_TAGS: ['p', 'div', 'br', 'span', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'a', 'img', 'h1', 'h2', 'h3',
     'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'hr', 'mark', 'font', 'sub', 'sup', 'table', 'thead', 'tbody', 'tr', 'th', 'td'],
-  ALLOWED_ATTR: ['href', 'data-file', 'data-checklist', 'data-checked', 'alt', 'style', 'size', 'color', 'class', 'contenteditable', 'target', 'rel'],
+  ALLOWED_ATTR: ['href', 'data-file', 'data-checklist', 'data-checked', 'data-align', 'alt', 'style', 'size', 'color', 'class', 'contenteditable', 'target', 'rel'],
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|blob):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 };
 

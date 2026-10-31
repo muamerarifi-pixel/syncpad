@@ -12,8 +12,10 @@ import { Markup } from './markup.js';
 import { Collage } from './collage.js';
 import { ZoomView } from './zoom.js';
 import * as De from './declutter.js';
+import { NoteCanvas, renderStatic as renderCanvasStatic, fallback as canvasFallback, fromHtml as canvasFromHtml } from './canvas.js';
+import { ImageTools } from './noteimg.js';
 
-const VERSION = '2.13.0';
+const VERSION = '2.14.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -173,9 +175,9 @@ function wire() {
   el.btnSettingsConnect.addEventListener('click', async () => { el.dlgSettings.close(); await sleepMs(80); openConnect(); });
 
   // text zoom (note editor)
-  el.btnZoomIn.addEventListener('click', () => stepZoom(1));
-  el.btnZoomOut.addEventListener('click', () => stepZoom(-1));
-  el.btnZoomReset.addEventListener('click', () => { try { localStorage.setItem('sp-zoom', '1'); } catch {} applyZoom(); });
+  el.btnZoomIn.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(1) : stepZoom(1)));
+  el.btnZoomOut.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(-1) : stepZoom(-1)));
+  el.btnZoomReset.addEventListener('click', () => { if (canvasOpen()) { ui.canvas.zoomStep(0); return; } try { localStorage.setItem('sp-zoom', '1'); } catch {} applyZoom(); });
   $('.zoom').addEventListener('mousedown', (e) => e.preventDefault());
 
   // PIN lock
@@ -328,6 +330,12 @@ function wire() {
   el.editorText.addEventListener('blur', () => saveNote.flush());
   el.editorText.addEventListener('keydown', onEditorKey);
   el.editorText.addEventListener('click', onEditorClick);
+  ui.imgTools = new ImageTools({
+    editor: el.editorText,
+    onChange: onEditorInput,
+    onView: (im) => { const it = store.items.get(im.dataset.file); if (it) openFile(it); }
+  });
+  el.btnNewCanvas.addEventListener('click', () => newNote({ canvas: true }));
   document.addEventListener('selectionchange', () => {
     if (ui.selRaf) return;
     ui.selRaf = requestAnimationFrame(() => { ui.selRaf = 0; if (caretElement()) { saveSel(); updateToolbar(); } });
@@ -475,7 +483,7 @@ function wire() {
     const fl = [...e.dataTransfer.files];
     if (fl.length) {
       const fd = e.target.closest && e.target.closest('[data-folder-drop]');
-      if (overNoteEditor(e.target)) attachToNote(fl, rangeFromPoint(e.clientX, e.clientY));
+      if (overNoteEditor(e.target)) attachToNote(fl, rangeFromPoint(e.clientX, e.clientY), { clientX: e.clientX, clientY: e.clientY });
       else sendFiles(fl, fd ? fd.dataset.folderDrop : undefined);
       return;
     }
@@ -1713,7 +1721,7 @@ function renderNotesList() {
   }
   el.noteList.innerHTML = list
     .map((n) => `<button class="note-item" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}">
-      <div class="t">${n.data.pinned ? '<svg class="ic"><use href="#i-pin"/></svg>' : ''}<span>${esc(noteTitle(noteText(n)))}</span></div>
+      <div class="t">${n.data.pinned ? '<svg class="ic"><use href="#i-pin"/></svg>' : ''}${n.data.canvas ? '<svg class="ic"><use href="#i-canvas"/></svg>' : ''}<span>${esc(noteTitle(noteText(n)))}</span></div>
       <div class="s">${esc(noteSnippet(noteText(n))) || '&nbsp;'}</div>
       <div class="d">${esc(shortDate(n.updated))}${n.data.conflictOf ? ' · <span class="warn">Conflict copy</span>' : ''}</div>
     </button>`)
@@ -1733,12 +1741,13 @@ function openNote(id, { focus = true } = {}) {
   if (focus && !isTouch()) focusEditorEnd();
 }
 
-function newNote() {
+function newNote(opts) {
+  const canvas = !!(opts && opts.canvas);
   if (ui.tab !== 'notes') setTab('notes');
   const now = Date.now();
-  ui.newNote = { id: rid(16), kind: 'note', rev: 0, created: now, updated: now, device: me(), data: { html: '', text: '', pinned: false } };
+  ui.newNote = { id: rid(16), kind: 'note', rev: 0, created: now, updated: now, device: me(), data: { html: '', text: '', pinned: false, ...(canvas ? { canvas: { v: 1, items: [] } } : {}) } };
   openNote(ui.newNote.id, { focus: false });
-  focusEditorEnd();
+  if (!canvas) focusEditorEnd();
 }
 
 async function createNote(text) {
@@ -1790,7 +1799,27 @@ function renderEditor(force) {
   el.editor.hidden = false;
   el.editorEmpty.hidden = true;
   const ed = el.editorText;
-  if (force) {
+  const isCanvas = !!n.data.canvas;
+  el.editor.classList.toggle('is-canvas', isCanvas);
+  el.noteCanvas.hidden = el.cvBar.hidden = !isCanvas;
+  el.fmtBar.hidden = isCanvas;
+  if (isCanvas) {
+    const cv = getCanvas();
+    const key = JSON.stringify(n.data.canvas);
+    if (force) {
+      if (ui.imgTools) ui.imgTools.select(null);
+      setEditorHtml('');
+      cv.load(n.data.canvas);
+      cv.scroll.scrollTop = 0;
+      ui.loadedCanvas = key;
+      ui.dirty = false;
+    } else if (!ui.dirty && !cv.editing && !store.outbox.has(n.id) && key !== ui.loadedCanvas) {
+      cv.load(n.data.canvas, true);
+      ui.loadedCanvas = key;
+    }
+    applyZoom();
+  } else if (force) {
+    if (ui.canvas) { ui.canvas.load({ items: [] }); applyZoom(); }
     setEditorHtml(noteHtml(n));
     ed.scrollTop = 0;
     ui.dirty = false;
@@ -1827,7 +1856,8 @@ function updateEmpty() {
 }
 
 function renderFoot() {
-  const t = el.editorText.innerText || '';
+  const cn = openNoteItem();
+  const t = cn && cn.data.canvas ? cn.data.text || '' : el.editorText.innerText || '';
   const words = (t.match(/\S+/g) || []).length;
   el.editorFoot.textContent = `${words} word${words === 1 ? '' : 's'} · ${Math.max(1, Math.round(words / 220))} min read`;
 }
@@ -1845,6 +1875,7 @@ function renderSaveState() {
 const saveNote = debounce(async () => {
   const n = openNoteItem();
   if (!n) { ui.dirty = false; return; }
+  if (n.data.canvas) { await saveCanvas(n); return; }
   let html;
   try { html = sanitizeNote(el.editorText.innerHTML); } catch { return; }
   ui.dirty = false;
@@ -1860,6 +1891,106 @@ const saveNote = debounce(async () => {
   sync.schedule();
   renderSaveState();
 }, 450);
+
+async function saveCanvas(n) {
+  if (!ui.canvas) { ui.dirty = false; return; }
+  const canvas = ui.canvas.data();
+  for (const o of canvas.items) if (o.t === 'text') o.html = sanitizeNote(o.html || '');
+  ui.dirty = false;
+  const key = JSON.stringify(canvas);
+  const exists = store.items.has(n.id);
+  if (exists && key === JSON.stringify(n.data.canvas)) { renderSaveState(); return; }
+  if (!exists && !canvas.items.length) { renderSaveState(); return; }
+  const { html, text } = canvasFallback(canvas, sanitizeNote);
+  const { body, ...rest } = n.data;
+  n.data = { ...rest, canvas, html, text };
+  ui.loadedCanvas = key;
+  await store.save(n);
+  if (ui.newNote && ui.newNote.id === n.id) ui.newNote = null;
+  sync.schedule();
+  renderSaveState();
+  renderFoot();
+}
+
+/* ───── canvas notes ───── */
+function canvasOpen() { return !!(ui.canvas && !el.noteCanvas.hidden && ui.tab === 'notes'); }
+function getCanvas() {
+  if (ui.canvas) return ui.canvas;
+  ui.canvas = new NoteCanvas({
+    host: el.noteCanvas,
+    bar: el.cvBar,
+    fileSrc: (id) => files.src(id),
+    sanitize: sanitizeNote,
+    cleanText: (text, html) => { const o = declutterOpts(); return o && De.isAiText(text, html) ? De.plainText(text, o) : text; },
+    menu: (at, items) => openMenu(null, items, { at }),
+    upload: async (list) => {
+      let n = openNoteItem();
+      if (!n) return [];
+      if (!store.items.has(n.id)) { await saveCanvasNow(n); n = openNoteItem(); }
+      const items = await files.add(list, { parent: n.id });
+      return Promise.all(items.map(async (it) => ({ id: it.id, ...(await imageSize(it.id)) })));
+    },
+    onChange: () => { ui.dirty = true; renderSaveState(); saveNote(); }
+  });
+  ui.canvas.onZoom = () => applyZoom();
+  return ui.canvas;
+}
+async function saveCanvasNow(n) {
+  // a brand-new canvas must exist before pictures can be attached to it
+  n.data = { ...n.data, canvas: ui.canvas.data() };
+  await store.save(n);
+  if (ui.newNote && ui.newNote.id === n.id) ui.newNote = null;
+  sync.schedule();
+}
+function imageSize(id) {
+  return new Promise((resolve) => {
+    const im = new Image();
+    const done = (v) => { clearTimeout(t); resolve(v); };
+    const t = setTimeout(() => done({ w: 4, h: 3 }), 4000);
+    im.onload = () => done({ w: im.naturalWidth || 4, h: im.naturalHeight || 3 });
+    im.onerror = () => done({ w: 4, h: 3 });
+    im.src = files.src(id);
+  });
+}
+async function turnIntoCanvas() {
+  const n = openNoteItem();
+  if (!n || n.data.canvas) return;
+  saveNote.flush();
+  const before = { ...n.data };
+  const canvas = await canvasFromHtml(sanitizeNote(el.editorText.innerHTML), { imageSize });
+  const cv = getCanvas();
+  n.data = { ...n.data, canvas };
+  renderEditor(true);
+  // stack the blocks from top to bottom now that their real heights are known
+  let y = 70;
+  for (const o of cv.items) { o.y = y; y += (o.h || 40) + 24; }
+  cv.renderAll();
+  ui.dirty = true;
+  await saveCanvas(n);
+  renderNotesList();
+  toast('Now a canvas: drag anything anywhere', { action: 'Undo', duration: 6000, onAction: async () => {
+    if (ui.noteId !== n.id) return;
+    n.data = before;
+    await store.save(n);
+    sync.schedule();
+    renderEditor(true);
+    renderNotesList();
+  } });
+}
+async function turnIntoPage() {
+  const n = openNoteItem();
+  if (!n || !n.data.canvas) return;
+  const lose = n.data.canvas.items.some((o) => o.t === 'shape' || o.t === 'line' || o.t === 'pen');
+  if (lose && !(await confirmDialog('Turn into a normal note?', 'Text, pictures and emojis are kept in order from top to bottom. Shapes, arrows and drawings are removed (Version history keeps this canvas).', 'Turn into note'))) return;
+  saveNote.flush();
+  const { html, text } = canvasFallback(n.data.canvas, sanitizeNote);
+  const { canvas, ...rest } = n.data;
+  n.data = { ...rest, html, text };
+  await store.save(n, { snap: true });
+  sync.schedule();
+  renderEditor(true);
+  renderNotesList();
+}
 
 function onEditorInput() {
   normalizeEditor();
@@ -1914,11 +2045,14 @@ function resolveConflict(keep) {
 function noteMenu(anchor) {
   const n = openNoteItem();
   if (!n) return;
-  const text = () => (el.editorText.innerText || '').trim();
+  const text = () => (n.data.canvas ? n.data.text || '' : el.editorText.innerText || '').trim();
   const m = [
     { icon: 'copy', label: 'Copy text', run: async () => { await copyText(text()); toast('Copied'); } },
     { icon: 'drops', label: 'Send as a drop', run: () => { sendClip(text()); toast('Sent to Drops'); } },
-    { icon: 'sparkle', label: 'De-clutter text', run: declutterNote },
+    n.data.canvas
+      ? { icon: 'note', label: 'Turn into normal note', run: turnIntoPage }
+      : { icon: 'canvas', label: 'Turn into canvas', run: turnIntoCanvas },
+    ...(n.data.canvas ? [] : [{ icon: 'sparkle', label: 'De-clutter text', run: declutterNote }]),
     { icon: 'download', label: 'Download (keeps colours)', run: downloadNote }
   ];
   if (store.items.has(n.id)) m.splice(2, 0, { icon: 'history', label: 'Version history', run: openHistory });
@@ -1928,13 +2062,15 @@ function noteMenu(anchor) {
 }
 
 function downloadNote() {
-  const clone = el.editorText.cloneNode(true);
+  const dn = openNoteItem();
+  let clone = el.editorText.cloneNode(true);
+  if (dn && dn.data.canvas) { clone = document.createElement('div'); clone.innerHTML = sanitizeNote(dn.data.html || ''); }
   for (const img of $$('img[data-file]', clone)) img.src = location.origin + files.url(img.dataset.file);
   for (const a of $$('a[data-file]', clone)) { a.href = location.origin + files.url(a.dataset.file, true); a.removeAttribute('contenteditable'); }
-  const title = noteTitle(el.editorText.innerText || '');
+  const title = noteTitle((dn && dn.data.canvas ? dn.data.text : el.editorText.innerText) || '');
   const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
 body{font:16px/1.65 system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#16181d}img{max-width:100%;border-radius:10px}
-table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px 10px;text-align:left}ul[data-checklist]{list-style:none;padding-left:0}ul[data-checklist] li::before{content:"☐ "}ul[data-checklist] li[data-checked="true"]::before{content:"☑ "}
+table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px 10px;text-align:left}img[data-align=left]{float:left;margin:4px 16px 8px 0}img[data-align=right]{float:right;margin:4px 0 8px 16px}img[data-align=center]{display:block;margin:8px auto}img[data-align=full]{width:100%}ul[data-checklist]{list-style:none;padding-left:0}ul[data-checklist] li::before{content:"☐ "}ul[data-checklist] li[data-checked="true"]::before{content:"☑ "}
 </style></head><body>${clone.innerHTML}</body></html>`;
   downloadText(doc, (title.replace(/[\\/:*?"<>|]+/g, '').slice(0, 60) || 'note') + '.html', 'text/html');
 }
@@ -2176,7 +2312,7 @@ function onEditorClick(e) {
     return;
   }
   const f = e.target.closest('[data-file]');
-  if (f) {
+  if (f && f.tagName !== 'IMG') {
     const it = store.items.get(f.dataset.file);
     if (it) { e.preventDefault(); openFile(it); }
     return;
@@ -2185,10 +2321,11 @@ function onEditorClick(e) {
   if (a && (e.ctrlKey || e.metaKey)) { e.preventDefault(); window.open(a.href, '_blank', 'noopener'); }
 }
 
-async function attachToNote(list, point) {
+async function attachToNote(list, point, at) {
   if (!list.length) return;
   let n = openNoteItem();
   if (!n) { newNote(); n = openNoteItem(); }
+  if (n.data.canvas && canvasOpen()) { ui.canvas.addFiles(list, at && ui.canvas.pt(at)); return; }
   if (point) ui.savedRange = point;
   const items = await files.add(list, { parent: n.id });
   if (!items.length) return;
@@ -2722,6 +2859,13 @@ function getZoom() {
 function applyZoom() {
   const z = getZoom();
   document.documentElement.style.setProperty('--note-zoom', String(z));
+  if (canvasOpen()) {
+    const cz = ui.canvas.zoom;
+    el.btnZoomReset.textContent = `${Math.round(cz * 100)}%`;
+    el.btnZoomOut.disabled = cz <= 0.5;
+    el.btnZoomIn.disabled = cz >= 5;
+    return;
+  }
   el.btnZoomReset.textContent = `${Math.round(z * 100)}%`;
   el.btnZoomOut.disabled = z <= ZOOMS[0];
   el.btnZoomIn.disabled = z >= ZOOMS[ZOOMS.length - 1];
@@ -3087,8 +3231,8 @@ async function showVersion(hid) {
   ui.historyPick = null;
   el.btnRestoreVersion.disabled = true;
   if (hid === 'current') {
-    el.historyPreview.innerHTML = noteHtml(n);
-    hydrateFiles(el.historyPreview);
+    if (n.data.canvas) renderCanvasStatic(el.historyPreview, n.data.canvas, { fileSrc: (id) => files.src(id), sanitize: sanitizeNote });
+    else { el.historyPreview.innerHTML = noteHtml(n); hydrateFiles(el.historyPreview); }
     return;
   }
   el.historyPreview.innerHTML = '<p class="muted">Loading…</p>';
@@ -3096,8 +3240,11 @@ async function showVersion(hid) {
     const j = await (await fetch(`/api/s/${store.get('space')}/history/${n.id}/${hid}`, { headers: sync.headers() })).json();
     if (!j.data) throw new Error();
     ui.historyPick = j;
-    el.historyPreview.innerHTML = j.data.html != null ? sanitizeNote(j.data.html) : markdownToHtml(j.data.body || '');
-    hydrateFiles(el.historyPreview);
+    if (j.data.canvas) renderCanvasStatic(el.historyPreview, j.data.canvas, { fileSrc: (id) => files.src(id), sanitize: sanitizeNote });
+    else {
+      el.historyPreview.innerHTML = j.data.html != null ? sanitizeNote(j.data.html) : markdownToHtml(j.data.body || '');
+      hydrateFiles(el.historyPreview);
+    }
     el.btnRestoreVersion.disabled = false;
   } catch {
     el.historyPreview.innerHTML = '<p class="muted">Could not load this version.</p>';
@@ -3110,8 +3257,8 @@ async function restoreVersion() {
   if (!v || !n) return;
   const html = v.data.html != null ? sanitizeNote(v.data.html) : markdownToHtml(v.data.body || '');
   const text = v.data.text != null ? v.data.text : v.data.body || '';
-  const { body, ...rest } = n.data;
-  n.data = { ...rest, html, text };
+  const { body, canvas, ...rest } = n.data;
+  n.data = { ...rest, html, text, ...(v.data.canvas ? { canvas: v.data.canvas } : {}) };
   await store.save(n, { snap: true });
   sync.schedule();
   el.dlgHistory.close();
