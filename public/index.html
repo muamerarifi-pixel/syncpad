@@ -413,6 +413,22 @@
     </div>
   </dialog>
 
+  <!-- PDF text editor -->
+  <dialog class="pdfedit" id="dlg-pdf" aria-label="Edit PDF">
+    <div class="pe-bar">
+      <button class="icon-btn" id="pe-cancel" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+      <div class="pe-head">
+        <span class="pe-title" id="pe-title">Edit PDF</span>
+        <span class="pe-status" id="pe-status"></span>
+      </div>
+      <div class="spacer"></div>
+      <label class="pe-keep"><input type="checkbox" id="pe-keep"> Keep the original too</label>
+      <button class="icon-btn" id="pe-undo" aria-label="Undo" title="Undo (Ctrl+Z)" disabled><svg class="ic"><use href="#i-undo"/></svg></button>
+      <button class="btn btn-primary btn-sm" id="pe-save" disabled>Save</button>
+    </div>
+    <div class="pe-pages" id="pe-pages"></div>
+  </dialog>
+
   <!-- Collage: many photos in one picture -->
   <dialog class="viewer markup collage" id="dlg-collage" aria-label="Make a collage">
     <div class="viewer-bar">

@@ -12,13 +12,14 @@ import { Markup } from './markup.js';
 import { Collage } from './collage.js';
 import { ZoomView } from './zoom.js';
 
-const VERSION = '2.9.1';
+const VERSION = '2.10.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
 let files;
 let markup;
 let collage;
+let pdfEditor = null;
 const el = {};
 const ui = {
   tab: 'drops',
@@ -385,7 +386,7 @@ function wire() {
   // viewer
   el.viewerDownload.addEventListener('click', () => ui.viewing && files.download(ui.viewing));
   el.viewerShare.addEventListener('click', () => ui.viewing && files.share(ui.viewing).catch(() => {}));
-  el.viewerMarkup.addEventListener('click', () => ui.viewing && openMarkup(ui.viewing));
+  el.viewerMarkup.addEventListener('click', () => ui.viewing && (canEditPdf(ui.viewing) ? openPdfEdit(ui.viewing) : openMarkup(ui.viewing)));
   el.dlgViewer.addEventListener('close', () => {
     if (ui.zoom) { ui.zoom.destroy(); ui.zoom = null; }
     el.viewerBody.innerHTML = '';
@@ -1062,6 +1063,7 @@ function dropMenu(anchor, it, at) {
       } });
     }
     if (canMarkup(it)) m.splice(1, 0, { icon: 'crop', label: 'Edit (crop / hide details)', run: () => openMarkup(it) });
+    if (canEditPdf(it)) m.splice(1, 0, { icon: 'pen', label: 'Edit text', run: () => openPdfEdit(it) });
     if (kind === 'image' && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
       m.push({ icon: 'copy', label: 'Copy image', run: () => files.copyImage(it).then(() => toast('Image copied')).catch(() => toast('Copy is not supported for this image.')) });
     }
@@ -1163,8 +1165,14 @@ async function openMarkup(it) {
   try { res = await markup.open(blob, it.data.type || blob.type, openDialog); }
   catch { toast('This image type can’t be edited here.'); return; }
   if (!res) return;
-  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[res.blob.type] || 'png';
-  const base = String(it.data.name || 'photo').replace(/\.[a-z0-9]{2,5}$/i, '');
+  await saveEdited(it, res.blob, res.keep);
+}
+
+/** Store an edited version: replaces the original in place (and deletes it everywhere), or adds a copy */
+async function saveEdited(it, blob, keepOriginal) {
+  const res = { blob, keep: keepOriginal };
+  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[res.blob.type] || 'png';
+  const base = String(it.data.name || 'file').replace(/\.[a-z0-9]{2,5}$/i, '');
   const sameExt = new RegExp(`\\.(${ext === 'jpg' ? 'jpe?g' : ext})$`, 'i').test(it.data.name || '');
   const name = sameExt ? it.data.name : `${base}.${ext}`;
   const file = new File([res.blob], name, { type: res.blob.type });
@@ -1179,6 +1187,32 @@ async function openMarkup(it) {
     toast('Saved. The old version is deleted from every device.');
   } else toast('Saved as a new copy. The original is unchanged.');
   scheduleRender(true, false);
+}
+
+/* ───────── PDF text editing ───────── */
+
+function canEditPdf(it) {
+  return it && it.kind === 'file' && !it.data.parent && !files.progress.get(it.id) && fileKind(it.data.type, it.data.name) === 'pdf';
+}
+
+async function openPdfEdit(it) {
+  let blob = null;
+  try { blob = await files.blobOf(it); } catch {}
+  if (!blob) { toast('Could not load this PDF. Check your connection and try again.'); return; }
+  toast('Opening the PDF editor…', { duration: 1500 });
+  let res;
+  try {
+    if (!pdfEditor) {
+      const { PdfEditor } = await import('./pdfedit.js');
+      pdfEditor = new PdfEditor(el.dlgPdf);
+    }
+    res = await pdfEditor.open(blob, it.data.name, openDialog);
+  } catch (e) {
+    toast(e && e.message === 'password' ? 'This PDF is password-protected, so it can’t be edited here.' : 'Could not open this PDF for editing.');
+    return;
+  }
+  if (!res) return;
+  await saveEdited(it, res.blob, res.keep);
 }
 
 /* ───────── refresh: fresh connection + sync now ───────── */
@@ -2074,7 +2108,7 @@ async function openFile(it) {
   if (!['image', 'video', 'audio', 'pdf'].includes(kind) && !textual) { files.download(it); return; }
   ui.viewing = it;
   el.viewerDownload.hidden = false;
-  el.viewerMarkup.hidden = !canMarkup(it);
+  el.viewerMarkup.hidden = !canMarkup(it) && !canEditPdf(it);
   el.viewerTitle.textContent = d.name;
   el.viewerShare.hidden = !files.canShare();
   if (files.canShare()) files.prefetch(it);

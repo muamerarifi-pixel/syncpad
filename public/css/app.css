@@ -806,6 +806,35 @@ kbd { font: 600 12px var(--font); padding: 1px 6px; border-radius: 6px; border: 
 }
 .ri.ctx, .tile.ctx, .note-item.ctx { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+/* PDF text editor */
+.pdfedit { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; background: var(--surface-2); }
+.pdfedit[open] { display: flex; flex-direction: column; }
+.pdfedit::backdrop { background: transparent; }
+.pe-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top)); background: var(--surface); border-bottom: 1px solid var(--border); }
+.pe-head { display: flex; flex-direction: column; min-width: 0; }
+.pe-title { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pe-status { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pe-status[data-kind="ok"] { color: #15803d; }
+.pe-status[data-kind="warn"] { color: #b45309; }
+.pe-status[data-kind="err"] { color: var(--danger); }
+.pe-keep { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; cursor: pointer; }
+.pe-pages { flex: 1; min-height: 0; overflow: auto; padding: 16px 16px 40px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.pe-page { position: relative; flex: none; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 6px 24px rgba(0,0,0,.08); }
+.pe-page > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pe-layer { position: absolute; inset: 0; }
+.pe-line { position: absolute; padding: 0; border: 0; border-radius: 3px; background: transparent; cursor: text; }
+.pe-line:hover, .pe-line:focus-visible { background: rgba(99,102,241,.10); outline: 1.5px solid rgba(99,102,241,.55); }
+.pe-edit { position: absolute; inset: 0; pointer-events: none; }
+.pe-edit > * { pointer-events: auto; }
+.pe-patch { position: absolute; border-radius: 2px; }
+.pe-input { position: absolute; padding: 0; margin: 0; border: 0; background: transparent; outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; white-space: pre; }
+.pe-tools { position: absolute; z-index: 2; display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 10px; background: #111827; color: #fff; box-shadow: 0 6px 20px rgba(0,0,0,.25); font: 500 13px var(--font); white-space: nowrap; }
+.pe-tools button { height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: #fff; font: 600 13px var(--font); cursor: pointer; }
+.pe-tools button:hover { background: rgba(255,255,255,.14); }
+.pe-tools .pe-apply { background: var(--accent); }
+.pe-tools span { padding: 0 6px; color: rgba(255,255,255,.55); font-size: 12px; }
+.pe-edit.busy { opacity: .6; pointer-events: none; }
+@media (max-width: 640px) { .pe-keep { display: none; } .pe-tools span { display: none; } .pe-pages { padding: 10px 6px 30px; } }
 .menu {
   position: fixed; z-index: 60; min-width: 200px; padding: 6px; border-radius: 14px; background: var(--surface);
   border: 1px solid var(--border); box-shadow: var(--shadow-lg); animation: pop .12s ease-out;
