@@ -8,12 +8,14 @@ import { Sync } from './sync.js';
 import { Files } from './files.js';
 import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js';
 import qrcode from '/vendor/qrcode.mjs';
+import { Markup } from './markup.js';
 
-const VERSION = '2.5.1';
+const VERSION = '2.6.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
 let files;
+let markup;
 const el = {};
 const ui = {
   tab: 'drops',
@@ -282,7 +284,11 @@ function wire() {
     addEventListener('pointermove', cancel);
     addEventListener('pointercancel', cancel);
   });
-  el.feedInner.addEventListener('contextmenu', (e) => { if (isTouch() && e.target.closest('[data-id]')) e.preventDefault(); });
+  // right-click / two-finger tap on a touchpad → SyncPad's own menus (Shift + right-click = browser menu)
+  addEventListener('pointerdown', (e) => { ui.lastPointer = e.pointerType; }, true);
+  el.feedInner.addEventListener('contextmenu', onFeedContext);
+  el.dropsSide.addEventListener('contextmenu', onSideContext);
+  el.noteList.addEventListener('contextmenu', onNoteListContext);
   el.feed.addEventListener('scroll', () => {
     ui.atBottom = el.feed.scrollHeight - el.feed.scrollTop - el.feed.clientHeight < 60;
   }, { passive: true });
@@ -375,7 +381,9 @@ function wire() {
   // viewer
   el.viewerDownload.addEventListener('click', () => ui.viewing && files.download(ui.viewing));
   el.viewerShare.addEventListener('click', () => ui.viewing && files.share(ui.viewing).catch(() => {}));
+  el.viewerMarkup.addEventListener('click', () => ui.viewing && openMarkup(ui.viewing));
   el.dlgViewer.addEventListener('close', () => { el.viewerBody.innerHTML = ''; ui.viewing = null; });
+  markup = new Markup(el.dlgMarkup);
 
   // drag & drop anywhere
   let depth = 0;
@@ -998,11 +1006,12 @@ function openTextViewer(it) {
   el.viewerTitle.textContent = 'Message';
   el.viewerShare.hidden = true;
   el.viewerDownload.hidden = true;
+  el.viewerMarkup.hidden = true;
   el.viewerBody.innerHTML = `<pre class="text-view">${linkify(it.data.text || '')}</pre>`;
   openDialog(el.dlgViewer);
 }
 
-function dropMenu(anchor, it) {
+function dropMenu(anchor, it, at) {
   const m = [];
   if (it.kind === 'clip') {
     const url = singleUrl(it.data.text || '');
@@ -1028,15 +1037,16 @@ function dropMenu(anchor, it) {
         catch { toast('Could not save it for offline use. Check your connection.'); }
       } });
     }
+    if (canMarkup(it)) m.splice(1, 0, { icon: 'pen', label: 'Hide details (cover / draw)', run: () => openMarkup(it) });
     if (kind === 'image' && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
       m.push({ icon: 'copy', label: 'Copy image', run: () => files.copyImage(it).then(() => toast('Image copied')).catch(() => toast('Copy is not supported for this image.')) });
     }
   }
-  m.push({ icon: 'folder', label: folderOf(it) ? 'Move to another folder…' : 'Move to folder…', run: () => moveMenu(anchor, [it.id]) });
+  m.push({ icon: 'folder', label: folderOf(it) ? 'Move to another folder…' : 'Move to folder…', run: () => moveMenu(anchor, [it.id], at) });
   m.push({ icon: 'check', label: 'Select', run: () => { enterSelect(); toggleSelect(it.id); } });
   m.push({ icon: 'pin', label: it.data.keep ? 'Unpin' : 'Pin (never auto-delete)', run: () => { it.data = { ...it.data, keep: !it.data.keep }; store.save(it).then(() => sync.schedule()); } });
   m.push({ icon: 'trash', label: 'Move to Trash', danger: true, run: () => deleteWithUndo(it, it.kind === 'clip' ? 'Message' : 'File') });
-  openMenu(anchor, m);
+  openMenu(anchor, m, { at });
 }
 
 /* ───────── drag a box across empty space to select drops (mouse) ───────── */
@@ -1114,6 +1124,98 @@ function initMarquee() {
   addEventListener('pointercancel', end);
 }
 
+/* ───────── photo markup: cover / draw over sensitive details ───────── */
+
+function canMarkup(it) {
+  return it && it.kind === 'file' && !it.data.parent && !files.progress.get(it.id) &&
+    fileKind(it.data.type, it.data.name) === 'image' && !/svg/i.test(it.data.type || '');
+}
+
+async function openMarkup(it) {
+  let blob = null;
+  try { blob = await files.blobOf(it); } catch {}
+  if (!blob) { toast('Could not load this photo. Check your connection and try again.'); return; }
+  let res;
+  try { res = await markup.open(blob, it.data.type || blob.type, openDialog); }
+  catch { toast('This image type can’t be edited here.'); return; }
+  if (!res) return;
+  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[res.blob.type] || 'png';
+  const base = String(it.data.name || 'photo').replace(/\.[a-z0-9]{2,5}$/i, '');
+  const sameExt = new RegExp(`\\.(${ext === 'jpg' ? 'jpe?g' : ext})$`, 'i').test(it.data.name || '');
+  const name = sameExt ? it.data.name : `${base}.${ext}`;
+  const file = new File([res.blob], name, { type: res.blob.type });
+  const f = folderOf(it);
+  const added = await files.add([file], res.keep
+    ? { folder: f && f.id }
+    : { folder: f && f.id, created: it.created, keep: !!it.data.keep });
+  if (!added.length) return;
+  if (ui.viewing && ui.viewing.id === it.id) el.dlgViewer.close();
+  if (!res.keep) {
+    await deleteForever(it.id);
+    toast('Saved. The hidden details are gone from every device.');
+  } else toast('Saved as a new copy. The original is unchanged.');
+  scheduleRender(true, false);
+}
+
+/* ───────── right-click menus ───────── */
+
+function onFeedContext(e) {
+  if (e.shiftKey) return;
+  if (ui.lastPointer === 'touch') { e.preventDefault(); return; } // a long press selects instead
+  const picked = String(getSelection() || '');
+  if (picked && e.target.closest('.ri-text')) return; // keep "Copy" for selected text
+  e.preventDefault();
+  const at = { x: e.clientX, y: e.clientY };
+  ui.ctxAt = at;
+  const card = e.target.closest('[data-id]');
+  const it = card && store.items.get(card.dataset.id);
+  if (!it) {
+    openMenu(null, [
+      { icon: 'clip', label: 'Send files…', run: () => el.fileInput.click() },
+      { icon: 'folder', label: 'New folder…', run: async () => { const f = await createFolder(); if (f) setDropView('f:' + f.id); } },
+      { icon: 'check', label: 'Select all', run: () => setSelection(new Set(visibleDrops().map((i) => i.id))) }
+    ], { at });
+    return;
+  }
+  if (ui.selecting && ui.selected.has(it.id) && ui.selected.size > 1) {
+    const n = ui.selected.size;
+    openMenu(null, [
+      { icon: 'folder', label: `Move ${n} to folder…`, run: () => moveMenu(null, [...ui.selected], at) },
+      { icon: 'download', label: `Download ${n}`, run: () => selAction('download') },
+      { icon: 'trash', label: `Move ${n} to Trash`, danger: true, run: () => selAction('trash') },
+      { icon: 'x', label: 'Clear selection', run: exitSelect }
+    ], { at });
+    return;
+  }
+  if (ui.selecting) exitSelect();
+  const node = cards.get(it.id) && cards.get(it.id).node;
+  dropMenu(null, it, at);
+  if (node) { node.classList.add('ctx'); ui.ctxNode = node; }
+}
+
+function onSideContext(e) {
+  const f = e.target.closest('[data-folder-drop]');
+  if (!f || e.shiftKey || ui.lastPointer === 'touch') return;
+  e.preventDefault();
+  folderMenu(null, f.dataset.folderDrop, { x: e.clientX, y: e.clientY });
+}
+
+function onNoteListContext(e) {
+  const b = e.target.closest('.note-item');
+  if (!b || e.shiftKey || ui.lastPointer === 'touch') return;
+  e.preventDefault();
+  const n = store.items.get(b.dataset.id);
+  if (!n) return;
+  b.classList.add('ctx');
+  ui.ctxNode = b;
+  openMenu(null, [
+    { icon: 'note', label: 'Open', run: () => openNote(n.id) },
+    { icon: 'pin', label: n.data.pinned ? 'Unpin' : 'Pin to top', run: () => { n.data = { ...n.data, pinned: !n.data.pinned }; store.save(n).then(() => { sync.schedule(); if (ui.noteId === n.id) renderEditor(false); }); } },
+    { icon: 'copy', label: 'Copy text', run: async () => { await copyText(noteText(n)); toast('Copied'); } },
+    { icon: 'trash', label: 'Move to Trash', danger: true, run: () => deleteWithUndo(n, 'Note') }
+  ], { at: { x: e.clientX, y: e.clientY } });
+}
+
 /* ───────── folders ───────── */
 
 async function createFolder() {
@@ -1145,19 +1247,20 @@ async function deleteFolder(id) {
   sync.schedule();
   renderDrops();
 }
-function folderMenu(anchor) {
-  const id = currentFolder();
+function folderMenu(anchor, id = currentFolder(), at) {
   if (!id) return;
-  openMenu(anchor, [
+  const items = [
     { icon: 'note', label: 'Rename folder', run: () => renameFolder(id) },
     { icon: 'trash', label: 'Delete folder', danger: true, run: () => deleteFolder(id) }
-  ]);
+  ];
+  if (at && ui.dloc !== 'f:' + id) items.unshift({ icon: 'folder', label: 'Open', run: () => setDropView('f:' + id) });
+  openMenu(anchor, items, { at });
 }
-function moveMenu(anchor, ids) {
+function moveMenu(anchor, ids, at) {
   const items = folders().map((f) => ({ icon: 'folder', label: f.data.name || 'Folder', run: () => moveTo(ids, f.id) }));
   if (ids.some((id) => { const it = store.items.get(id); return it && folderOf(it); })) items.push({ icon: 'drops', label: 'Take out of folder', run: () => moveTo(ids, null) });
   items.push({ icon: 'plus', label: 'New folder…', run: async () => { const f = await createFolder(); if (f) moveTo(ids, f.id); } });
-  openMenu(anchor, items);
+  openMenu(anchor, items, { at });
 }
 async function moveTo(ids, folderId) {
   let n = 0;
@@ -1885,6 +1988,7 @@ async function openFile(it) {
   if (!['image', 'video', 'audio', 'pdf'].includes(kind) && !textual) { files.download(it); return; }
   ui.viewing = it;
   el.viewerDownload.hidden = false;
+  el.viewerMarkup.hidden = !canMarkup(it);
   el.viewerTitle.textContent = d.name;
   el.viewerShare.hidden = !files.canShare();
   if (files.canShare()) files.prefetch(it);
@@ -2714,13 +2818,23 @@ function openMenu(anchor, items, opts = {}) {
   const sheet = isMobileLayout();
   m.classList.toggle('as-sheet', sheet);
   if (!sheet) {
-    const r = anchor.getBoundingClientRect();
     const mw = m.offsetWidth;
     const mh = m.offsetHeight;
-    let top = r.bottom + 6;
-    if (top + mh > innerHeight - 8) top = Math.max(8, r.top - mh - 6);
-    m.style.top = top + 'px';
-    m.style.left = Math.max(8, Math.min(innerWidth - mw - 8, r.right - mw)) + 'px';
+    if (opts.at || !anchor) {
+      const at = opts.at || { x: innerWidth / 2, y: innerHeight / 3 };
+      let left = at.x + 2;
+      let top = at.y + 2;
+      if (left + mw > innerWidth - 8) left = Math.max(8, at.x - mw - 2);
+      if (top + mh > innerHeight - 8) top = Math.max(8, at.y - mh - 2);
+      m.style.top = top + 'px';
+      m.style.left = left + 'px';
+    } else {
+      const r = anchor.getBoundingClientRect();
+      let top = r.bottom + 6;
+      if (top + mh > innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+      m.style.top = top + 'px';
+      m.style.left = Math.max(8, Math.min(innerWidth - mw - 8, r.right - mw)) + 'px';
+    }
   } else {
     m.style.left = '';
     m.style.top = '';
@@ -2735,7 +2849,7 @@ function openMenu(anchor, items, opts = {}) {
   const outside = (e) => {
     if (m.contains(e.target)) return;
     closeMenu();
-    if (anchor.contains(e.target)) e.stopPropagation();
+    if (anchor && anchor.contains(e.target)) e.stopPropagation();
   };
   ui.menuOutside = outside;
   setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
@@ -2743,6 +2857,7 @@ function openMenu(anchor, items, opts = {}) {
 }
 function closeMenu() {
   el.menu.hidden = true;
+  if (ui.ctxNode) { ui.ctxNode.classList.remove('ctx'); ui.ctxNode = null; }
   if (ui.menuOutside) document.removeEventListener('pointerdown', ui.menuOutside, true);
   ui.menuOutside = null;
 }

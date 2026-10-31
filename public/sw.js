@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v2.5.1';
+const VERSION = 'v2.6.0';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const SHELL = [
@@ -11,6 +11,7 @@ const SHELL = [
   '/js/store.js',
   '/js/sync.js',
   '/js/files.js',
+  '/js/markup.js',
   '/js/md.js',
   '/vendor/marked.esm.js',
   '/vendor/purify.min.js',

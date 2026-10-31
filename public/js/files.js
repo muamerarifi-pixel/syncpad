@@ -80,7 +80,7 @@ export class Files extends EventTarget {
     return this.url(id);
   }
 
-  async add(fileList, { parent = null, folder = null } = {}) {
+  async add(fileList, { parent = null, folder = null, created: at = 0, keep = false } = {}) {
     const created = [];
     for (const file of fileList) {
       if (file.size > this.maxFile) {
@@ -92,8 +92,9 @@ export class Files extends EventTarget {
       const name = !file.name || /^image\.\w{2,5}$/i.test(file.name) ? defaultName(file) : file.name;
       const data = { name, size: file.size, type: file.type || '', parent };
       if (folder && !parent) data.folder = folder;
+      if (keep) data.keep = true;
       try { Object.assign(data, (await withTimeout(makeThumb(file), 3000)) || {}); } catch {}
-      const item = { id, kind: 'file', rev: 0, created: now, updated: now, device: this.store.get('device'), data, local: { up: true } };
+      const item = { id, kind: 'file', rev: 0, created: at || now, updated: now, device: this.store.get('device'), data, local: { up: true } };
       this.mem.set(id, file);
       await this.store.save(item, { sync: false });
       this.store.putBlob(id, file).catch(() => {});
