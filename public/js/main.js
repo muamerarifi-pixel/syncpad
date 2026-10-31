@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.18.0';
+const VERSION = '2.19.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2080,13 +2080,30 @@ function renderNotesList() {
     return;
   }
   el.noteList.innerHTML = list
-    .map((n) => `<button class="note-item" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}"${n.data.color ? ` data-color="${esc(n.data.color)}"` : ''}${isTouch() ? '' : ' draggable="true"'}>
+    .map((n) => { const m = noteMedia(n); return `<button class="note-item${m.thumb ? ' has-thumb' : ''}" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}"${n.data.color ? ` data-color="${esc(n.data.color)}"` : ''}${isTouch() ? '' : ' draggable="true"'}>
+      ${m.thumb ? `<img class="ni-thumb" src="${esc(m.thumb)}" alt="" loading="lazy" draggable="false">` : ''}
       <div class="t">${n.data.pinned ? '<svg class="ic"><use href="#i-pin"/></svg>' : ''}${n.data.canvas ? '<svg class="ic"><use href="#i-canvas"/></svg>' : ''}<span>${esc(noteTitle(noteText(n)))}</span></div>
       <div class="s">${esc(noteSnippet(noteText(n))) || '&nbsp;'}</div>
-      <div class="d">${esc(shortDate(n.updated))}${n.data.conflictOf ? ' · <span class="warn">Conflict copy</span>' : ''}</div>
-    </button>`)
+      <div class="d">${esc(shortDate(n.updated))}${m.imgs ? `<span class="ni-badge" title="${m.imgs} picture${m.imgs > 1 ? 's' : ''}"><svg class="ic"><use href="#i-image"/></svg>${m.imgs > 1 ? m.imgs : ''}</span>` : ''}${m.files ? `<span class="ni-badge" title="${m.files} file${m.files > 1 ? 's' : ''}"><svg class="ic"><use href="#i-clip"/></svg>${m.files > 1 ? m.files : ''}</span>` : ''}${n.data.conflictOf ? ' · <span class="warn">Conflict copy</span>' : ''}</div>
+    </button>`; })
     .join('');
 }
+
+/** pictures and files inside a note (normal or canvas), for the list */
+function noteMedia(n) {
+  const html = n.data.html || '';
+  const imgs = [...html.matchAll(/<img\b[^>]*data-file="([^"]+)"/g)].map((x) => x[1]);
+  const files = (html.match(/<a\b[^>]*data-file="/g) || []).length;
+  let thumb = null;
+  for (const id of imgs) {
+    const it = store.items.get(id);
+    if (it && it.data.trashed) continue;
+    thumb = (it && it.data.thumb) || files_src(id);
+    if (thumb) break;
+  }
+  return { imgs: imgs.length, files, thumb };
+}
+const files_src = (id) => { try { return files.src(id); } catch { return null; } };
 
 function openNote(id, { focus = true } = {}) {
   if (ui.noteId && ui.noteId !== id) saveNote.flush();

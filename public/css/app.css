@@ -1342,3 +1342,16 @@ html, body { overscroll-behavior-x: none; }
 @keyframes swipeFromLeft { from { transform: translateX(-40px); opacity: .4; } to { transform: none; opacity: 1; } }
 .view.swipe-from-right { animation: swipeFromRight .24s ease-out; }
 .view.swipe-from-left { animation: swipeFromLeft .24s ease-out; }
+
+/* ───────── 2.19: pictures / files shown in the notes list ───────── */
+.note-item.has-thumb { position: relative; padding-right: 66px; }
+.note-item .ni-thumb { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 46px; height: 46px; object-fit: cover; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--border); }
+.note-list.size-s .note-item.has-thumb { padding-right: 50px; }
+.note-list.size-s .note-item .ni-thumb { width: 32px; height: 32px; border-radius: 7px; }
+.note-list.size-l .note-item.has-thumb { padding-right: 86px; }
+.note-list.size-l .note-item .ni-thumb { width: 64px; height: 64px; border-radius: 11px; }
+.note-list.view-grid .note-item.has-thumb { padding-right: 12px; }
+.note-list.view-grid .note-item .ni-thumb { position: static; transform: none; order: -1; width: 100%; height: calc(var(--card, 140px) * .62); border-radius: 10px; flex: none; }
+.note-item .d { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ni-badge { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-weight: 600; }
+.ni-badge .ic { width: 13px; height: 13px; }
