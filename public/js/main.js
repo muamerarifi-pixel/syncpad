@@ -10,7 +10,7 @@ import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js
 import qrcode from '/vendor/qrcode.mjs';
 import { Markup } from './markup.js';
 
-const VERSION = '2.6.0';
+const VERSION = '2.7.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -375,6 +375,7 @@ function wire() {
   });
   el.btnDisconnect.addEventListener('click', disconnect);
   el.btnInstall.addEventListener('click', install);
+  el.btnSendto.addEventListener('click', setupSendTo);
   addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); ui.installPrompt = e; });
   addEventListener('appinstalled', () => { ui.installPrompt = null; toast('SyncPad installed.'); });
 
@@ -1037,7 +1038,7 @@ function dropMenu(anchor, it, at) {
         catch { toast('Could not save it for offline use. Check your connection.'); }
       } });
     }
-    if (canMarkup(it)) m.splice(1, 0, { icon: 'pen', label: 'Hide details (cover / draw)', run: () => openMarkup(it) });
+    if (canMarkup(it)) m.splice(1, 0, { icon: 'crop', label: 'Edit (crop / hide details)', run: () => openMarkup(it) });
     if (kind === 'image' && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
       m.push({ icon: 'copy', label: 'Copy image', run: () => files.copyImage(it).then(() => toast('Image copied')).catch(() => toast('Copy is not supported for this image.')) });
     }
@@ -1152,7 +1153,7 @@ async function openMarkup(it) {
   if (ui.viewing && ui.viewing.id === it.id) el.dlgViewer.close();
   if (!res.keep) {
     await deleteForever(it.id);
-    toast('Saved. The hidden details are gone from every device.');
+    toast('Saved. The old version is deleted from every device.');
   } else toast('Saved as a new copy. The original is unchanged.');
   scheduleRender(true, false);
 }
@@ -2148,6 +2149,23 @@ async function joinSpace(link) {
   toast('Connected — everything now syncs between your devices.');
 }
 
+/* ═════════════════════════ Windows "Send to" ═════════════════════════ */
+
+// Copies a one-line setup command. It gives this PC its own device key (shown as "… (Send to)"
+// in the devices list, removable there) and puts a SyncPad shortcut in the Send to menu.
+async function setupSendTo() {
+  const key = [store.get('space'), sync.token, 'w' + rid(15), rid(24)].join('~');
+  const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -c "iex(irm ${location.origin}/sendto.ps1);Install-SyncPad '${key}'"`;
+  try { await copyText(cmd); }
+  catch { toast('Could not copy. Try again.'); return; }
+  const first = el.sendtoSteps.querySelector('li');
+  first.innerHTML = cmd.length > 255
+    ? '<b>Copied.</b> Open <b>Windows PowerShell</b> (Start → type PowerShell)'
+    : '<b>Copied.</b> Now press <kbd>Win</kbd> + <kbd>R</kbd>';
+  el.sendtoSteps.hidden = false;
+  toast('Setup command copied');
+}
+
 /* ═════════════════════════ settings ═════════════════════════ */
 
 function openSettings() {
@@ -2156,6 +2174,8 @@ function openSettings() {
   const st = store.items.get('settings');
   el.setAutodel.value = String((st && st.data.autodel) || 0);
   el.installField.hidden = !ui.installPrompt || isStandalone();
+  el.sendtoField.hidden = !/Windows NT/.test(navigator.userAgent);
+  el.sendtoSteps.hidden = true;
   el.versionText.textContent = `SyncPad ${VERSION} · ${store.get('deviceName')}`;
   renderPinSettings();
   loadDevices();

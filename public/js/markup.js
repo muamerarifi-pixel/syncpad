@@ -1,4 +1,4 @@
-// Photo markup: cover or scribble over details, then export a brand-new image.
+// Photo editor: crop, cover or scribble over details, then export a brand-new image.
 // The result is re-encoded from the canvas, so covered pixels (and EXIF data such as GPS) are gone.
 
 const MAX_SIDE = 4096;
@@ -33,7 +33,11 @@ export class Markup {
     this.btnSave = $('#mk-save', dialog);
     this.btnUndo = $('#mk-undo', dialog);
     this.keep = $('#mk-keep', dialog);
+    this.cropBox = $('#mk-crop', dialog);
+    this.btnApply = $('#mk-apply', dialog);
     this.tool = 'box';
+    this.stack = []; // undo steps: 'op' or a saved state from before a crop
+    this.crop = null;
     this.color = '#000000';
     this.size = 2; // 1..3
     this.ops = [];
@@ -51,14 +55,20 @@ export class Markup {
     });
     this.btnUndo.addEventListener('click', () => this.undo());
     $('#mk-cancel', dialog).addEventListener('click', () => {
-      if (!this.ops.length || confirm('Discard your changes to this photo?')) dialog.close();
+      if (!this.dirty() || confirm('Discard your changes to this photo?')) dialog.close();
     });
     this.btnSave.addEventListener('click', () => this.save());
+    this.btnApply.addEventListener('click', () => { this.applyCrop(); this.setTool('box'); });
+    this.cropBox.addEventListener('pointerdown', (e) => this.cropDown(e));
+    this.cropBox.addEventListener('pointermove', (e) => this.cropMove(e));
+    this.cropBox.addEventListener('pointerup', () => { this.cropDrag = null; });
+    this.cropBox.addEventListener('pointercancel', () => { this.cropDrag = null; });
     dialog.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); this.undo(); }
+      else if (e.key === 'Enter' && this.tool === 'crop') { e.preventDefault(); this.applyCrop(); this.setTool('box'); }
     });
     dialog.addEventListener('cancel', (e) => {
-      if (this.ops.length && !confirm('Discard your changes to this photo?')) e.preventDefault();
+      if (this.dirty() && !confirm('Discard your changes to this photo?')) e.preventDefault();
     });
     dialog.addEventListener('close', () => this.finish(null));
 
@@ -79,6 +89,7 @@ export class Markup {
     const k = Math.min(aw / this.canvas.width, ah / this.canvas.height);
     this.canvas.style.width = Math.max(1, Math.floor(this.canvas.width * k)) + 'px';
     this.canvas.style.height = Math.max(1, Math.floor(this.canvas.height * k)) + 'px';
+    this.placeCrop();
   }
 
   /** Opens the editor. Resolves to { blob, keep } or null when cancelled. */
@@ -92,6 +103,7 @@ export class Markup {
     this.canvas.height = Math.round(h0 * k);
     this.type = /^image\/(jpeg|webp)$/.test(type) ? type : 'image/png';
     this.ops = [];
+    this.stack = [];
     this.cur = null;
     this.keep.checked = false;
     this.setTool('box');
@@ -106,9 +118,13 @@ export class Markup {
     const r = this.resolve;
     this.resolve = null;
     this.preview.hidden = true;
+    this.cropBox.hidden = true;
+    this.crop = null;
     if (this.base && this.base.close) this.base.close();
+    for (const e of this.stack) if (e !== 'op' && e.base && e.base.close) e.base.close();
     this.base = null;
     this.ops = [];
+    this.stack = [];
     if (r) r(v);
   }
 
@@ -116,7 +132,19 @@ export class Markup {
     this.tool = t;
     for (const b of this.d.querySelectorAll('[data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === t));
     this.d.classList.toggle('mk-pen', t === 'pen');
-    this.hint.textContent = t === 'pen' ? 'Draw over what you want to hide.' : 'Drag a box over what you want to hide.';
+    this.d.classList.toggle('mk-cropping', t === 'crop');
+    this.hint.textContent = t === 'pen' ? 'Draw over what you want to hide.'
+      : t === 'crop' ? 'Drag the corners, then tap Apply.' : 'Drag a box over what you want to hide.';
+    if (t === 'crop') {
+      this.crop = { x: 0, y: 0, w: this.canvas.width, h: this.canvas.height };
+      this.cropBox.hidden = false;
+      this.placeCrop();
+      this.hint.hidden = false;
+    } else {
+      this.crop = null;
+      this.cropBox.hidden = true;
+    }
+    this.sync();
   }
   setColor(c) {
     this.color = c;
@@ -127,10 +155,91 @@ export class Markup {
     for (const b of this.d.querySelectorAll('[data-size]')) b.setAttribute('aria-pressed', String(+b.dataset.size === s));
   }
 
+  dirty() { return this.stack.length > 0 || this.cropPending(); }
+  cropPending() {
+    const c = this.crop;
+    return !!c && (c.x > 0.5 || c.y > 0.5 || c.w < this.canvas.width - 0.5 || c.h < this.canvas.height - 0.5);
+  }
+
   sync() {
-    this.btnUndo.disabled = !this.ops.length;
-    this.btnSave.disabled = !this.ops.length;
-    this.hint.hidden = !!this.ops.length;
+    this.btnUndo.disabled = !this.stack.length;
+    this.btnSave.disabled = !this.dirty();
+    this.btnApply.disabled = !this.cropPending();
+    if (this.tool !== 'crop') this.hint.hidden = !!this.stack.length;
+  }
+
+  /* ── crop ── */
+
+  placeCrop() {
+    const c = this.crop;
+    if (!c || this.cropBox.hidden) return;
+    const s = this.stage.getBoundingClientRect();
+    const r = this.canvas.getBoundingClientRect();
+    const k = r.width / this.canvas.width;
+    const st = this.cropBox.style;
+    st.left = r.left - s.left + c.x * k + 'px';
+    st.top = r.top - s.top + c.y * k + 'px';
+    st.width = c.w * k + 'px';
+    st.height = c.h * k + 'px';
+  }
+
+  cropDown(e) {
+    if (e.button > 0 || !this.crop) return;
+    e.preventDefault();
+    this.cropBox.setPointerCapture(e.pointerId);
+    const h = e.target.closest('[data-h]');
+    this.cropDrag = { mode: h ? h.dataset.h : 'move', p: this.pt(e), c: { ...this.crop } };
+    this.hint.hidden = true;
+  }
+
+  cropMove(e) {
+    const d = this.cropDrag;
+    if (!d) return;
+    const p = this.pt(e);
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    const min = Math.max(8, Math.min(W, H) * 0.04);
+    const dx = p.x - d.p.x;
+    const dy = p.y - d.p.y;
+    let { x, y, w, h } = d.c;
+    if (d.mode === 'move') {
+      x = Math.max(0, Math.min(W - w, x + dx));
+      y = Math.max(0, Math.min(H - h, y + dy));
+    } else {
+      let x2 = x + w;
+      let y2 = y + h;
+      if (d.mode.includes('w')) x = Math.max(0, Math.min(x2 - min, x + dx));
+      if (d.mode.includes('e')) x2 = Math.min(W, Math.max(x + min, x2 + dx));
+      if (d.mode.includes('n')) y = Math.max(0, Math.min(y2 - min, y + dy));
+      if (d.mode.includes('s')) y2 = Math.min(H, Math.max(y + min, y2 + dy));
+      w = x2 - x;
+      h = y2 - y;
+    }
+    this.crop = { x, y, w, h };
+    this.placeCrop();
+    this.sync();
+  }
+
+  applyCrop() {
+    if (!this.cropPending()) return;
+    const c = this.crop;
+    const x = Math.round(c.x);
+    const y = Math.round(c.y);
+    const w = Math.max(1, Math.round(Math.min(c.w, this.canvas.width - x)));
+    const h = Math.max(1, Math.round(Math.min(c.h, this.canvas.height - y)));
+    const next = document.createElement('canvas');
+    next.width = w;
+    next.height = h;
+    next.getContext('2d').drawImage(this.canvas, x, y, w, h, 0, 0, w, h); // keeps covers / pen made so far
+    this.stack.push({ base: this.base, ops: this.ops, w: this.canvas.width, h: this.canvas.height });
+    this.base = next;
+    this.ops = [];
+    this.canvas.width = w;
+    this.canvas.height = h;
+    this.crop = { x: 0, y: 0, w, h };
+    this.redraw();
+    this.fit();
+    this.sync();
   }
 
   lineWidth() {
@@ -147,7 +256,7 @@ export class Markup {
   }
 
   down(e) {
-    if (e.button > 0) return;
+    if (e.button > 0 || this.tool === 'crop') return;
     this.pointers.add(e.pointerId);
     if (this.pointers.size > 1) { this.abort(); return; } // a second finger means a gesture, not a stroke
     e.preventDefault();
@@ -197,6 +306,7 @@ export class Markup {
       this.drawOp(c);
     }
     this.ops.push(c);
+    this.stack.push('op');
     this.sync();
   }
 
@@ -267,14 +377,25 @@ export class Markup {
   }
 
   undo() {
-    if (!this.ops.length) return;
-    this.ops.pop();
+    const e = this.stack.pop();
+    if (!e) return;
+    if (e === 'op') this.ops.pop();
+    else {
+      this.base = e.base;
+      this.ops = e.ops;
+      this.canvas.width = e.w;
+      this.canvas.height = e.h;
+      this.fit();
+    }
+    if (this.tool === 'crop') this.crop = { x: 0, y: 0, w: this.canvas.width, h: this.canvas.height };
     this.redraw();
+    this.placeCrop();
     this.sync();
   }
 
   save() {
-    if (!this.ops.length) return;
+    if (this.cropPending()) this.applyCrop();
+    if (!this.stack.length) return;
     this.btnSave.disabled = true;
     const keep = this.keep.checked;
     this.canvas.toBlob((blob) => {

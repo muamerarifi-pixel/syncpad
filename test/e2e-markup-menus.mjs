@@ -1,4 +1,4 @@
-// Right-click / two-finger-tap menus + "Hide details" photo markup (cover box + pen), synced to a second device
+// Right-click / two-finger-tap menus + photo editor (crop, cover box, pen), synced to a second device
 import { chromium, devices } from 'playwright';
 import fs from 'node:fs';
 const BASE = process.env.BASE || 'http://127.0.0.1:8787';
@@ -50,13 +50,13 @@ const rb = await row.boundingBox();
 await A.mouse.click(rb.x + rb.width / 2, rb.y + rb.height / 2, { button: 'right' });
 await A.waitForSelector('#menu:not([hidden])');
 const items = await A.$$eval('#menu button', (b) => b.map((x) => x.textContent.trim()));
-if (!items.includes('Hide details (cover / draw)') || !items.includes('Move to Trash')) throw new Error('item menu: ' + items);
+if (!items.includes('Edit (crop / hide details)') || !items.includes('Move to Trash')) throw new Error('item menu: ' + items);
 if (!(await A.$('.ri.ctx'))) throw new Error('no highlight on the right-clicked row');
 await A.screenshot({ path: `${OUT}/70-context-menu.png` });
-step('Right-click on a photo → SyncPad menu with “Hide details”, row highlighted');
+step('Right-click on a photo → SyncPad menu with “Edit (crop / hide details)”, row highlighted');
 
 // 3) cover box + pen + undo, then save (replace original)
-await A.click('#menu button:has-text("Hide details")');
+await A.click('#menu button:has-text("Edit (crop")');
 await A.waitForSelector('#dlg-markup[open] canvas');
 await A.waitForTimeout(200);
 const cv = await (await A.$('#mk-canvas')).boundingBox();
@@ -78,13 +78,31 @@ await A.mouse.move(cv.x + 100 * sx, cv.y + 100 * sy); await A.mouse.down();
 await A.mouse.move(cv.x + 300 * sx, cv.y + 120 * sy, { steps: 6 }); await A.mouse.up();
 await A.click('#mk-undo');
 await A.screenshot({ path: `${OUT}/71-markup.png` });
+// crop: drag the bottom-right corner in, apply, undo it, then crop again and Save without pressing Apply
+const dragSE = async (toX, toY) => {
+  const h = await (await A.$('#mk-crop i[data-h="se"]')).boundingBox();
+  await A.mouse.move(h.x + h.width / 2, h.y + h.height / 2); await A.mouse.down();
+  const c = await (await A.$('#mk-canvas')).boundingBox();
+  await A.mouse.move(c.x + toX * (c.width / 1200), c.y + toY * (c.height / 760), { steps: 8 }); await A.mouse.up();
+};
+await A.click('[data-tool="crop"]');
+if (await A.$eval('#mk-apply', (b) => !b.disabled)) throw new Error('apply should wait for a change');
+await dragSE(1000, 700);
+await A.screenshot({ path: `${OUT}/75-crop.png` });
+await A.click('#mk-apply');
+const cw = await A.$eval('#mk-canvas', (c) => [c.width, c.height]);
+if (Math.abs(cw[0] - 1000) > 15 || Math.abs(cw[1] - 700) > 15) throw new Error('crop size ' + cw);
+await A.click('#mk-undo');
+if (await A.$eval('#mk-canvas', (c) => c.width) !== 1200) throw new Error('undo crop');
+await A.click('[data-tool="crop"]');
+await dragSE(1000, 700);
 await A.click('#mk-save');
-await A.waitForSelector('.toast >> text=gone from every device');
+await A.waitForSelector('.toast >> text=deleted from every device');
 await A.waitForFunction((id) => !document.querySelector(`.ri[data-id="${id}"]`) && document.querySelectorAll('.ri').length === 2 && !document.querySelector('.ri .progress'), origId, { timeout: 20000 });
 const newId = await A.$eval('.ri:has(.ri-thumb img)', (n) => n.dataset.id);
 const order = await A.$$eval('.ri', (n) => n.map((x) => x.dataset.id));
 if (order[1] !== newId) throw new Error('replaced photo should keep its place (older than the text)');
-step('Cover box + pen + undo → Save replaces the photo in place');
+step('Cover box + pen + undo + crop (apply, undo, re-crop, save) → replaces the photo in place');
 
 // 4) the phone sees only the edited photo, and its pixels really are covered
 await B.waitForFunction((ids) => !document.querySelector(`.ri[data-id="${ids[0]}"]`) && !!document.querySelector(`.ri[data-id="${ids[1]}"] .ri-thumb img`), [origId, newId], { timeout: 20000 });
@@ -104,12 +122,12 @@ console.log('  saved image:', JSON.stringify(check));
 if (check.box.some((v) => v > 30)) throw new Error('box area not black');
 if (!(check.cvv[0] > 180 && check.cvv[1] < 110)) throw new Error('pen area not red');
 if (check.corner[2] < 100) throw new Error('undone stroke still there');
-if (check.type !== 'image/jpeg' || check.w !== 1200) throw new Error('type/size changed');
+if (check.type !== 'image/jpeg' || Math.abs(check.w - 1000) > 15) throw new Error('type/size wrong: ' + check.w);
 if (check.old < 400) throw new Error('original still downloadable: ' + check.old);
 await B.keyboard.press('Escape');
-step(`Phone: only the edited photo; number solid black, CVV scribbled, undone stroke gone; original → ${check.old}`);
+step(`Phone: only the edited photo, cropped to ${check.w}px; number black, CVV scribbled, undone stroke gone; original → ${check.old}`);
 
-// 5) viewer has a "Hide details" button; "keep original" makes a copy
+// 5) viewer has an "Edit" button; "keep original" makes a copy
 await A.click(`.ri[data-id="${newId}"] .ri-thumb`);
 await A.waitForSelector('#dlg-viewer[open] #viewer-markup:not([hidden])');
 await A.click('#viewer-markup');
@@ -122,7 +140,7 @@ await A.click('#mk-save');
 await A.waitForSelector('.toast >> text=new copy');
 await A.waitForFunction(() => document.querySelectorAll('.ri').length === 3 && !document.querySelector('.ri .progress'), null, { timeout: 20000 });
 if (await A.$('#dlg-viewer[open]')) throw new Error('viewer should close');
-step('Viewer “Hide details” + “Keep the original too” → a new copy, original kept');
+step('Viewer “Edit” + “Keep the original too” → a new copy, original kept');
 
 // 6) right-click a folder in the sidebar, and a note in the list
 await A.waitForSelector('.toast', { state: 'detached', timeout: 10000 }).catch(() => {});

@@ -698,6 +698,9 @@ dialog::backdrop { background: rgba(8, 10, 14, .45); backdrop-filter: blur(2px);
 .device .dot { background: var(--faint); }
 .device.on .dot { background: var(--ok); }
 .device .when { margin-left: auto; color: var(--faint); font-size: 12.5px; }
+.sendto-steps { margin: 2px 0 0; padding: 12px 14px 12px 34px; border-radius: 12px; background: var(--accent-soft); color: var(--text); font-size: 13.5px; line-height: 1.55; display: flex; flex-direction: column; gap: 6px; }
+.sendto-steps[hidden] { display: none; }
+kbd { font: 600 12px var(--font); padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border); border-bottom-width: 2px; background: var(--surface); color: var(--text); white-space: nowrap; }
 .install-hint { margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); font-size: 13.5px; }
 .settings { display: flex; flex-direction: column; gap: 18px; }
 .field { display: flex; flex-direction: column; gap: 8px; }
@@ -722,7 +725,7 @@ dialog::backdrop { background: rgba(8, 10, 14, .45); backdrop-filter: blur(2px);
 .viewer-bar .mk-open { background: rgba(255,255,255,.12); border-color: transparent; color: #fff; }
 .viewer-bar .mk-open:hover { background: rgba(255,255,255,.2); }
 .markup .viewer-bar .btn-primary:disabled { opacity: .45; }
-.mk-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; padding: 0 12px 10px; overflow: hidden; }
+.mk-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; padding: 12px 16px; overflow: hidden; }
 .markup { background: #0b0c10; }
 .mk-stage canvas { display: block; touch-action: none; cursor: crosshair; border-radius: 6px; box-shadow: 0 0 0 1px rgba(255,255,255,.08); }
 .mk-preview { position: absolute; pointer-events: none; opacity: .85; outline: 1.5px dashed rgba(255,255,255,.9); outline-offset: 0; }
@@ -738,6 +741,28 @@ dialog::backdrop { background: rgba(8, 10, 14, .45); backdrop-filter: blur(2px);
 .markup:not(.mk-pen) .mk-sizes { display: none; }
 .mk-color { width: 30px; height: 30px; margin: 4px; border-radius: 50%; border: 2px solid rgba(255,255,255,.35); background: var(--c); cursor: pointer; }
 .mk-color[aria-pressed="true"] { box-shadow: 0 0 0 2px rgba(6,7,10,.96), 0 0 0 4px #fff; border-color: transparent; }
+.mk-crop { position: absolute; z-index: 2; touch-action: none; cursor: move; outline: 1.5px solid #fff; box-shadow: 0 0 0 9999px rgba(0,0,0,.6); }
+.mk-crop::before, .mk-crop::after { content: ""; position: absolute; pointer-events: none; border: 0 solid rgba(255,255,255,.4); }
+.mk-crop::before { top: 0; bottom: 0; left: 33.333%; right: 33.333%; border-left-width: 1px; border-right-width: 1px; }
+.mk-crop::after { left: 0; right: 0; top: 33.333%; bottom: 33.333%; border-top-width: 1px; border-bottom-width: 1px; }
+.mk-crop i { position: absolute; z-index: 1; }
+.mk-crop i[data-h="nw"], .mk-crop i[data-h="ne"], .mk-crop i[data-h="sw"], .mk-crop i[data-h="se"] { width: 26px; height: 26px; border: 0 solid #fff; }
+.mk-crop i[data-h="nw"] { left: -5px; top: -5px; border-left-width: 5px; border-top-width: 5px; cursor: nwse-resize; }
+.mk-crop i[data-h="ne"] { right: -5px; top: -5px; border-right-width: 5px; border-top-width: 5px; cursor: nesw-resize; }
+.mk-crop i[data-h="sw"] { left: -5px; bottom: -5px; border-left-width: 5px; border-bottom-width: 5px; cursor: nesw-resize; }
+.mk-crop i[data-h="se"] { right: -5px; bottom: -5px; border-right-width: 5px; border-bottom-width: 5px; cursor: nwse-resize; }
+.mk-crop i[data-h="nw"]::after, .mk-crop i[data-h="ne"]::after, .mk-crop i[data-h="sw"]::after, .mk-crop i[data-h="se"]::after { content: ""; position: absolute; inset: -12px; }
+.mk-crop i[data-h="n"], .mk-crop i[data-h="s"] { left: 26px; right: 26px; height: 24px; cursor: ns-resize; }
+.mk-crop i[data-h="n"] { top: -12px; }
+.mk-crop i[data-h="s"] { bottom: -12px; }
+.mk-crop i[data-h="e"], .mk-crop i[data-h="w"] { top: 26px; bottom: 26px; width: 24px; cursor: ew-resize; }
+.mk-crop i[data-h="e"] { right: -12px; }
+.mk-crop i[data-h="w"] { left: -12px; }
+.mk-cropping .mk-stage canvas { cursor: default; }
+.mk-apply { background: #fff; border-color: #fff; color: #111; }
+.mk-apply:hover { background: #e9eaee; }
+.mk-apply:disabled { opacity: .4; cursor: default; }
+.markup:not(.mk-cropping) .mk-apply, .mk-cropping .mk-colors { display: none; }
 .mk-keep { display: inline-flex; align-items: center; gap: 8px; color: rgba(255,255,255,.75); font-size: 13.5px; cursor: pointer; }
 .mk-keep input { width: 17px; height: 17px; accent-color: var(--accent); }
 @media (max-width: 520px) { .mk-tool span { display: none; } .mk-tool { padding: 0 10px; } .mk-keep { flex-basis: 100%; justify-content: center; } }
