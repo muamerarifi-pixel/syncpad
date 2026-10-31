@@ -328,15 +328,9 @@
         </div>
         <small class="muted">Only this device asks for the PIN — your other devices aren't affected. It keeps people who pick up this device out of SyncPad.</small>
       </div>
-      <div class="field" id="sendto-field" hidden>
-        <span>“Send to” on this Windows PC</span>
-        <button class="btn btn-soft" id="btn-sendto"><svg class="ic"><use href="#i-upload"/></svg><span>Add SyncPad to the “Send to” menu</span></button>
-        <ol class="sendto-steps" id="sendto-steps" hidden>
-          <li><b>Copied.</b> Now press <kbd>Win</kbd> + <kbd>R</kbd></li>
-          <li>Paste with <kbd>Ctrl</kbd> + <kbd>V</kbd> and press <kbd>Enter</kbd>. A small window sets it up in a few seconds.</li>
-          <li>Done. Right-click any file or folder → <b>Send to</b> → <b>SyncPad</b>. On Windows 11 it's under <b>Show more options</b>.</li>
-        </ol>
-        <small class="muted" id="sendto-note">Right-click files on this computer and send them straight to SyncPad. Folders are sent as a .zip. This PC appears in your devices list as “(Send to)”, so you can remove it any time.</small>
+      <div class="field" id="openwith-field" hidden>
+        <span>Send files from this computer</span>
+        <small class="muted" id="openwith-text"></small>
       </div>
       <div class="field" id="install-field" hidden>
         <span>App</span>

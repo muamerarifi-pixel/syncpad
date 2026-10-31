@@ -14,7 +14,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '2.8.0';
+const VERSION = '2.8.1';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -62,6 +62,41 @@ function manifest(url) {
         { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
         { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
       ],
+      // installed app on Windows / Mac / Linux: right-click a file → Open with → SyncPad
+      file_handlers: [{
+        action: '/?open=file',
+        launch_type: 'single-client',
+        accept: {
+          "image/jpeg": [".jpg", ".jpeg"],
+          "image/png": [".png"],
+          "image/gif": [".gif"],
+          "image/webp": [".webp"],
+          "image/heic": [".heic"],
+          "image/avif": [".avif"],
+          "image/bmp": [".bmp"],
+          "video/mp4": [".mp4", ".m4v"],
+          "video/quicktime": [".mov"],
+          "video/webm": [".webm"],
+          "video/x-matroska": [".mkv"],
+          "audio/mpeg": [".mp3"],
+          "audio/mp4": [".m4a"],
+          "audio/wav": [".wav"],
+          "audio/ogg": [".ogg", ".opus"],
+          "application/pdf": [".pdf"],
+          "text/plain": [".txt", ".md", ".csv", ".log"],
+          "application/json": [".json"],
+          "application/zip": [".zip"],
+          "application/vnd.rar": [".rar"],
+          "application/x-7z-compressed": [".7z"],
+          "application/msword": [".doc"],
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
+          "application/vnd.ms-excel": [".xls"],
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+          "application/vnd.ms-powerpoint": [".ppt"],
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation": [".pptx"],
+          "application/vnd.android.package-archive": [".apk"]
+        }
+      }],
       share_target: {
         action: '/share-target',
         method: 'POST',
@@ -73,17 +108,6 @@ function manifest(url) {
   );
 }
 
-async function sendToSetup(env, url) {
-  const get = async (f) => {
-    const r = await env.ASSETS.fetch(new Request(new URL(f, url.origin)));
-    if (!r.ok) throw new Error('missing ' + f);
-    return (await r.text()).replace(/\r\n/g, '\n');
-  };
-  const [setup, send] = await Promise.all([get('/sendto/install.ps1'), get('/sendto/send.ps1')]);
-  const body = setup.replaceAll('__ORIGIN__', url.origin).replace('__SEND_PS1__', () => send.trimEnd());
-  return new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
-}
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -91,8 +115,6 @@ export default {
     try {
       if (p === '/api/health') return json({ ok: true, version: VERSION });
       if (p === '/app.webmanifest') return manifest(url);
-      // Windows "Send to SyncPad" setup script (the send script is embedded, origin filled in)
-      if (p === '/sendto.ps1') return sendToSetup(env, url);
       // Only reached when the service worker isn't active yet (first visit)
       if (p === '/share-target') return Response.redirect(new URL('/?shared=0', url).href, 303);
 

@@ -11,7 +11,7 @@ import qrcode from '/vendor/qrcode.mjs';
 import { Markup } from './markup.js';
 import { Collage } from './collage.js';
 
-const VERSION = '2.8.0';
+const VERSION = '2.8.1';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -90,6 +90,7 @@ async function boot() {
   if (store.get('push') && pushSupported() && Notification.permission === 'granted') subscribePush(false).catch(() => {});
   if (joinOffer) whenUnlocked(() => offerJoin(joinOffer));
   takeShared(params.shared);
+  initLaunchQueue();
 }
 
 function readParams() {
@@ -377,7 +378,6 @@ function wire() {
   });
   el.btnDisconnect.addEventListener('click', disconnect);
   el.btnInstall.addEventListener('click', install);
-  el.btnSendto.addEventListener('click', setupSendTo);
   addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); ui.installPrompt = e; });
   addEventListener('appinstalled', () => { ui.installPrompt = null; toast('SyncPad installed.'); });
 
@@ -2195,21 +2195,29 @@ async function joinSpace(link) {
   toast('Connected — everything now syncs between your devices.');
 }
 
-/* ═════════════════════════ Windows "Send to" ═════════════════════════ */
+/* ═════════════════════════ "Open with → SyncPad" (installed desktop app) ═════════════════════════ */
 
-// Copies a one-line setup command. It gives this PC its own device key (shown as "… (Send to)"
-// in the devices list, removable there) and puts a SyncPad shortcut in the Send to menu.
-async function setupSendTo() {
-  const key = [store.get('space'), sync.token, 'w' + rid(15), rid(24)].join('~');
-  const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -c "iex(irm ${location.origin}/sendto.ps1);Install-SyncPad '${key}'"`;
-  try { await copyText(cmd); }
-  catch { toast('Could not copy. Try again.'); return; }
-  const first = el.sendtoSteps.querySelector('li');
-  first.innerHTML = cmd.length > 255
-    ? '<b>Copied.</b> Open <b>Windows PowerShell</b> (Start → type PowerShell)'
-    : '<b>Copied.</b> Now press <kbd>Win</kbd> + <kbd>R</kbd>';
-  el.sendtoSteps.hidden = false;
-  toast('Setup command copied');
+// Files opened with the installed app (right-click → Open with → SyncPad) arrive through launchQueue.
+function initLaunchQueue() {
+  if (!('launchQueue' in window)) return;
+  window.launchQueue.setConsumer(async (params) => {
+    if (!params || !params.files || !params.files.length) return;
+    const list = [];
+    for (const h of params.files) {
+      try { list.push(await h.getFile()); } catch {}
+    }
+    if (list.length) whenUnlocked(() => sendFiles(list, null).then(() => { if (list.length === 1) toast(`Sending “${list[0].name}”…`); }));
+  });
+}
+
+function renderOpenWith() {
+  const desktop = !isTouch() || /Windows NT|Macintosh|CrOS|Linux x86/.test(navigator.userAgent);
+  const can = 'launchQueue' in window && desktop && !/Android|iPhone|iPad/.test(navigator.userAgent);
+  el.openwithField.hidden = !can;
+  if (!can) return;
+  el.openwithText.textContent = isStandalone()
+    ? 'Right-click a photo, PDF, document, video or zip in your files → Open with → SyncPad. It goes straight to Home on all your devices. The first time, pick SyncPad under “Choose another app” and allow it.'
+    : 'Install SyncPad as an app on this computer first (Chrome menu → Cast, save and share → Install). Then right-click a file → Open with → SyncPad to send it.';
 }
 
 /* ═════════════════════════ settings ═════════════════════════ */
@@ -2220,8 +2228,7 @@ function openSettings() {
   const st = store.items.get('settings');
   el.setAutodel.value = String((st && st.data.autodel) || 0);
   el.installField.hidden = !ui.installPrompt || isStandalone();
-  el.sendtoField.hidden = !/Windows NT/.test(navigator.userAgent);
-  el.sendtoSteps.hidden = true;
+  renderOpenWith();
   el.versionText.textContent = `SyncPad ${VERSION} · ${store.get('deviceName')}`;
   renderPinSettings();
   loadDevices();
