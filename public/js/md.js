@@ -45,7 +45,7 @@ function P() {
 
 const BASE = {
   ALLOWED_TAGS: ['p', 'div', 'br', 'span', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'a', 'img', 'h1', 'h2', 'h3',
-    'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'hr', 'mark', 'font', 'sub', 'sup'],
+    'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'hr', 'mark', 'font', 'sub', 'sup', 'table', 'thead', 'tbody', 'tr', 'th', 'td'],
   ALLOWED_ATTR: ['href', 'data-file', 'data-checklist', 'data-checked', 'alt', 'style', 'size', 'color', 'class', 'contenteditable', 'target', 'rel'],
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|blob):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 };

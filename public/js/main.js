@@ -11,8 +11,9 @@ import qrcode from '/vendor/qrcode.mjs';
 import { Markup } from './markup.js';
 import { Collage } from './collage.js';
 import { ZoomView } from './zoom.js';
+import * as De from './declutter.js';
 
-const VERSION = '2.12.0';
+const VERSION = '2.13.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -383,6 +384,12 @@ function wire() {
     item.data = { ...item.data, autodel: Number(el.setAutodel.value) };
     store.save(item).then(() => sync.schedule());
   });
+  el.setDeclutter.addEventListener('change', () => {
+    const cur = store.items.get('settings');
+    const item = cur || { id: 'settings', kind: 'settings', rev: 0, created: Date.now(), data: {} };
+    item.data = { ...item.data, declutter: el.setDeclutter.value };
+    store.save(item).then(() => sync.schedule());
+  });
   el.btnDisconnect.addEventListener('click', disconnect);
   el.btnInstall.addEventListener('click', install);
   addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); ui.installPrompt = e; });
@@ -473,7 +480,7 @@ function wire() {
       return;
     }
     const text = e.dataTransfer.getData('text/uri-list').split('\n').find((l) => l && !l.startsWith('#')) || e.dataTransfer.getData('text/plain');
-    if (text && text.trim()) { setTab('drops'); sendClip(text.trim()); }
+    if (text && text.trim()) { setTab('drops'); sendClip(declutterDrop(text, e.dataTransfer.getData('text/html'))); }
   });
 
   // paste anywhere
@@ -489,17 +496,23 @@ function wire() {
       if (!editable || t === el.composerInput) { e.preventDefault(); sendFiles(fl); }
       return;
     }
+    if (t === el.composerInput) { cleanComposerPaste(e); return; }
     if (!editable && ui.tab === 'drops') {
       const text = e.clipboardData.getData('text');
       if (text) {
         e.preventDefault();
-        el.composerInput.value += text;
+        el.composerInput.value += declutterDrop(text, e.clipboardData.getData('text/html'));
         autosize();
         updateSend();
         el.composerInput.focus();
       }
     }
   });
+
+  // Ctrl+Shift+V pastes exactly what was copied (no de-clutter)
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'v') ui.rawPasteUntil = Date.now() + 1500;
+  }, true);
 
   // keyboard
   document.addEventListener('keydown', (e) => {
@@ -1055,6 +1068,7 @@ function dropMenu(anchor, it, at) {
   if (it.kind === 'clip') {
     const url = singleUrl(it.data.text || '');
     m.push({ icon: 'copy', label: 'Copy text', run: async () => { await copyText(it.data.text); toast('Copied'); } });
+    if (De.isAiText(it.data.text || '')) m.push({ icon: 'sparkle', label: 'Copy clean text', run: async () => { await copyText(De.plainText(it.data.text, declutterOpts() || {})); toast('Clean text copied'); } });
     if (url) m.push({ icon: 'link', label: 'Open link', run: () => window.open(url, '_blank', 'noopener') });
     if (navigator.share && isTouch()) m.push({ icon: 'share', label: 'Share…', run: () => navigator.share(url ? { url } : { text: it.data.text }).catch(() => {}) });
     m.push({ icon: 'note', label: 'Save as note', run: () => saveClipAsNote(it) });
@@ -1904,6 +1918,7 @@ function noteMenu(anchor) {
   const m = [
     { icon: 'copy', label: 'Copy text', run: async () => { await copyText(text()); toast('Copied'); } },
     { icon: 'drops', label: 'Send as a drop', run: () => { sendClip(text()); toast('Sent to Drops'); } },
+    { icon: 'sparkle', label: 'De-clutter text', run: declutterNote },
     { icon: 'download', label: 'Download (keeps colours)', run: downloadNote }
   ];
   if (store.items.has(n.id)) m.splice(2, 0, { icon: 'history', label: 'Version history', run: openHistory });
@@ -1919,7 +1934,7 @@ function downloadNote() {
   const title = noteTitle(el.editorText.innerText || '');
   const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
 body{font:16px/1.65 system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#16181d}img{max-width:100%;border-radius:10px}
-ul[data-checklist]{list-style:none;padding-left:0}ul[data-checklist] li::before{content:"☐ "}ul[data-checklist] li[data-checked="true"]::before{content:"☑ "}
+table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px 10px;text-align:left}ul[data-checklist]{list-style:none;padding-left:0}ul[data-checklist] li::before{content:"☐ "}ul[data-checklist] li[data-checked="true"]::before{content:"☑ "}
 </style></head><body>${clone.innerHTML}</body></html>`;
   downloadText(doc, (title.replace(/[\\/:*?"<>|]+/g, '').slice(0, 60) || 'note') + '.html', 'text/html');
 }
@@ -2192,9 +2207,115 @@ function pasteIntoEditor(e) {
   const html = cd.getData('text/html');
   const text = cd.getData('text/plain');
   e.preventDefault();
+  const o = declutterOpts();
+  if (o && text && De.isAiText(text, html)) {
+    const out = noteFromAi(text, html, o);
+    if (out && out.replace(/<[^>]+>/g, '').trim()) {
+      const sel = getSelection();
+      if (sel.rangeCount && el.editorText.contains(sel.anchorNode)) {
+        // remember where the paste went, so Undo can put the original back there
+        const r = sel.getRangeAt(0);
+        r.deleteContents();
+        const mark = document.createElement('span');
+        mark.setAttribute('data-pmark', '');
+        r.insertNode(mark);
+        const snapshot = el.editorText.innerHTML;
+        const at = document.createRange();
+        at.setStartBefore(mark);
+        at.collapse(true);
+        mark.remove();
+        sel.removeAllRanges();
+        sel.addRange(at);
+        document.execCommand('insertHTML', false, out);
+        onEditorInput();
+        const noteId = ui.noteId;
+        cleanedToast(() => {
+          if (ui.noteId !== noteId) return;
+          setEditorHtml(snapshot);
+          const m = el.editorText.querySelector('[data-pmark]');
+          if (m) {
+            el.editorText.focus();
+            const r2 = document.createRange();
+            r2.setStartBefore(m);
+            r2.collapse(true);
+            m.remove();
+            const s2 = getSelection();
+            s2.removeAllRanges();
+            s2.addRange(r2);
+            if (html) document.execCommand('insertHTML', false, sanitizePaste(html));
+            else document.execCommand('insertText', false, text);
+          }
+          onEditorInput();
+        });
+        return;
+      }
+    }
+  }
   if (html) document.execCommand('insertHTML', false, sanitizePaste(html));
   else if (text) document.execCommand('insertText', false, text);
   onEditorInput();
+}
+
+/* ───── De-clutter: clean text copied from AI chats (no API, on this device) ───── */
+function declutterOpts() {
+  if (ui.rawPasteUntil && Date.now() < ui.rawPasteUntil) { ui.rawPasteUntil = 0; return null; }
+  const st = store.items.get('settings');
+  const v = (st && st.data.declutter) || 'on';
+  return v === 'off' ? null : { punct: v === 'plain' };
+}
+function cleanedToast(undo) {
+  for (const t of $$('.toast', el.toasts)) if (t.firstElementChild && t.firstElementChild.textContent === 'Cleaned AI text') t.remove();
+  toast('Cleaned AI text', undo ? { action: 'Undo', onAction: undo, duration: 6000 } : {});
+}
+function noteFromAi(text, html, o) {
+  if (De.looksMarkdown(text) || !html) return markdownToHtml(De.markdown(text, o));
+  return De.tidyHtml(sanitizePaste(html.replace(/<(\/?)h[4-6](?=[\s>])/gi, '<$1h3')), o);
+}
+/** Text that goes straight into a drop (dragged or pasted outside the box) */
+function declutterDrop(text, html) {
+  const o = declutterOpts();
+  if (!o || !De.isAiText(text, html)) return text.trim();
+  const out = De.plainText(text, o);
+  if (out && out !== text.trim()) cleanedToast(null);
+  return out || text.trim();
+}
+function cleanComposerPaste(e) {
+  const text = e.clipboardData.getData('text/plain');
+  const html = e.clipboardData.getData('text/html');
+  const o = text ? declutterOpts() : null;
+  if (!o || !De.isAiText(text, html)) return false;
+  const out = De.plainText(text, o);
+  if (!out || out === text.trim()) return false;
+  e.preventDefault();
+  const ta = el.composerInput;
+  const before = ta.value;
+  const s = ta.selectionStart;
+  const en = ta.selectionEnd;
+  ta.focus();
+  if (!document.execCommand('insertText', false, out)) ta.setRangeText(out, s, en, 'end');
+  autosize();
+  updateSend();
+  cleanedToast(() => {
+    ta.value = before.slice(0, s) + text + before.slice(en);
+    ta.selectionStart = ta.selectionEnd = s + text.length;
+    autosize();
+    updateSend();
+    ta.focus();
+  });
+  return true;
+}
+function declutterNote() {
+  const before = el.editorText.innerHTML;
+  const o = declutterOpts() || { punct: false };
+  const text = el.editorText.innerText || '';
+  const md = De.looksMarkdown(text) && !el.editorText.querySelector('[data-file], [style]');
+  const out = sanitizeNote(md ? markdownToHtml(De.markdown(text, o)) : De.tidyHtml(before, o));
+  const norm = (h) => h.replace(/\s+/g, ' ').trim();
+  if (!out.replace(/<[^>]+>/g, '').trim() || norm(out) === norm(sanitizeNote(before))) { toast('Nothing to clean here'); return; }
+  setEditorHtml(out);
+  onEditorInput();
+  const noteId = ui.noteId;
+  toast('Note de-cluttered', { action: 'Undo', duration: 6000, onAction: () => { if (ui.noteId === noteId) { setEditorHtml(before); onEditorInput(); } } });
 }
 
 function rangeFromPoint(x, y) {
@@ -2428,6 +2549,7 @@ function openSettings() {
   renderThemeSeg();
   const st = store.items.get('settings');
   el.setAutodel.value = String((st && st.data.autodel) || 0);
+  el.setDeclutter.value = (st && st.data.declutter) || 'on';
   el.installField.hidden = !ui.installPrompt || isStandalone();
   renderOpenWith();
   el.versionText.textContent = `SyncPad ${VERSION} · ${store.get('deviceName')}`;
