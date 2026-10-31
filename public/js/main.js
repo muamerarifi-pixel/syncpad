@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.19.1';
+const VERSION = '2.19.2';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1732,7 +1732,7 @@ function noteHtml(n) {
 }
 
 const NOTE_COLORS = [['red', '#e03131', 'Red'], ['orange', '#f08c00', 'Orange'], ['yellow', '#f5b700', 'Yellow'], ['green', '#2f9e44', 'Green'], ['blue', '#1c7ed6', 'Blue'], ['purple', '#7048e8', 'Purple'], ['pink', '#d6336c', 'Pink']];
-const NOTE_FONTS = [['', 'Default'], ['outfit', 'Outfit — modern'], ['lora', 'Lora — elegant serif'], ['caveat', 'Caveat — handwriting']];
+const NOTE_FONTS = [['', 'Outfit — modern (default)'], ['lora', 'Lora — elegant serif'], ['caveat', 'Caveat — handwriting'], ['system', 'System font']];
 const NOTE_PAPERS = [['', 'Plain'], ['sepia', 'Sepia paper'], ['sepia-lined', 'Sepia, lined']];
 const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -1773,7 +1773,7 @@ function pickMenu(anchor, title, list, cur, apply, at) {
   })), at ? { at } : {});
 }
 function colorPick(n, anchor, at) { pickMenu(anchor, 'Colour', [['', 'No colour', 'transparent'], ...NOTE_COLORS.map(([v, c, l]) => [v, l, c])], n.data.color || '', (v) => setNoteData(n, { color: v || null }), at); }
-function fontPick(n, anchor, at) { pickMenu(anchor, 'Font', NOTE_FONTS, n.data.font || '', (v) => setNoteData(n, { font: v || null }), at); }
+function fontPick(n, anchor, at) { pickMenu(anchor, 'Font', NOTE_FONTS, n.data.font === 'outfit' ? '' : n.data.font || '', (v) => setNoteData(n, { font: v || null }), at); }
 function paperPick(n, anchor, at) { pickMenu(anchor, 'Paper', NOTE_PAPERS, n.data.paper || '', (v) => setNoteData(n, { paper: v || null }), at); }
 function folderPick(n, anchor, at) {
   const fs = noteFolders();

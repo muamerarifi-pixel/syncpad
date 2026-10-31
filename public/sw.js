@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v2.19.1';
+const VERSION = 'v2.19.2';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
@@ -20,7 +20,7 @@ const SHELL = [
   '/js/pdfcore.js',
   '/js/docview.js',
   '/js/docmodel.js',
-  '/js/docedit.js', '/js/declutter.js', '/js/canvas.js', '/js/noteimg.js', '/js/cvexport.js', '/js/textcase.js',
+  '/js/docedit.js', '/js/declutter.js', '/js/canvas.js', '/js/noteimg.js', '/js/cvexport.js', '/js/textcase.js', '/vendor/fonts/outfit-latin-wght-normal.woff2',
   '/vendor/doc/fflate.mjs',
   '/js/md.js',
   '/vendor/marked.esm.js',
@@ -99,7 +99,7 @@ async function shellFirst(req, url) {
 
 async function assetFirst(req, url) {
   const cache = await caches.open(ASSET_CACHE);
-  const hit = await cache.match(url.pathname);
+  const hit = (await cache.match(url.pathname)) || (await caches.match(url.pathname));
   if (hit) return hit;
   const res = await fetch(req);
   if (res.ok && res.type === 'basic') cache.put(url.pathname, res.clone()).catch(() => {});

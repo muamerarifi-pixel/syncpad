@@ -22,6 +22,7 @@ const asImage = (svg) => new Promise((resolve, reject) => {
 });
 let fontCache = {};
 async function fontFace(font) {
+  font = font === 'system' ? '' : font || 'outfit';
   const f = FONT[font];
   if (!f) return '';
   if (!fontCache[font]) {
@@ -66,7 +67,7 @@ export async function render(data, { crop, scale, paper = '', font = '', loadIma
   const ink = INK[paper] || '#16181d';
   const fix = (svg) => ns(svg).replace(/var\(--cv-ink\)/g, ink);
   const face = await fontFace(font);
-  const fam = (FONT[font] || [SYS])[0];
+  const fam = font === 'system' ? SYS : (FONT[font || 'outfit'] || [SYS])[0];
   for (const o of (data && data.items) || []) {
     try {
       if (o.t === 'line') {
@@ -95,7 +96,7 @@ export async function render(data, { crop, scale, paper = '', font = '', loadIma
         ctx.fill();
         ctx.stroke();
         ctx.fillStyle = ink;
-        ctx.font = `600 20px ${SYS}`;
+        ctx.font = `600 20px Outfit, ${SYS}`;
         ctx.textBaseline = 'middle';
         ctx.fillText('📎 ' + (o.name || 'file'), x + 16, 0, o.w - 28);
       } else if (o.t === 'text') {

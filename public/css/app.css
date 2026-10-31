@@ -24,7 +24,7 @@
   --top: 60px;
   --tabbar: 0px;
   --safe-b: env(safe-area-inset-bottom, 0px);
-  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font: Outfit, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
   color-scheme: light;
 }
@@ -1355,3 +1355,6 @@ html, body { overscroll-behavior-x: none; }
 .note-item .d { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ni-badge { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-weight: 600; }
 .ni-badge .ic { width: 13px; height: 13px; }
+
+/* 2.19.2: Outfit is the default everywhere; "System font" is still available per note */
+.editor[data-font="system"] .editor-text, .editor[data-font="system"] .cv-world { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
