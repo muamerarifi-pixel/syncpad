@@ -26,10 +26,10 @@ if (!(await A.isVisible('#editor-text'))) throw new Error('editor hidden');
 await A.reload();
 await A.waitForSelector('.status-chip[data-state="online"]', { timeout: 15000 });
 await A.click('.tab[data-tab="notes"]');
+await A.click('.note-item:has-text("Class 9B")'); // with nothing open the list always shows; once a note is open it stays hidden
 if (await A.isVisible('.notes-pane')) throw new Error('hidden list not remembered');
 if (await A.isVisible('#btn-show-list')) await A.click('#btn-show-list'); else await A.click('#btn-toggle-list');
 await A.waitForSelector('.notes-pane');
-await A.click('.note-item:has-text("Class 9B")');
 await A.keyboard.press('Control+\\');
 if (await A.isVisible('.notes-pane')) throw new Error('Ctrl+\\ did not hide');
 await A.screenshot({ path: `${OUT}/140-list-hidden.png` });

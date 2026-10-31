@@ -27,6 +27,7 @@ await P.goto(BASE + '/');
 await P.waitForSelector('.toast >> text=Moved 1 note', { timeout: 10000 });
 await P.click('.tab[data-tab="notes"]');
 await P.waitForSelector('.note-item >> text=Old lesson plan');
+await P.click('.note-item >> text=Old lesson plan');
 await P.waitForFunction(() => { const i = document.querySelector('#editor-text img[data-file]'); return i && i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
 await P.waitForSelector('#editor-text h1 >> text=Old lesson plan');
 step('v1 note + embedded image imported, image renders from cloud');

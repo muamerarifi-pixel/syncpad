@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.16.0';
+const VERSION = '2.17.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -695,11 +695,7 @@ function setTab(tab) {
     ui.stickBottom = true;
     renderDrops();
   } else {
-    renderNotesList();
-    if (!isMobileLayout() && !ui.noteId) {
-      const first = notesSorted()[0];
-      if (first) openNote(first.id, { focus: false });
-    }
+    renderNotesList(); // the list (or grid) first; a note opens only when you pick one
   }
 }
 function renderTabs() {
@@ -2054,9 +2050,10 @@ function closeEditor(fromLayer = false) {
   if (isMobileLayout()) {
     el.app.classList.remove('editing');
     if (!fromLayer) closeLayer('editor');
-    ui.noteId = null;
   }
+  ui.noteId = null;
   ui.newNote = null;
+  renderEditor(true);
   renderNotesList();
 }
 
@@ -2067,9 +2064,11 @@ function renderEditor(force) {
     ui.noteId = null;
     n = null;
   }
+  el.app.classList.toggle('note-open', !!n);
   if (!n) {
     el.editor.hidden = true;
     el.editorEmpty.hidden = false;
+    if (ui.canvas) ui.canvas.layout();
     return;
   }
   el.editor.hidden = false;

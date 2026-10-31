@@ -187,6 +187,7 @@ function place(e, o) {
 
 export { shapeSvg, lineSvg, penSvg, lineGeom, extent };
 export function pageHeight(data) {
+  if (data && data.page) return data.page.h;
   let h = MIN_H;
   for (const o of (data && data.items) || []) { const b = extent(o); h = Math.max(h, b.y + b.h + 320); }
   return Math.ceil(h);
@@ -198,9 +199,12 @@ export function renderStatic(host, data, { fileSrc, sanitize }) {
   const world = host.querySelector('.cv-world');
   const items = (data && data.items) || [];
   for (const o of items) world.appendChild(drawItem(o, fileSrc, sanitize));
-  const h = Math.max(600, ...items.map((o) => { const b = extent(o); return b.y + b.h + 40; }));
+  const pw = (data && data.page && data.page.w) || W;
+  const h = data && data.page ? data.page.h : Math.max(600, ...items.map((o) => { const b = extent(o); return b.y + b.h + 40; }));
+  world.style.width = pw + 'px';
+  if (data && data.page) world.style.overflow = 'hidden';
   const fit = () => {
-    const s = Math.min(1, (host.clientWidth || 600) / W);
+    const s = Math.min(1, (host.clientWidth || 600) / pw);
     world.style.transform = `scale(${s})`;
     world.style.height = h + 'px';
     host.firstElementChild.style.height = h * s + 'px';
@@ -322,16 +326,20 @@ export class NoteCanvas {
   load(data, keepSel = false) {
     const sel = keepSel ? this.sel : null;
     if (this.editing) this.stopEdit(true);
+    this.cropping = null;
+    this.page = data && data.page ? { ...data.page } : null;
     this.items = JSON.parse(JSON.stringify((data && data.items) || []));
     if (!keepSel) { this.undoStack = []; this.redoStack = []; }
     this.sel = sel && this.items.some((o) => o.id === sel) ? sel : null;
     this.renderAll();
   }
-  data() { return { v: 1, items: JSON.parse(JSON.stringify(this.items)) }; }
+  data() { return { v: 1, items: JSON.parse(JSON.stringify(this.items)), ...(this.page ? { page: { ...this.page } } : {}) }; }
+  get PW() { return this.page ? this.page.w : W; }
   get(id) { return this.items.find((o) => o.id === id); }
   elOf(id) { return this.world.querySelector(`.cv-obj[data-id="${id}"]`); }
 
-  snapshot() { return JSON.stringify(this.items); }
+  snapshot() { return JSON.stringify({ items: this.items, page: this.page }); }
+  restoreSnap(s) { const d = JSON.parse(s); if (Array.isArray(d)) { this.items = d; } else { this.items = d.items; this.page = d.page || null; } }
   /** Call before a change: remembers the state for Undo */
   remember() {
     this.undoStack.push(this.snapshot());
@@ -344,7 +352,7 @@ export class NoteCanvas {
     const s = this.undoStack.pop();
     if (s == null) return;
     this.redoStack.push(this.snapshot());
-    this.items = JSON.parse(s);
+    this.restoreSnap(s);
     if (this.sel && !this.get(this.sel)) this.sel = null;
     this.renderAll();
     this.onChange && this.onChange();
@@ -353,7 +361,7 @@ export class NoteCanvas {
     const s = this.redoStack.pop();
     if (s == null) return;
     this.undoStack.push(this.snapshot());
-    this.items = JSON.parse(s);
+    this.restoreSnap(s);
     if (this.sel && !this.get(this.sel)) this.sel = null;
     this.renderAll();
     this.onChange && this.onChange();
@@ -379,19 +387,22 @@ export class NoteCanvas {
   }
   measureTexts() { for (const o of this.items) if (o.t === 'text') { const e = this.elOf(o.id); if (e) o.h = e.offsetHeight; } }
   pageHeight() {
+    if (this.page) return this.page.h;
     let h = MIN_H;
     for (const o of this.items) { const b = extent(o); h = Math.max(h, b.y + b.h + 320); }
     return Math.ceil(h);
   }
   layout() {
     const avail = Math.max(200, this.scroll.clientWidth - 24);
-    this.base = Math.min(avail, 900) / W;
+    this.base = Math.min(avail / this.PW, 900 / W);
     this.s = this.base * this.zoom;
     this.H = this.pageHeight();
+    this.world.style.width = this.PW + 'px';
     this.world.style.height = this.H + 'px';
+    this.world.classList.toggle('cropped', !!this.page && !this.cropping);
     this.world.style.transform = `scale(${this.s})`;
     this.world.style.setProperty('--k', String(1 / this.s));
-    this.stage.style.width = W * this.s + 'px';
+    this.stage.style.width = this.PW * this.s + 'px';
     this.stage.style.height = this.H * this.s + 'px';
   }
   setZoom(z, at) {
@@ -426,7 +437,7 @@ export class NoteCanvas {
   centre() {
     const r = this.scroll.getBoundingClientRect();
     const p = this.pt({ clientX: r.left + r.width / 2, clientY: r.top + Math.min(r.height / 2, 320) });
-    return { x: clamp(p.x, 120, W - 120), y: Math.max(80, p.y) };
+    return { x: clamp(p.x, Math.min(120, this.PW / 2), Math.max(this.PW - 120, this.PW / 2)), y: clamp(Math.max(80, p.y), 0, this.page ? Math.max(40, this.page.h - 60) : 1e9) };
   }
 
   renderSel() {
@@ -457,14 +468,14 @@ export class NoteCanvas {
   add(o, at, exact) {
     this.remember();
     const c = at || this.centre();
-    if (exact && o.t !== 'line') { o.w = Math.min(o.w, W - Math.max(0, c.x)); c.x += o.w / 2; c.y += (o.h || 40) / 2; }
+    if (exact && o.t !== 'line') { o.w = Math.max(80, Math.min(o.w, this.PW - Math.max(0, c.x))); c.x += o.w / 2; c.y += (o.h || 40) / 2; }
     o.id = uid();
     if (o.t === 'line') {
       const dx = (o.x2 || 0) - (o.x1 || 0);
       const dy = (o.y2 || 0) - (o.y1 || 0);
       o.x1 = c.x - dx / 2; o.y1 = c.y - dy / 2; o.x2 = c.x + dx / 2; o.y2 = c.y + dy / 2;
     } else {
-      o.x = clamp(c.x - o.w / 2, 0, W - o.w);
+      o.x = clamp(c.x - o.w / 2, 0, Math.max(0, this.PW - o.w));
       o.y = Math.max(0, c.y - (o.h || 40) / 2);
     }
     // don't land exactly on top of something just added
@@ -543,7 +554,7 @@ export class NoteCanvas {
     t.contentEditable = 'false';
     const html = this.sanitize(t.innerHTML).replace(/^(<br>)+$/, '');
     if (!html.replace(/<[^>]+>/g, '').trim() && !/<img/.test(html)) {
-      const fresh = this.editBefore && !JSON.parse(this.editBefore).find((q) => q.id === id && (q.html || '').replace(/<[^>]+>/g, '').trim());
+      const fresh = this.editBefore && !JSON.parse(this.editBefore).items.find((q) => q.id === id && (q.html || '').replace(/<[^>]+>/g, '').trim());
       this.items = this.items.filter((q) => q.id !== id);
       e.remove();
       if (this.sel === id) this.sel = null;
@@ -698,7 +709,7 @@ export class NoteCanvas {
   /** Snap the moving box to the page centre and other items' edges/centres */
   snap(b, skip) {
     const tol = 7 / this.s;
-    const xs = [W / 2];
+    const xs = [this.PW / 2];
     const ys = [];
     for (const q of this.items) {
       if (q.id === skip) continue;
@@ -793,7 +804,7 @@ export class NoteCanvas {
     pts.push([p.x, p.y]);
     const tmp = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     tmp.setAttribute('class', 'cv-ink-live');
-    tmp.setAttribute('width', W);
+    tmp.setAttribute('width', this.PW);
     tmp.setAttribute('height', this.H);
     tmp.innerHTML = `<path style="fill:none;stroke:${ink(this.pen.stroke)};stroke-width:${this.pen.sw}px;stroke-linecap:round;stroke-linejoin:round"/>`;
     this.world.appendChild(tmp);
@@ -859,6 +870,7 @@ export class NoteCanvas {
   /* ───── keyboard, clipboard ───── */
   key(e) {
     const mod = e.ctrlKey || e.metaKey;
+    if (this.cropping && (e.key === 'Escape' || e.key === 'Enter')) { e.preventDefault(); e.stopPropagation(); this.endCrop(e.key === 'Enter'); return; }
     if (this.editing) {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.stopEdit(); this.world.focus({ preventScroll: true }); }
       return;
@@ -977,7 +989,7 @@ export class NoteCanvas {
     this.bar.innerHTML =
       `<div class="cv-tools">${b('text', 'text', 'Text box')}${b('shapes', 'square', 'Shapes', 'data-pop')}${b('lines', 'arrow', 'Lines and arrows', 'data-pop')}` +
       `<button class="icon-btn sm cv-emoji-btn" data-cv="emoji" data-pop title="Emoji" aria-label="Emoji">🙂</button>${b('pic', 'image', 'Picture')}${b('pen', 'pen', 'Draw')}` +
-      '<span class="fmt-sep"></span>' + b('undo', 'undo', 'Undo (Ctrl+Z)') + b('redo', 'redo', 'Redo (Ctrl+Y)') + b('export', 'download', 'Save as PNG or PDF') + '</div>' +
+      '<span class="fmt-sep"></span>' + b('undo', 'undo', 'Undo (Ctrl+Z)') + b('redo', 'redo', 'Redo (Ctrl+Y)') + b('page', 'crop', 'Crop the page (cut blank space, any shape)') + b('export', 'download', 'Save as PNG or PDF') + '</div>' +
       '<div class="cv-props"></div>';
     this.props = this.bar.querySelector('.cv-props');
     this.bar.addEventListener('mousedown', (e) => { if (e.target.closest('button') && this.editing) e.preventDefault(); });
@@ -988,6 +1000,11 @@ export class NoteCanvas {
       const o = this.get(this.sel);
       switch (c) {
         case 'text': this.setTool(this.tool === 'text' ? null : 'text'); break;
+        case 'page': this.startCrop(); break;
+        case 'crop-fit': this.cropTo(this.contentRect()); break;
+        case 'crop-all': this.cropTo({ x: 0, y: 0, w: W, h: Math.max(MIN_H, ...this.items.map((q) => { const b = extent(q); return b.y + b.h + 320; })) }); break;
+        case 'crop-done': this.endCrop(true); break;
+        case 'crop-cancel': this.endCrop(false); break;
         case 'export': this.setTool(null); if (this.editing) this.stopEdit(); this.onExport && this.onExport(); break;
         case 'open': if (o && this.onOpen) this.onOpen(o.file); break;
         case 'case': this.textCase(); break;
@@ -1021,6 +1038,82 @@ export class NoteCanvas {
       }
     });
   }
+  /* ───── crop the page itself (any aspect ratio) ───── */
+  contentRect(margin = 30) {
+    if (!this.items.length) return { x: 0, y: 0, w: this.PW, h: this.H };
+    let x1 = Infinity; let y1 = Infinity; let x2 = -Infinity; let y2 = -Infinity;
+    for (const o of this.items) {
+      let b = extent(o);
+      if (o.t === 'line') { const g = lineGeom(o); b = { x: g.left + g.pad - 6, y: g.top + g.pad - 6, w: g.w - 2 * g.pad + 12, h: g.h - 2 * g.pad + 12 }; }
+      x1 = Math.min(x1, b.x); y1 = Math.min(y1, b.y); x2 = Math.max(x2, b.x + b.w); y2 = Math.max(y2, b.y + b.h);
+    }
+    return { x: x1 - margin, y: y1 - margin, w: x2 - x1 + 2 * margin, h: y2 - y1 + 2 * margin };
+  }
+  startCrop() {
+    if (this.cropping) { this.endCrop(true); return; }
+    if (this.editing) this.stopEdit();
+    this.setTool(null);
+    this.select(null);
+    this.cropping = { x: 0, y: 0, w: this.PW, h: this.H };
+    this.world.classList.remove('cropped');
+    const c = document.createElement('div');
+    c.className = 'cv-pagecrop';
+    c.innerHTML = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'].map((h) => `<i class="cv-ph" data-ph="${h}"></i>`).join('');
+    this.world.appendChild(c);
+    this.cropEl = c;
+    c.addEventListener('pointerdown', (e) => this.dragCrop(e));
+    this.drawCrop();
+    this.syncBar();
+  }
+  cropTo(r) { if (!this.cropping) return; this.cropping = { ...r }; this.drawCrop(); }
+  drawCrop() {
+    const r = this.cropping;
+    Object.assign(this.cropEl.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
+    // let the page grow while cropping outward
+    const need = Math.max(this.H, r.y + r.h + 40);
+    if (need > this.H || r.x + r.w > this.PW) {
+      this.world.style.height = need + 'px';
+      this.stage.style.height = need * this.s + 'px';
+    }
+  }
+  dragCrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const h = e.target.dataset.ph || 'move';
+    const r0 = { ...this.cropping };
+    const p0 = this.pt(e);
+    this.track(e, (ev) => {
+      const p = this.pt(ev);
+      const dx = p.x - p0.x;
+      const dy = p.y - p0.y;
+      let { x, y, w, h: hh } = r0;
+      if (h === 'move') { x += dx; y += dy; } else {
+        if (h.includes('w')) { const nx = Math.min(x + dx, x + w - 60); w += x - nx; x = nx; }
+        if (h.includes('e')) w = Math.max(60, w + dx);
+        if (h.includes('n')) { const ny = Math.min(y + dy, y + hh - 60); hh += y - ny; y = ny; }
+        if (h.includes('s')) hh = Math.max(60, hh + dy);
+      }
+      this.cropping = { x, y, w, h: hh };
+      this.drawCrop();
+    }, () => {});
+  }
+  endCrop(apply) {
+    const r = this.cropping;
+    this.cropping = null;
+    if (this.cropEl) { this.cropEl.remove(); this.cropEl = null; }
+    if (apply && r) {
+      this.remember();
+      const dx = -Math.round(r.x);
+      const dy = -Math.round(r.y);
+      if (dx || dy) for (const o of this.items) this.move(o, dx, dy);
+      this.page = { w: Math.round(r.w), h: Math.round(r.h) };
+      this.renderAll();
+      this.onChange && this.onChange();
+      if (this.toast) this.toast(`Page cropped to ${this.page.w} × ${this.page.h}`);
+    } else this.layout();
+    this.syncBar();
+  }
+
   textCase() {
     const o = this.get(this.sel);
     if (!o || o.t !== 'text') return;
@@ -1057,6 +1150,13 @@ export class NoteCanvas {
     const ic = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
     const sw = (c, cls = '') => `<span class="cv-swatch ${cls}" style="--c:${c === 'none' ? 'transparent' : c || 'var(--cv-ink)'}"></span>`;
     let h = '';
+    for (const b of this.bar.querySelectorAll('[data-cv="page"]')) b.setAttribute('aria-pressed', String(!!this.cropping));
+    if (this.cropping) {
+      this.props.innerHTML = '<span class="fmt-sep"></span><span class="cv-crop-hint">Drag the edges to crop</span>' +
+        '<button class="btn btn-soft btn-sm" data-cv="crop-fit">Fit to content</button><button class="btn btn-soft btn-sm" data-cv="crop-all">Whole page</button>' +
+        '<button class="btn btn-soft btn-sm" data-cv="crop-cancel">Cancel</button><button class="btn btn-primary btn-sm" data-cv="crop-done">Done</button>';
+      return;
+    }
     if (pen && !o) h = btn('color', sw(this.pen.stroke), 'Pen colour') + btn('width', '<b class="cv-w">' + this.pen.sw + '</b>', 'Pen size');
     else if (o) {
       if (o.t === 'text') {

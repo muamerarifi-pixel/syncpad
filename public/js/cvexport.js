@@ -42,8 +42,10 @@ export function contentBox(data, margin = 30) {
     x1 = Math.min(x1, b.x); y1 = Math.min(y1, b.y); x2 = Math.max(x2, b.x + b.w); y2 = Math.max(y2, b.y + b.h);
   }
   x1 = Math.max(0, x1 - margin); y1 = Math.max(0, y1 - margin);
-  x2 = Math.min(1000, x2 + margin);
-  return { x: x1, y: y1, w: Math.max(20, x2 - x1), h: Math.max(20, y2 + margin - y1) };
+  const pw = (data.page && data.page.w) || 1000;
+  x2 = Math.min(pw, x2 + margin);
+  const y3 = data.page ? Math.min(data.page.h, y2 + margin) : y2 + margin;
+  return { x: x1, y: y1, w: Math.max(20, x2 - x1), h: Math.max(20, y3 - y1) };
 }
 
 /** Draws the canvas (only the crop) onto a <canvas> at `scale` pixels per page unit */
@@ -146,10 +148,11 @@ export function openExport({ data, title, paper, font, loadImage, sanitize, save
   const img = dlg.querySelector('.cvx-img');
   const box = dlg.querySelector('.cvx-crop');
   const size = dlg.querySelector('.cvx-size');
-  const H = Math.max(400, pageHeight(data) - 200);
-  const page = { x: 0, y: 0, w: 1000, h: H };
-  let crop = contentBox(data);
-  const k = () => img.clientWidth / 1000;
+  const PW = (data.page && data.page.w) || 1000;
+  const H = data.page ? data.page.h : Math.max(400, pageHeight(data) - 200);
+  const page = { x: 0, y: 0, w: PW, h: H };
+  let crop = data.page ? { ...page } : contentBox(data);
+  const k = () => img.clientWidth / PW;
   const draw = () => {
     Object.assign(box.style, { left: crop.x * k() + 'px', top: crop.y * k() + 'px', width: crop.w * k() + 'px', height: crop.h * k() + 'px' });
     size.textContent = `${Math.round(crop.w * 2)} × ${Math.round(crop.h * 2)} px`;
@@ -167,10 +170,10 @@ export function openExport({ data, title, paper, font, loadImage, sanitize, save
       const dx = (ev.clientX - x0) / k();
       const dy = (ev.clientY - y0) / k();
       let { x, y, w, h: hh } = c0;
-      if (mode === 'move') { x = Math.min(Math.max(0, x + dx), 1000 - w); y = Math.min(Math.max(0, y + dy), H - hh); }
+      if (mode === 'move') { x = Math.min(Math.max(0, x + dx), PW - w); y = Math.min(Math.max(0, y + dy), H - hh); }
       else {
         if (mode.includes('w')) { const nx = Math.min(Math.max(0, x + dx), x + w - 20); w += x - nx; x = nx; }
-        if (mode.includes('e')) w = Math.min(Math.max(20, w + dx), 1000 - x);
+        if (mode.includes('e')) w = Math.min(Math.max(20, w + dx), PW - x);
         if (mode.includes('n')) { const ny = Math.min(Math.max(0, y + dy), y + hh - 20); hh += y - ny; y = ny; }
         if (mode.includes('s')) hh = Math.min(Math.max(20, hh + dy), H - y);
       }
