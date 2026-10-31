@@ -14,7 +14,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '2.21.0';
+const VERSION = '2.22.0';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -133,7 +133,7 @@ export default {
       if (p === '/api/push/key') return json({ key: (await globalStub(env).vapid()).pub });
       if (p === '/api/link') {
         if (!KEY_RE.test(url.searchParams.get('s') || '')) return json({ error: 'forbidden' }, 403);
-        return json(await getLinkPreview(url.searchParams.get('url') || ''));
+        return json(await getLinkPreview(url.searchParams.get('url') || '', { image: url.searchParams.has('img') }));
       }
 
       const m = p.match(ROUTE);

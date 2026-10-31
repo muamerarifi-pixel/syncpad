@@ -207,7 +207,7 @@ export function extractHtmlMetadata(html, targetUrl) {
  * Fetch a public web page and return a small, text-only preview.
  * No images are proxied, so the worker can't be used as an open image proxy.
  */
-export async function getLinkPreview(target) {
+export async function getLinkPreview(target, opts = {}) {
   let parsed;
   try { parsed = new URL(target); } catch { return { error: 'invalid' }; }
   if (!['http:', 'https:'].includes(parsed.protocol) || isPrivateOrLocalHost(parsed.hostname)) return { error: 'blocked' };
@@ -237,16 +237,43 @@ export async function getLinkPreview(target) {
     try { reader.cancel(); } catch {}
     const html = new TextDecoder().decode(concat(chunks));
     const meta = extractHtmlMetadata(html, parsed.href);
-    return {
+    const out = {
       title: String(meta.title || '').slice(0, 200),
       site: String(meta.siteName || site).slice(0, 80),
       desc: String(meta.description || '').slice(0, 300)
     };
+    if (opts.image && meta.image) out.image = await smallImage(meta.image, controller.signal);
+    return out;
   } catch {
     return { error: 'unreachable' };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The page's preview picture as a data URL (only images, at most 600 KB) — the app shrinks it to a thumbnail */
+async function smallImage(src, signal) {
+  try {
+    const u = new URL(src);
+    if (!['http:', 'https:'].includes(u.protocol) || isPrivateOrLocalHost(u.hostname)) return '';
+    const res = await safeFetchWithRedirects(u.href, { signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SyncPadPreview/2.0)', 'Accept': 'image/*' } });
+    const type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!res.ok || !/^image\/(png|jpe?g|webp|gif|avif)$/.test(type)) return '';
+    const reader = res.body.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > 614400) { try { reader.cancel(); } catch {} return ''; }
+      chunks.push(value);
+    }
+    const bytes = concat(chunks);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return `data:${type};base64,${btoa(bin)}`;
+  } catch { return ''; }
 }
 
 function concat(parts) {

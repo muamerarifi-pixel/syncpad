@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.21.0';
+const VERSION = '2.22.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -331,6 +331,10 @@ function wire() {
   });
   try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch {}
   el.editorText.addEventListener('input', onEditorInput);
+  el.editorText.addEventListener('input', (e) => {
+    // a link typed in a note becomes a real link once you press space or Enter
+    if (e.inputType === 'insertParagraph' || (e.inputType === 'insertText' && /\s/.test(e.data || ''))) autoLink(e.inputType === 'insertParagraph');
+  });
   el.editorText.addEventListener('blur', () => saveNote.flush());
   el.editorText.addEventListener('keydown', onEditorKey);
   el.editorText.addEventListener('click', onEditorClick);
@@ -946,6 +950,7 @@ function cardNode(it) {
 function thumbHTML(it) {
   if (it.kind === 'clip') {
     const url = singleUrl(it.data.text || '');
+    if (url && it.data.link && it.data.link.thumb) return `<img src="${esc(it.data.link.thumb)}" alt="" draggable="false" decoding="async">`;
     return `<span class="ti" data-k="${url ? 'link' : 'text'}"><svg class="ic"><use href="#i-${url ? 'link' : 'note'}"/></svg></span>`;
   }
   const d = it.data;
@@ -1721,15 +1726,164 @@ async function sendClip(text, folder = currentFolder()) {
 
 async function linkPreview(id, url) {
   try {
-    const r = await fetch(`/api/link?s=${store.get('space')}&url=${encodeURIComponent(url)}`);
-    const j = await r.json();
+    const j = await linkPreviewData(url);
     const cur = store.items.get(id);
-    if (!cur || !j || !(j.title || j.desc)) return;
-    cur.data = { ...cur.data, link: { title: j.title, site: j.site, desc: j.desc } };
+    if (!cur || !j || !(j.title || j.desc || j.thumb)) return;
+    cur.data = { ...cur.data, link: { title: j.title, site: j.site, desc: j.desc, ...(j.thumb ? { thumb: j.thumb } : {}) } };
     await store.save(cur);
     sync.schedule();
   } catch {}
 }
+/** title, site and a small picture for a web link (picture shrunk on this device to ~8 KB) */
+const previewCache = new Map();
+function linkPreviewData(url) {
+  if (!previewCache.has(url)) {
+    previewCache.set(url, (async () => {
+      const r = await fetch(`/api/link?s=${store.get('space')}&img=1&url=${encodeURIComponent(url)}`);
+      const j = await r.json();
+      if (!j || j.error) return null;
+      const thumb = j.image ? await shrinkImage(j.image, 160) : '';
+      return { title: j.title || '', site: j.site || '', desc: j.desc || '', thumb };
+    })().catch(() => { previewCache.delete(url); return null; }));
+  }
+  return previewCache.get(url);
+}
+function shrinkImage(src, max) {
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => {
+      try {
+        const k = Math.min(1, max / Math.max(im.naturalWidth || 1, im.naturalHeight || 1));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(im.naturalWidth * k));
+        c.height = Math.max(1, Math.round(im.naturalHeight * k));
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        let d = c.toDataURL('image/webp', 0.72);
+        if (!d.startsWith('data:image/webp')) d = c.toDataURL('image/jpeg', 0.72);
+        resolve(d.length < 60000 ? d : '');
+      } catch { resolve(''); }
+    };
+    im.onerror = () => resolve('');
+    im.src = src;
+  });
+}
+
+/* ───── links in notes: typed or pasted links become real links, with a small preview card ───── */
+const URL_RE = /(^|[\s(\[{"'])((?:https?:\/\/|www\.)[^\s<>"'`]+[^\s<>"'`.,;:!?)\]}])/gi;
+function linkifyIn(root) {
+  const made = [];
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement && n.parentElement.closest('a, code, pre, .link-card') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT)
+  });
+  const nodes = [];
+  while (w.nextNode()) nodes.push(w.currentNode);
+  for (const tn of nodes) {
+    const t = tn.nodeValue;
+    URL_RE.lastIndex = 0;
+    let m;
+    let last = 0;
+    const frag = document.createDocumentFragment();
+    while ((m = URL_RE.exec(t))) {
+      const start = m.index + m[1].length;
+      frag.append(t.slice(last, start));
+      const a = document.createElement('a');
+      a.href = /^www\./i.test(m[2]) ? 'https://' + m[2] : m[2];
+      a.textContent = m[2];
+      frag.append(a);
+      made.push(a);
+      last = start + m[2].length;
+    }
+    if (!last) continue;
+    frag.append(t.slice(last));
+    tn.replaceWith(frag);
+  }
+  return made;
+}
+function topBlock(n) {
+  while (n && n.parentNode && n.parentNode !== el.editorText) n = n.parentNode;
+  return n && n.parentNode === el.editorText ? n : null;
+}
+function autoLink(prevToo) {
+  const s = getSelection();
+  if (!s.rangeCount) return;
+  const blk = topBlock(s.anchorNode);
+  const blocks = [];
+  if (blk && blk.nodeType === 1) blocks.push(blk); else if (blk) blocks.push(el.editorText);
+  if (prevToo && blk && blk.previousElementSibling) blocks.push(blk.previousElementSibling);
+  const off = caretOffset();
+  let made = [];
+  for (const b of blocks) made = made.concat(linkifyIn(b));
+  if (!made.length) return;
+  if (off != null) setCaretOffset(off);
+  onEditorInput();
+  for (const a of made.slice(0, 3)) addLinkCard(a);
+}
+function linkifyAfterPaste() {
+  const off = caretOffset();
+  const made = linkifyIn(el.editorText);
+  if (!made.length) return;
+  if (off != null) setCaretOffset(off);
+  onEditorInput();
+  if (made.length <= 3) for (const a of made) addLinkCard(a);
+}
+async function addLinkCard(a) {
+  if (!navigator.onLine || !a.isConnected) return;
+  const url = a.href;
+  if ([...el.editorText.querySelectorAll('a.link-card')].some((c) => c.href === url)) return;
+  const noteId = ui.noteId;
+  const p = await linkPreviewData(url);
+  if (!p || !(p.title || p.thumb) || ui.noteId !== noteId || !a.isConnected) return;
+  if ([...el.editorText.querySelectorAll('a.link-card')].some((c) => c.href === url)) return;
+  const blk = topBlock(a);
+  if (!blk) return;
+  let host = '';
+  try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+  const card = document.createElement('a');
+  card.className = 'link-card';
+  card.href = url;
+  card.target = '_blank';
+  card.rel = 'noopener noreferrer';
+  card.contentEditable = 'false';
+  card.innerHTML = `${p.thumb ? `<img class="lc-img" src="${esc(p.thumb)}" alt="">` : ''}<span class="lc-t">${esc(p.title || host)}</span><span class="lc-d">${esc(p.site || host)}</span>`;
+  blk.after(card);
+  if (!card.nextSibling) { const q = document.createElement('p'); q.innerHTML = '<br>'; card.after(q); }
+  onEditorInput();
+}
+function showLinkBubble(a) {
+  let b = ui.linkBubble;
+  if (!b) {
+    b = document.createElement('div');
+    b.className = 'link-bubble';
+    b.innerHTML = '<a class="lb-open" target="_blank" rel="noopener noreferrer"><svg class="ic"><use href="#i-link"/></svg><span class="lb-url"></span></a>' +
+      '<button class="icon-btn sm" data-lb="copy" title="Copy link" aria-label="Copy link"><svg class="ic"><use href="#i-copy"/></svg></button>' +
+      '<button class="icon-btn sm" data-lb="unlink" title="Remove link" aria-label="Remove link"><svg class="ic"><use href="#i-x"/></svg></button>';
+    document.body.appendChild(b);
+    b.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+    b.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-lb]');
+      const link = ui.linkFor;
+      if (e.target.closest('.lb-open')) { setTimeout(hideLinkBubble, 50); return; }
+      if (!btn || !link) return;
+      if (btn.dataset.lb === 'copy') { await copyText(link.href); toast('Link copied'); }
+      else if (link.isConnected) { link.replaceWith(...link.childNodes); onEditorInput(); }
+      hideLinkBubble();
+    });
+    document.addEventListener('pointerdown', (e) => { if (ui.linkBubble && !ui.linkBubble.hidden && !ui.linkBubble.contains(e.target) && !(e.target.closest && e.target.closest('#editor-text a[href]'))) hideLinkBubble(); }, true);
+    el.editorText.addEventListener('scroll', hideLinkBubble, { passive: true });
+    el.editorText.addEventListener('keydown', hideLinkBubble);
+    ui.linkBubble = b;
+  }
+  ui.linkFor = a;
+  const open = b.querySelector('.lb-open');
+  open.href = a.href;
+  b.querySelector('.lb-url').textContent = a.href.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '').slice(0, 48) + ' ↗';
+  b.hidden = false;
+  const r = a.getBoundingClientRect();
+  const bw = b.offsetWidth;
+  b.style.left = Math.max(8, Math.min(innerWidth - bw - 8, r.left)) + 'px';
+  b.style.top = (r.bottom + 6 + b.offsetHeight > innerHeight ? r.top - b.offsetHeight - 6 : r.bottom + 6) + 'px';
+}
+function hideLinkBubble() { if (ui.linkBubble) ui.linkBubble.hidden = true; }
 
 async function sendFiles(list, folder) {
   if (!list.length) return;
@@ -2296,6 +2450,7 @@ function setEditorHtml(html) {
 function hydrateFiles(root) {
   for (const img of $$('img[data-file]', root)) if (!img.getAttribute('src')) img.src = files.src(img.dataset.file);
   for (const a of $$('a[data-file]', root)) { a.setAttribute('contenteditable', 'false'); a.removeAttribute('href'); }
+  for (const a of $$('a.link-card', root)) a.setAttribute('contenteditable', 'false');
 }
 function updateEmpty() {
   const ed = el.editorText;
@@ -2904,7 +3059,8 @@ function onEditorClick(e) {
     return;
   }
   const a = e.target.closest('a[href]');
-  if (a && (e.ctrlKey || e.metaKey)) { e.preventDefault(); window.open(a.href, '_blank', 'noopener'); }
+  if (a && (e.ctrlKey || e.metaKey || a.classList.contains('link-card'))) { e.preventDefault(); window.open(a.href, '_blank', 'noopener'); }
+  else if (a) showLinkBubble(a);
 }
 
 async function attachToNote(list, point, at) {
@@ -2977,6 +3133,7 @@ function pasteIntoEditor(e) {
   if (html) document.execCommand('insertHTML', false, sanitizePaste(html));
   else if (text) document.execCommand('insertText', false, text);
   onEditorInput();
+  linkifyAfterPaste();
 }
 
 /* ───── De-clutter: clean text copied from AI chats (no API, on this device) ───── */
