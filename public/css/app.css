@@ -1358,3 +1358,10 @@ html, body { overscroll-behavior-x: none; }
 
 /* 2.19.2: Outfit is the default everywhere; "System font" is still available per note */
 .editor[data-font="system"] .editor-text, .editor[data-font="system"] .cv-world { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+
+/* 2.20: right swipe = Archive (green), left swipe = Trash (red) */
+.note-item.swiping[data-swipe="right"]::after { content: "Archive"; color: var(--ok); left: -70px; }
+.app .note-list:has(.note-item) .note-item.swiping[data-swipe="right"] { box-shadow: -6px 0 0 var(--ok); }
+.note-item.swiping[data-swipe="left"] { box-shadow: 6px 0 0 var(--danger); }
+.note-item.ctx { background: var(--accent-soft); }
+.note-list.in-archive .note-item.swiping[data-swipe="right"]::after { content: "Restore"; }

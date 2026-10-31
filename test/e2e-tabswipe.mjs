@@ -51,11 +51,11 @@ if ((await tab(P)) !== 'notes') throw new Error('phone → notes');
 await P.click('#fab-new-note'); await P.keyboard.type('Keep me'); await P.click('#btn-editor-back');
 await P.waitForSelector('.note-item:has-text("Keep me")');
 const nb = await P.locator('.note-item:has-text("Keep me")').boundingBox();
-await swipe(60, 330, nb.y + nb.height / 2); // right swipe on a note: back to Drops, the note stays
+await swipe(60, 330, Math.max(nb.y + nb.height + 120, 640)); // right swipe on empty space: back to Drops
 if ((await tab(P)) !== 'drops') throw new Error('phone → drops');
 await swipe(330, 60);
 if (!(await P.isVisible('.note-item:has-text("Keep me")'))) throw new Error('note was deleted by a right swipe');
-step('Phone: swipe left → Notes, right → Drops (also on top of a note, which stays)');
+step('Phone: swipe left → Notes, right → Drops (on a note, swipes archive / trash it instead)');
 
 if (errors.length) { console.log(errors); throw new Error('page errors'); }
 await browser.close();

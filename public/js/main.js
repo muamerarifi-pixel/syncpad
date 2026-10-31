@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.19.2';
+const VERSION = '2.20.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -312,6 +312,7 @@ function wire() {
   el.noteList.addEventListener('click', (e) => {
     const b = e.target.closest('.note-item');
     if (ui.swiped && Date.now() - ui.swiped < 400) return;
+    if (ui.blockClick) { ui.blockClick = false; return; }
     if (b) openNote(b.dataset.id);
   });
   el.tagChips.addEventListener('click', (e) => {
@@ -353,6 +354,7 @@ function wire() {
     e.preventDefault();
     e.stopPropagation();
     c.classList.remove('drop-on');
+    if (c.dataset.nf === 'archive') { archiveNote(store.items.get(id), true); return; }
     moveNoteToFolder(store.items.get(id), c.dataset.nf === 'all' ? null : c.dataset.nf);
   });
   el.noteList.addEventListener('dragstart', (e) => {
@@ -1494,16 +1496,26 @@ function onNoteListContext(e) {
   e.preventDefault();
   const n = store.items.get(b.dataset.id);
   if (!n) return;
+  noteItemMenu(b, n, { x: e.clientX, y: e.clientY });
+}
+function noteItemMenu(b, n, at) {
   b.classList.add('ctx');
   ui.ctxNode = b;
   openMenu(null, [
     { icon: 'note', label: 'Open', run: () => openNote(n.id) },
-    { icon: 'pin', label: n.data.pinned ? 'Unpin' : 'Pin to top', run: () => { n.data = { ...n.data, pinned: !n.data.pinned }; store.save(n).then(() => { sync.schedule(); if (ui.noteId === n.id) renderEditor(false); }); } },
+    { icon: 'pin', label: n.data.pinned ? 'Unpin' : 'Pin to top', run: () => setNoteData(n, { pinned: !n.data.pinned || null }) },
     { icon: 'copy', label: 'Copy text', run: async () => { await copyText(noteText(n)); toast('Copied'); } },
-    { icon: 'folder', label: 'Move to folder…', run: () => folderPick(n, null, { x: e.clientX, y: e.clientY }) },
-    { icon: 'marker', label: 'Colour…', run: () => colorPick(n, null, { x: e.clientX, y: e.clientY }) },
+    { icon: 'folder', label: 'Move to folder…', run: () => folderPick(n, null, at) },
+    { icon: 'marker', label: 'Colour…', run: () => colorPick(n, null, at) },
+    { icon: 'archive', label: n.data.archived ? 'Unarchive' : 'Archive', run: () => archiveNote(n, !n.data.archived) },
     { icon: 'trash', label: 'Move to Trash', danger: true, run: () => deleteWithUndo(n, 'Note') }
-  ], { at: { x: e.clientX, y: e.clientY } });
+  ], { at });
+}
+function archiveNote(n, on) {
+  if (!n) return;
+  if (on && ui.noteId === n.id) closeEditor();
+  setNoteData(n, { archived: on || null });
+  toast(on ? 'Note archived' : 'Note back in your notes', { action: 'Undo', onAction: () => setNoteData(n, { archived: on ? null : true }) });
 }
 
 /* ───────── folders ───────── */
@@ -1744,7 +1756,7 @@ async function saveNoteFolders(list) {
   await store.save(item);
   sync.schedule();
 }
-function notesSorted() {
+function notesSorted(archived = ui.nfolder === 'archive') {
   const sort = lsGet('sp-nsort', 'edited');
   const ci = (n) => { const i = NOTE_COLORS.findIndex((c) => c[0] === n.data.color); return i < 0 ? 99 : i; };
   const by = {
@@ -1755,7 +1767,7 @@ function notesSorted() {
   }[sort] || ((a, b) => b.updated - a.updated);
   return store
     .list('note')
-    .filter((n) => !n.data.trashed)
+    .filter((n) => !n.data.trashed && !!n.data.archived === archived)
     .sort((a, b) => (b.data.pinned ? 1 : 0) - (a.data.pinned ? 1 : 0) || by(a, b));
 }
 function setNoteData(n, patch) {
@@ -1805,7 +1817,7 @@ function onFolderChipClick(e) {
 }
 function onFolderChipContext(e) {
   const c = e.target.closest('[data-nf]');
-  if (!c || c.dataset.nf === 'all' || c.dataset.nf === '+new') return;
+  if (!c || c.dataset.nf === 'all' || c.dataset.nf === '+new' || c.dataset.nf === 'archive') return;
   e.preventDefault();
   const f = noteFolders().find((x) => x.id === c.dataset.nf);
   if (!f) return;
@@ -1839,17 +1851,27 @@ function setupNoteSwipe() {
   el.noteList.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'touch') return;
     const b = e.target.closest('.note-item');
+    ui.blockClick = false;
     if (!b) return;
     s = { b, x: e.clientX, y: e.clientY, id: e.pointerId, on: false };
+    const held = s;
+    s.hold = setTimeout(() => {
+      if (s !== held || held.on) return;
+      s = null;
+      ui.blockClick = true; // the finger lifting must not open the note
+      if (navigator.vibrate) navigator.vibrate(12);
+      const n = store.items.get(b.dataset.id);
+      if (n) noteItemMenu(b, n, { x: held.x, y: held.y });
+    }, 500);
   });
   el.noteList.addEventListener('pointermove', (e) => {
     if (!s || e.pointerId !== s.id) return;
     const dx = e.clientX - s.x;
     const dy = e.clientY - s.y;
+    if (Math.hypot(dx, dy) > 10) clearTimeout(s.hold);
     if (!s.on) {
-      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { s = null; return; }
+      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { clearTimeout(s.hold); s = null; return; }
       if (Math.abs(dx) < 14) return;
-      if (dx > 0) { s = null; return; } // right swipe = back to Drops
       s.on = true;
       s.b.classList.add('swiping');
       try { s.b.setPointerCapture(e.pointerId); } catch {}
@@ -1860,6 +1882,7 @@ function setupNoteSwipe() {
   });
   const end = (e) => {
     if (!s || e.pointerId !== s.id) return;
+    clearTimeout(s.hold);
     const { b, on } = s;
     const dx = e.clientX - s.x;
     s = null;
@@ -1872,7 +1895,11 @@ function setupNoteSwipe() {
     setTimeout(() => {
       b.classList.remove('swiping');
       b.style.transition = '';
-      if (gone) { const n = store.items.get(b.dataset.id); if (n) deleteWithUndo(n, 'Note'); }
+      if (gone) {
+        const n = store.items.get(b.dataset.id);
+        if (n && dx > 0) archiveNote(n, !n.data.archived); // right: archive (in Archive: bring back)
+        else if (n) deleteWithUndo(n, 'Note'); // left: Trash
+      }
     }, 190);
   };
   el.noteList.addEventListener('pointerup', end);
@@ -1923,7 +1950,7 @@ function setupTabSwipe() {
       if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) { t = null; return; }
       if (Math.abs(dx) < 16) return;
       const next = dx < 0 ? 'notes' : 'drops';
-      if (next === ui.tab || (t.onNote && dx < 0)) { t = null; return; } // a left swipe on a note sends it to Trash instead
+      if (next === ui.tab || t.onNote) { t = null; return; } // swipes on a note archive / trash it instead
       t.on = true;
     }
     t.dx = dx;
@@ -2090,14 +2117,17 @@ function renderNotesList() {
     .map(([t]) => `<button class="chip" data-tag="${esc(t)}" aria-pressed="${ui.tag === t}">#${esc(t)}</button>`)
     .join('');
   const fs = noteFolders();
-  if (ui.nfolder && !fs.some((f) => f.id === ui.nfolder)) ui.nfolder = null;
+  const nArch = store.list('note').filter((n) => n.data.archived && !n.data.trashed).length;
+  if (ui.nfolder === 'archive' && !nArch) ui.nfolder = null;
+  if (ui.nfolder && ui.nfolder !== 'archive' && !fs.some((f) => f.id === ui.nfolder)) ui.nfolder = null;
   el.nfolderChips.innerHTML = `<button class="chip" data-nf="all" aria-pressed="${!ui.nfolder}">All</button>` +
     fs.map((f) => `<button class="chip" data-nf="${f.id}" aria-pressed="${ui.nfolder === f.id}"><svg class="ic"><use href="#i-folder"/></svg>${esc(f.name)} <b>${all.filter((n) => n.data.nf === f.id).length}</b></button>`).join('') +
-    '<button class="chip chip-add" data-nf="+new" title="New folder"><svg class="ic"><use href="#i-plus"/></svg><span>Folder</span></button>';
+    '<button class="chip chip-add" data-nf="+new" title="New folder"><svg class="ic"><use href="#i-plus"/></svg><span>Folder</span></button>' +
+    (nArch ? `<button class="chip" data-nf="archive" aria-pressed="${ui.nfolder === 'archive'}"><svg class="ic"><use href="#i-archive"/></svg>Archive <b>${nArch}</b></button>` : '');
   const view = lsGet('sp-nview', 'list');
-  el.noteList.className = `note-list view-${view} size-${lsGet('sp-nsize', 'm')}`;
+  el.noteList.className = `note-list view-${view} size-${lsGet('sp-nsize', 'm')}${ui.nfolder === 'archive' ? ' in-archive' : ''}`;
   const q = ui.query.toLowerCase();
-  const list = all.filter((n) => (!ui.nfolder || n.data.nf === ui.nfolder) && (!ui.tag || noteTags(noteText(n)).includes(ui.tag)) && (!q || noteText(n).toLowerCase().includes(q)));
+  const list = all.filter((n) => (!ui.nfolder || ui.nfolder === 'archive' || n.data.nf === ui.nfolder) && (!ui.tag || noteTags(noteText(n)).includes(ui.tag)) && (!q || noteText(n).toLowerCase().includes(q)));
   if (!list.length) {
     el.noteList.innerHTML = `<div class="list-empty">${q || ui.tag ? 'No notes match.' : ui.nfolder ? 'No notes in this folder yet.<br>Drag notes onto the folder, or use ⋯ → Move to folder.' : 'No notes yet.<br>Notes sync to all your devices as you type.'}</div>`;
     return;
@@ -2583,6 +2613,7 @@ function noteMenu(anchor) {
     { icon: 'drops', label: 'Send as a drop', run: () => { sendClip(text()); toast('Sent to Drops'); } },
     { icon: 'present', label: 'Present (full screen)', run: startPresent },
     { icon: 'folder', label: 'Move to folder…', run: () => folderPick(n, anchor) },
+    ...(store.items.has(n.id) ? [{ icon: 'archive', label: n.data.archived ? 'Unarchive' : 'Archive', run: () => archiveNote(n, !n.data.archived) }] : []),
     { icon: 'marker', label: 'Colour…', run: () => colorPick(n, anchor) },
     { icon: 'text', label: 'Font…', run: () => fontPick(n, anchor) },
     { icon: 'file', label: 'Paper…', run: () => paperPick(n, anchor) },
