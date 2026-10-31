@@ -9,13 +9,15 @@ import { Files } from './files.js';
 import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js';
 import qrcode from '/vendor/qrcode.mjs';
 import { Markup } from './markup.js';
+import { Collage } from './collage.js';
 
-const VERSION = '2.7.0';
+const VERSION = '2.8.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
 let files;
 let markup;
+let collage;
 const el = {};
 const ui = {
   tab: 'drops',
@@ -385,6 +387,7 @@ function wire() {
   el.viewerMarkup.addEventListener('click', () => ui.viewing && openMarkup(ui.viewing));
   el.dlgViewer.addEventListener('close', () => { el.viewerBody.innerHTML = ''; ui.viewing = null; });
   markup = new Markup(el.dlgMarkup);
+  collage = new Collage(el.dlgCollage);
 
   // drag & drop anywhere
   let depth = 0;
@@ -1158,6 +1161,46 @@ async function openMarkup(it) {
   scheduleRender(true, false);
 }
 
+/* ───────── collage: many photos in one picture ───────── */
+
+function selectedPhotos() {
+  return [...ui.selected].map((id) => store.items.get(id)).filter((it) => canMarkup(it) && !it.data.trashed);
+}
+
+async function makeCollage() {
+  const list = selectedPhotos();
+  if (list.length < 2) { toast('Select 2 or more photos for a collage.'); return; }
+  if (list.length > 30) { toast('A collage can hold up to 30 photos.'); return; }
+  toast(`Loading ${list.length} photos…`);
+  const blobs = [];
+  for (const it of list) {
+    let b = null;
+    try { b = await files.blobOf(it); } catch {}
+    if (!b) { toast('Could not load all photos. Check your connection and try again.'); return; }
+    blobs.push(b);
+  }
+  let res;
+  try { res = await collage.open(blobs, openDialog); }
+  catch { toast('These photos can’t be put in a collage here.'); return; }
+  if (!res) return;
+  const d = new Date();
+  const p2 = (x) => String(x).padStart(2, '0');
+  const name = `Collage ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}.${p2(d.getMinutes())}.jpg`;
+  const added = await files.add([new File([res.blob], name, { type: 'image/jpeg' })], { folder: currentFolder() });
+  if (!added.length) return;
+  exitSelect();
+  if (res.trash) {
+    const t = Date.now();
+    for (const it of list) { it.data = { ...it.data, trashed: t }; await store.save(it); }
+    sync.schedule();
+    toast(`Collage saved. ${list.length} photos moved to Trash.`, {
+      action: 'Undo', duration: 6000,
+      onAction: async () => { for (const it of list) await restoreItem(it.id); }
+    });
+  } else toast('Collage saved.');
+  scheduleRender(true, false);
+}
+
 /* ───────── right-click menus ───────── */
 
 function onFeedContext(e) {
@@ -1181,6 +1224,7 @@ function onFeedContext(e) {
   if (ui.selecting && ui.selected.has(it.id) && ui.selected.size > 1) {
     const n = ui.selected.size;
     openMenu(null, [
+      ...(selectedPhotos().length >= 2 ? [{ icon: 'grid', label: `Make a collage (${selectedPhotos().length} photos)`, run: makeCollage }] : []),
       { icon: 'folder', label: `Move ${n} to folder…`, run: () => moveMenu(null, [...ui.selected], at) },
       { icon: 'download', label: `Download ${n}`, run: () => selAction('download') },
       { icon: 'trash', label: `Move ${n} to Trash`, danger: true, run: () => selAction('trash') },
@@ -1318,6 +1362,7 @@ function renderSelectBar() {
   const n = ui.selected.size;
   el.selCount.textContent = n ? `${n} selected` : 'Tap items to select';
   for (const b of $$('[data-sel]', el.selectBar)) if (!['cancel', 'all'].includes(b.dataset.sel)) b.disabled = !n;
+  $('[data-sel="collage"]', el.selectBar).hidden = selectedPhotos().length < 2;
 }
 async function onSelectBar(e) {
   const b = e.target.closest('[data-sel]');
@@ -1336,6 +1381,7 @@ async function selAction(act, b) {
   }
   if (!ids.length) return;
   if (act === 'move') moveMenu(b, ids);
+  else if (act === 'collage') makeCollage();
   else if (act === 'download') {
     const fl = ids.map((id) => store.items.get(id)).filter((i) => i && i.kind === 'file');
     for (const it of fl) { files.download(it); await new Promise((r) => setTimeout(r, 350)); }
