@@ -162,14 +162,14 @@ await P.waitForSelector('.note-item:has-text("zebra notes")', { timeout: 10000 }
 await P.$eval('.note-item:has-text("zebra notes")', (b) => {
   const r = b.getBoundingClientRect();
   const o = (x) => ({ bubbles: true, pointerId: 9, pointerType: 'touch', clientX: x, clientY: r.top + 20, isPrimary: true });
-  b.dispatchEvent(new PointerEvent('pointerdown', o(r.left + 40)));
-  for (let x = 60; x <= 320; x += 30) b.dispatchEvent(new PointerEvent('pointermove', o(r.left + x)));
-  b.dispatchEvent(new PointerEvent('pointerup', o(r.left + 320)));
+  b.dispatchEvent(new PointerEvent('pointerdown', o(r.left + 340)));
+  for (let x = 320; x >= 40; x -= 30) b.dispatchEvent(new PointerEvent('pointermove', o(r.left + x)));
+  b.dispatchEvent(new PointerEvent('pointerup', o(r.left + 40)));
 });
 await P.waitForSelector('.toast >> text=Undo');
 await P.waitForFunction(() => ![...document.querySelectorAll('.note-item')].some((b) => /zebra notes/.test(b.textContent)));
 await P.screenshot({ path: `${OUT}/154-phone-swipe.png` });
-step('Phone: swipe a note sideways → Trash, with Undo');
+step('Phone: swipe a note to the left → Trash, with Undo');
 
 if (errors.length) { console.log(errors); throw new Error('page errors'); }
 await browser.close();

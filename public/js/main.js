@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.17.0';
+const VERSION = '2.18.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -364,6 +364,7 @@ function wire() {
   });
   el.noteList.addEventListener('dragend', () => el.app.classList.remove('dragging-note'));
   setupNoteSwipe();
+  setupTabSwipe();
   fitToKeyboard();
   setupPasteChip();
   el.btnShowList.addEventListener('click', () => toggleNotesList(false));
@@ -1848,6 +1849,7 @@ function setupNoteSwipe() {
     if (!s.on) {
       if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { s = null; return; }
       if (Math.abs(dx) < 14) return;
+      if (dx > 0) { s = null; return; } // right swipe = back to Drops
       s.on = true;
       s.b.classList.add('swiping');
       try { s.b.setPointerCapture(e.pointerId); } catch {}
@@ -1875,6 +1877,92 @@ function setupNoteSwipe() {
   };
   el.noteList.addEventListener('pointerup', end);
   el.noteList.addEventListener('pointercancel', end);
+}
+
+/* swipe between Drops and Notes: finger on phones, two-finger trackpad swipe on computers */
+function tabSwipeBlocked(target, dir) {
+  if (ui.presenting || ui.selecting || el.app.classList.contains('editing') || $('dialog[open]') || !el.menu.hidden) return true;
+  if (el.lock && !el.lock.hidden) return true;
+  if (!target || !target.closest) return true;
+  if (target.closest('input, textarea, select, [contenteditable="true"], .editor-pane, .cv-scroll, .composer, .menu, .toasts, .paste-chip, .img-bar')) return true;
+  // let anything that scrolls sideways (chip rows, wide tables…) keep its own swipe
+  for (let n = target; n && n !== document.body; n = n.parentElement) {
+    if (n.scrollWidth > n.clientWidth + 2) {
+      const ox = getComputedStyle(n).overflowX;
+      if (ox === 'auto' || ox === 'scroll') {
+        if (dir == null) return true;
+        if (dir > 0 ? n.scrollLeft + n.clientWidth < n.scrollWidth - 1 : n.scrollLeft > 0) return true;
+      }
+    }
+  }
+  return false;
+}
+function swipeToTab(next, dir) {
+  if (next === ui.tab) return;
+  setTab(next);
+  const v = next === 'notes' ? el.viewNotes : el.viewDrops;
+  v.classList.remove('swipe-from-left', 'swipe-from-right');
+  void v.offsetWidth;
+  v.classList.add(dir < 0 ? 'swipe-from-right' : 'swipe-from-left');
+  setTimeout(() => v.classList.remove('swipe-from-left', 'swipe-from-right'), 260);
+}
+function setupTabSwipe() {
+  const views = $('.views');
+  let t = null;
+  views.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || tabSwipeBlocked(e.target)) { t = null; return; }
+    const p = e.touches[0];
+    t = { x: p.clientX, y: p.clientY, t0: Date.now(), on: false, onNote: !!e.target.closest('.note-item'), view: ui.tab === 'notes' ? el.viewNotes : el.viewDrops };
+  }, { passive: true });
+  views.addEventListener('touchmove', (e) => {
+    if (!t) return;
+    const p = e.touches[0];
+    const dx = p.clientX - t.x;
+    const dy = p.clientY - t.y;
+    if (!t.on) {
+      if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) { t = null; return; }
+      if (Math.abs(dx) < 16) return;
+      const next = dx < 0 ? 'notes' : 'drops';
+      if (next === ui.tab || (t.onNote && dx < 0)) { t = null; return; } // a left swipe on a note sends it to Trash instead
+      t.on = true;
+    }
+    t.dx = dx;
+    t.view.style.transform = `translateX(${dx * 0.35}px)`;
+    t.view.style.opacity = String(Math.max(0.55, 1 - Math.abs(dx) / 900));
+  }, { passive: true });
+  const end = () => {
+    if (!t) return;
+    const { on, dx = 0, t0, view } = t;
+    t = null;
+    if (!on) return;
+    view.style.transition = 'transform .16s ease, opacity .16s ease';
+    view.style.transform = '';
+    view.style.opacity = '';
+    setTimeout(() => { view.style.transition = ''; }, 170);
+    const fast = Math.abs(dx) > 40 && Date.now() - t0 < 250;
+    if (Math.abs(dx) > Math.min(110, innerWidth * 0.22) || fast) swipeToTab(dx < 0 ? 'notes' : 'drops', dx);
+  };
+  views.addEventListener('touchend', end, { passive: true });
+  views.addEventListener('touchcancel', end, { passive: true });
+  // trackpad: two fingers sideways
+  let acc = 0;
+  let idle = null;
+  let locked = false;
+  views.addEventListener('wheel', (e) => {
+    if (e.ctrlKey || Math.abs(e.deltaX) <= Math.abs(e.deltaY) * 1.2 || !e.deltaX) return;
+    if (tabSwipeBlocked(e.target, e.deltaX > 0 ? 1 : -1)) return;
+    e.preventDefault(); // no browser back/forward
+    clearTimeout(idle);
+    idle = setTimeout(() => { acc = 0; locked = false; }, 260);
+    if (locked) return;
+    acc += e.deltaX;
+    if (Math.abs(acc) > 120) {
+      const next = acc > 0 ? 'notes' : 'drops';
+      locked = true;
+      acc = 0;
+      swipeToTab(next, next === 'notes' ? -1 : 1);
+    }
+  }, { passive: false });
 }
 
 /* phones: keep the editor and its bars above the keyboard */

@@ -1335,3 +1335,10 @@ kbd { font: 600 12px var(--font); padding: 1px 6px; border-radius: 6px; border: 
 .cv-ph[data-ph="sw"] { left: 0; top: 100%; cursor: nesw-resize; } .cv-ph[data-ph="w"] { left: 0; top: 50%; cursor: ew-resize; }
 .cv-props .btn-sm { margin-left: 4px; white-space: nowrap; }
 .cv-crop-hint { font-size: 12.5px; color: var(--muted); margin: 0 6px; white-space: nowrap; }
+
+/* ───────── 2.18: swipe between Drops and Notes ───────── */
+html, body { overscroll-behavior-x: none; }
+@keyframes swipeFromRight { from { transform: translateX(40px); opacity: .4; } to { transform: none; opacity: 1; } }
+@keyframes swipeFromLeft { from { transform: translateX(-40px); opacity: .4; } to { transform: none; opacity: 1; } }
+.view.swipe-from-right { animation: swipeFromRight .24s ease-out; }
+.view.swipe-from-left { animation: swipeFromLeft .24s ease-out; }
