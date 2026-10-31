@@ -9,7 +9,7 @@ import { Files } from './files.js';
 import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js';
 import qrcode from '/vendor/qrcode.mjs';
 
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -28,6 +28,10 @@ const ui = {
   fresh: new Set(),
   expanded: new Set(),
   stickBottom: true,
+  dview: (() => { try { return localStorage.getItem('sp-dview') || 'all'; } catch { return 'all'; } })(),
+  layout: (() => { try { return localStorage.getItem('sp-layout') || 'list'; } catch { return 'list'; } })(),
+  selecting: false,
+  selected: new Set(),
   busy: false,
   installPrompt: null
 };
@@ -206,8 +210,75 @@ function wire() {
   el.fileInput.addEventListener('change', () => { sendFiles([...el.fileInput.files]); el.fileInput.value = ''; });
   el.noteFileInput.addEventListener('change', () => { attachToNote([...el.noteFileInput.files]); el.noteFileInput.value = ''; });
 
-  // feed actions
+  // home screen: filters, folders, layout, selecting
   el.feedInner.addEventListener('click', onFeedClick);
+  const navClick = async (e) => {
+    const v = e.target.closest('[data-view]');
+    if (v) return setDropView(v.dataset.view);
+    const a = e.target.closest('[data-act="new-folder"]');
+    if (a) { const f = await createFolder(); if (f) setDropView('f:' + f.id); }
+  };
+  el.dropsSide.addEventListener('click', navClick);
+  el.dropChips.addEventListener('click', navClick);
+  el.viewToggle.addEventListener('click', (e) => { const b = e.target.closest('[data-layout]'); if (b) setLayout(b.dataset.layout); });
+  el.btnSelect.addEventListener('click', () => (ui.selecting ? exitSelect() : enterSelect()));
+  el.btnFolderMore.addEventListener('click', () => folderMenu(el.btnFolderMore));
+  el.selectBar.addEventListener('click', onSelectBar);
+  // drag drops onto a folder (desktop)
+  el.feedInner.addEventListener('dragstart', (e) => {
+    const row = e.target.closest && e.target.closest('[data-id]');
+    if (!row) return;
+    const ids = ui.selecting && ui.selected.has(row.dataset.id) ? [...ui.selected] : [row.dataset.id];
+    e.dataTransfer.setData('application/x-syncpad', JSON.stringify(ids));
+    e.dataTransfer.effectAllowed = 'move';
+    el.app.classList.add('dragging-drop');
+  });
+  el.feedInner.addEventListener('dragend', () => el.app.classList.remove('dragging-drop'));
+  el.dropsSide.addEventListener('dragover', (e) => {
+    const t = e.target.closest('[data-folder-drop]');
+    const internal = [...e.dataTransfer.types].includes('application/x-syncpad');
+    for (const n of $$('.drop-target', el.dropsSide)) if (n !== t) n.classList.remove('drop-target');
+    if (!t || !internal) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    t.classList.add('drop-target');
+  });
+  el.dropsSide.addEventListener('dragleave', (e) => { const t = e.target.closest('[data-folder-drop]'); if (t && !t.contains(e.relatedTarget)) t.classList.remove('drop-target'); });
+  el.dropsSide.addEventListener('drop', (e) => {
+    const t = e.target.closest('[data-folder-drop]');
+    for (const n of $$('.drop-target', el.dropsSide)) n.classList.remove('drop-target');
+    const raw = e.dataTransfer.getData('application/x-syncpad');
+    if (!t || !raw) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { moveTo(JSON.parse(raw), t.dataset.folderDrop); } catch {}
+  });
+  // long-press a drop on a phone to start selecting
+  el.feedInner.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch' || ui.selecting) return;
+    const row = e.target.closest('[data-id]');
+    if (!row) return;
+    clearTimeout(ui.lpTimer);
+    const x = e.clientX;
+    const y = e.clientY;
+    ui.lpTimer = setTimeout(() => {
+      ui.suppressClick = true;
+      try { navigator.vibrate && navigator.vibrate(30); } catch {}
+      enterSelect();
+      toggleSelect(row.dataset.id);
+    }, 480);
+    const cancel = (ev) => {
+      if (ev.type === 'pointermove' && Math.hypot(ev.clientX - x, ev.clientY - y) < 10) return;
+      clearTimeout(ui.lpTimer);
+      removeEventListener('pointerup', cancel);
+      removeEventListener('pointermove', cancel);
+      removeEventListener('pointercancel', cancel);
+    };
+    addEventListener('pointerup', cancel);
+    addEventListener('pointermove', cancel);
+    addEventListener('pointercancel', cancel);
+  });
+  el.feedInner.addEventListener('contextmenu', (e) => { if (isTouch() && e.target.closest('[data-id]')) e.preventDefault(); });
   el.feed.addEventListener('scroll', () => {
     ui.atBottom = el.feed.scrollHeight - el.feed.scrollTop - el.feed.clientHeight < 60;
   }, { passive: true });
@@ -306,6 +377,7 @@ function wire() {
   let depth = 0;
   const dragKind = (e) => {
     const t = e.dataTransfer ? [...e.dataTransfer.types] : [];
+    if (t.includes('application/x-syncpad')) return null;
     if (t.includes('Files')) return 'files';
     if (t.includes('text/uri-list') || t.includes('text/plain')) return 'text';
     return null;
@@ -324,7 +396,11 @@ function wire() {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     el.dropOverlay.hidden = false;
-    el.dropOverlayTitle.textContent = overNoteEditor(e.target) ? 'Drop to attach to this note' : 'Drop to send to all your devices';
+    const fd = e.target.closest && e.target.closest('[data-folder-drop]');
+    const fdName = fd && store.items.get(fd.dataset.folderDrop) && store.items.get(fd.dataset.folderDrop).data.name;
+    el.dropOverlayTitle.textContent = overNoteEditor(e.target) ? 'Drop to attach to this note'
+      : fdName ? `Drop into “${fdName}”`
+      : currentFolder() && ui.tab === 'drops' ? `Drop into “${viewTitle()}”` : 'Drop to send to all your devices';
   });
   addEventListener('dragleave', (e) => {
     if (!dragKind(e)) return;
@@ -340,8 +416,9 @@ function wire() {
     e.preventDefault();
     const fl = [...e.dataTransfer.files];
     if (fl.length) {
+      const fd = e.target.closest && e.target.closest('[data-folder-drop]');
       if (overNoteEditor(e.target)) attachToNote(fl, rangeFromPoint(e.clientX, e.clientY));
-      else sendFiles(fl);
+      else sendFiles(fl, fd ? fd.dataset.folderDrop : undefined);
       return;
     }
     const text = e.dataTransfer.getData('text/uri-list').split('\n').find((l) => l && !l.startsWith('#')) || e.dataTransfer.getData('text/plain');
@@ -392,6 +469,8 @@ function wire() {
       el.search.select();
     } else if (e.key === 'Escape' && !el.menu.hidden) {
       closeMenu();
+    } else if (e.key === 'Escape' && ui.selecting && !$('dialog[open]')) {
+      exitSelect();
     }
   });
 
@@ -491,7 +570,7 @@ function onStoreChange({ ids, remote }) {
     for (const id of ids) ui.known.add(id);
   }
   const kinds = ids.map((id) => store.items.get(id));
-  const drops = kinds.some((it) => !it || isDrop(it));
+  const drops = kinds.some((it) => !it || isDrop(it) || it.kind === 'folder');
   const notes = kinds.some((it) => !it || it.kind === 'note');
   scheduleRender(drops, notes);
 }
@@ -551,47 +630,126 @@ function renderStatus() {
   el.statusChip.title = state === 'offline' ? 'You are offline. Everything is saved on this device and will sync when you are back online.' : 'Devices & sync';
 }
 
-/* ───────── drops ───────── */
+/* ───────── drops (home screen): filters, folders, compact list / grid ───────── */
 
 const isDrop = (i) => i.kind === 'clip' || (i.kind === 'file' && !i.data.parent);
+const FILTERS = [
+  ['all', 'All drops', 'drops'],
+  ['media', 'Photos & videos', 'image'],
+  ['files', 'Files', 'file'],
+  ['links', 'Links', 'link'],
+  ['text', 'Text', 'note'],
+  ['pinned', 'Pinned', 'pin']
+];
+
+function dropType(it) {
+  if (it.kind === 'clip') return singleUrl(it.data.text || '') ? 'links' : 'text';
+  const k = fileKind(it.data.type, it.data.name);
+  return k === 'image' || k === 'video' ? 'media' : 'files';
+}
+function folders() {
+  return store.list('folder').sort((a, b) => String(a.data.name || '').localeCompare(String(b.data.name || ''), undefined, { sensitivity: 'base' }));
+}
+function folderOf(it) {
+  const f = it.data.folder && store.items.get(it.data.folder);
+  return f && f.kind === 'folder' ? f : null;
+}
+function currentFolder() {
+  return ui.dview.startsWith('f:') && store.items.get(ui.dview.slice(2)) ? ui.dview.slice(2) : null;
+}
 function dropItems() {
-  return store.list().filter((i) => isDrop(i) && !i.data.trashed).sort((a, b) => a.created - b.created);
+  return store.list().filter((i) => isDrop(i) && !i.data.trashed).sort((a, b) => b.created - a.created);
+}
+function matchesView(it, view = ui.dview) {
+  if (view.startsWith('f:')) { const f = folderOf(it); return !!f && f.id === view.slice(2); }
+  if (view === 'all') return true;
+  if (view === 'pinned') return !!it.data.keep;
+  return dropType(it) === view;
+}
+function viewTitle() {
+  const f = currentFolder();
+  if (f) return store.items.get(f).data.name || 'Folder';
+  return (FILTERS.find((x) => x[0] === ui.dview) || FILTERS[0])[1];
+}
+function setDropView(v) {
+  ui.dview = v;
+  try { localStorage.setItem('sp-dview', v); } catch {}
+  exitSelect();
+  el.feed.scrollTop = 0;
+  renderDrops();
+}
+function setLayout(l) {
+  ui.layout = l;
+  try { localStorage.setItem('sp-layout', l); } catch {}
+  cards.clear();
+  renderDrops();
+}
+
+function renderDropsNav(all) {
+  if (ui.dview.startsWith('f:') && !currentFolder()) ui.dview = 'all';
+  const count = (v) => all.filter((i) => matchesView(i, v)).length;
+  const fl = folders();
+  const nav = (v, label, icon, n, folderId) => `<button class="nav-item${ui.dview === v ? ' on' : ''}" data-view="${v}"${folderId ? ` data-folder-drop="${folderId}"` : ''}>
+      <svg class="ic"><use href="#i-${icon}"/></svg><span class="nav-label">${esc(label)}</span><span class="nav-count">${n || ''}</span></button>`;
+  el.dropsSide.innerHTML =
+    FILTERS.map(([v, l, ic]) => nav(v, l, ic, count(v))).join('') +
+    `<div class="nav-head"><span>Folders</span><button class="icon-btn sm" data-act="new-folder" aria-label="New folder" title="New folder"><svg class="ic"><use href="#i-plus"/></svg></button></div>` +
+    (fl.length
+      ? fl.map((f) => nav('f:' + f.id, f.data.name || 'Folder', 'folder', count('f:' + f.id), f.id)).join('') +
+        (isTouch() ? '' : '<p class="nav-hint">Tip: drag drops onto a folder to move them.</p>')
+      : '<button class="nav-empty" data-act="new-folder"><svg class="ic"><use href="#i-plus"/></svg>New folder</button>');
+  const chip = (v, label) => `<button class="chip" data-view="${v}" aria-pressed="${ui.dview === v}">${label}</button>`;
+  el.dropChips.innerHTML = [
+    ...FILTERS.filter(([v]) => v === 'all' || v === ui.dview || count(v)).map(([v, l]) => chip(v, esc(l))),
+    ...fl.map((f) => chip('f:' + f.id, `<svg class="ic"><use href="#i-folder"/></svg>${esc(f.data.name || 'Folder')}`)),
+    '<button class="chip add" data-act="new-folder"><svg class="ic"><use href="#i-plus"/></svg>Folder</button>'
+  ].join('');
+  el.dhTitle.textContent = viewTitle();
+  el.btnFolderMore.hidden = !currentFolder();
+  for (const b of $$('[data-layout]', el.viewToggle)) b.setAttribute('aria-pressed', String(b.dataset.layout === ui.layout));
+  el.composerInput.placeholder = currentFolder() ? `Send to “${viewTitle()}” — type, paste or drop…` : 'Type, paste or drop anything…';
 }
 
 function renderDrops() {
+  const all = dropItems();
+  renderDropsNav(all);
   const q = ui.query.toLowerCase();
-  let list = dropItems();
-  if (q) {
-    list = list.filter((i) => [i.data.text, i.data.name, i.data.link && i.data.link.title].some((s) => s && s.toLowerCase().includes(q)));
-  }
-  const feed = el.feed;
-  const wasBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 60;
-  if (!list.length) {
+  let list = all.filter((i) => matchesView(i));
+  if (q) list = list.filter((i) => [i.data.text, i.data.name, i.data.link && i.data.link.title].some((s) => s && s.toLowerCase().includes(q)));
+  el.dhCount.textContent = list.length ? `${list.length} item${list.length === 1 ? '' : 's'}` : '';
+  el.feed.classList.toggle('grid-mode', ui.layout === 'grid');
+  if (!all.length && !q) {
     cards.clear();
-    el.feedInner.innerHTML = q ? `<div class="empty"><p>No drops match “${esc(ui.query)}”.</p></div>` : emptyDrops();
+    el.feedInner.innerHTML = emptyDrops();
+    return;
+  }
+  if (!list.length) {
+    el.feedInner.innerHTML = `<div class="empty small"><p>${q ? `Nothing matches “${esc(ui.query)}”.`
+      : currentFolder() ? 'This folder is empty. Drop files here while it’s open, or use “Move to folder” on any drop.'
+      : 'Nothing here yet.'}</p></div>`;
     return;
   }
   const nodes = [];
-  let lastDay = '';
   const seen = new Set();
+  let day = '';
+  let group = null;
   for (const it of list) {
     const d = dayLabel(it.created);
-    if (d !== lastDay) {
-      const sep = document.createElement('div');
-      sep.className = 'day';
-      sep.textContent = d;
-      nodes.push(sep);
-      lastDay = d;
+    if (d !== day) {
+      day = d;
+      const h = document.createElement('div');
+      h.className = 'day';
+      h.textContent = d;
+      group = document.createElement('div');
+      group.className = ui.layout === 'grid' ? 'tile-grid' : 'row-group';
+      nodes.push(h, group);
     }
-    nodes.push(cardNode(it));
+    group.appendChild(cardNode(it));
     seen.add(it.id);
   }
   for (const id of cards.keys()) if (!seen.has(id)) cards.delete(id);
   el.feedInner.replaceChildren(...nodes);
-  if (ui.stickBottom || wasBottom) {
-    feed.scrollTop = feed.scrollHeight;
-    ui.stickBottom = false;
-  }
+  if (ui.scrollTop) { el.feed.scrollTop = 0; ui.scrollTop = false; }
 }
 
 function emptyDrops() {
@@ -622,82 +780,111 @@ function rememberDevices() {
 
 function cardNode(it) {
   const prog = files.progress.get(it.id);
-  const sig = [ui.namesVer || 0, it.kind === 'file' && files.isOffline(it.id) ? 'off' : '', it.rev, it.updated, it.data.keep ? 1 : 0, prog ? prog.state + (prog.err || '') : '', ui.expanded.has(it.id) ? 1 : 0, Math.floor((Date.now() - it.created) / 60000) < 1 ? 'n' : 'o'].join('|');
+  const f = folderOf(it);
+  const sig = [ui.namesVer || 0, ui.layout, ui.selecting ? 1 : 0, ui.selected.has(it.id) ? 1 : 0, f ? f.data.name : '', ui.dview.startsWith('f:') ? 1 : 0,
+    it.kind === 'file' && files.isOffline(it.id) ? 'off' : '', it.rev, it.updated, it.data.keep ? 1 : 0,
+    prog ? prog.state + (prog.err || '') : '', ui.expanded.has(it.id) ? 1 : 0].join('|');
   const c = cards.get(it.id);
   if (c && c.sig === sig) {
     c.node.classList.toggle('fresh', ui.fresh.has(it.id));
     return c.node;
   }
   const t = document.createElement('template');
-  t.innerHTML = it.kind === 'clip' ? clipHTML(it) : fileHTML(it, prog);
+  t.innerHTML = ui.layout === 'grid' ? tileHTML(it, prog) : rowHTML(it, prog);
   const node = t.content.firstElementChild;
   node.classList.toggle('fresh', ui.fresh.has(it.id));
   cards.set(it.id, { sig, node });
   return node;
 }
 
-function metaHTML(it, extra = '') {
-  return `<div class="drop-meta">${extra}${extra ? '<span class="sep"></span>' : ''}<span>${esc(deviceLabel(it.device))}</span><span class="sep"></span><span>${clock(it.created)}</span>${it.kind === 'file' && files.isOffline(it.id) ? '<span class="pin-flag off" title="Saved on this device — opens without internet"><svg class="ic"><use href="#i-ondevice"/></svg></span>' : ''}${it.data.keep ? '<span class="pin-flag" title="Pinned — never cleaned up"><svg class="ic"><use href="#i-pin"/></svg></span>' : ''}</div>`;
-}
-
-function clipHTML(it) {
-  const text = it.data.text || '';
-  const url = singleUrl(text);
-  const long = text.length > 420 || text.split('\n').length > 8;
-  const expanded = ui.expanded.has(it.id);
-  const link = it.data.link;
-  return `<article class="drop clip" data-id="${it.id}">
-    <div class="drop-icon"><svg class="ic"><use href="#i-${url ? 'link' : 'note'}"/></svg></div>
-    <div class="drop-main">
-      <div class="drop-text${long && !expanded ? ' clamped' : ''}">${linkify(text)}</div>
-      ${long ? `<button class="more-link" data-act="expand">${expanded ? 'Show less' : 'Show more'}</button>` : ''}
-      ${url && link && link.title ? `<a class="link-card" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><b>${esc(link.title)}</b><span>${esc(link.site || '')}${link.desc ? ' · ' + esc(link.desc) : ''}</span></a>` : ''}
-      ${metaHTML(it)}
-    </div>
-    <div class="drop-actions">
-      ${url
-        ? `<a class="btn btn-soft act-main" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><svg class="ic"><use href="#i-link"/></svg><span>Open</span></a>`
-        : `<button class="btn btn-soft act-main" data-act="copy"><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>`}
-      <button class="icon-btn" data-act="menu" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button>
-    </div>
-  </article>`;
-}
-
-function fileHTML(it, prog) {
+function thumbHTML(it) {
+  if (it.kind === 'clip') {
+    const url = singleUrl(it.data.text || '');
+    return `<span class="ti" data-k="${url ? 'link' : 'text'}"><svg class="ic"><use href="#i-${url ? 'link' : 'note'}"/></svg></span>`;
+  }
   const d = it.data;
   const kind = fileKind(d.type, d.name);
-  let status = esc(fmtBytes(d.size));
-  let bar = '';
-  if (prog) {
-    if (prog.state === 'err') status = `<span class="err">${esc(prog.err || 'Upload failed')}</span>`;
-    else if (prog.state === 'wait') status = 'Waiting for connection…';
-    else status = `Sending <span class="pct">${pct(prog)}%</span> · ${esc(fmtBytes(d.size))}`;
-    if (prog.state !== 'err') bar = `<div class="progress"><span style="width:${pct(prog)}%"></span></div>`;
-  }
-  const saveLabel = isIOS() && (kind === 'image' || kind === 'video') && files.canShare();
-  const primary = prog
-    ? ''
-    : saveLabel
-      ? `<button class="btn btn-soft act-main" data-act="share"><svg class="ic"><use href="#i-download"/></svg><span>Save</span></button>`
-      : `<button class="btn btn-soft act-main" data-act="download"><svg class="ic"><use href="#i-download"/></svg><span class="hide-xs">Download</span></button>`;
-  const actions = `<div class="drop-actions">${primary}<button class="icon-btn" data-act="menu" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button></div>`;
-  const main = `<div class="drop-main"><div class="drop-title" title="${esc(d.name)}">${esc(d.name)}</div>${metaHTML(it, status)}${bar}</div>`;
-  if (d.thumb) {
-    const ratio = d.w && d.h ? Math.max(0.45, Math.min(1.8, d.w / d.h)) : 1.5;
-    return `<article class="drop media" data-id="${it.id}">
-      <div class="thumb-wrap"><button class="thumb" data-act="open" aria-label="Open ${esc(d.name)}"><img src="${esc(d.thumb)}" alt="" style="aspect-ratio:${ratio.toFixed(3)}" decoding="async"></button>
-      ${kind === 'video' ? '<span class="play-badge"><svg class="ic" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg></span>' : ''}</div>
-      <div class="media-row">${main}${actions}</div>
-    </article>`;
-  }
+  if (d.thumb) return `<img src="${esc(d.thumb)}" alt="" draggable="false" decoding="async">${kind === 'video' ? '<span class="mini-play"><svg class="ic" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg></span>' : ''}`;
   const ext = extOf(d.name);
-  return `<article class="drop" data-id="${it.id}">
-    <button class="drop-icon" data-k="${kind}" data-act="open" aria-label="Open ${esc(d.name)}">
-      ${ext && ext.length <= 4 && kind !== 'image' && kind !== 'video' && kind !== 'audio' ? `<span class="ext">${esc(ext)}</span>` : `<svg class="ic"><use href="#i-${kindIcon(kind)}"/></svg>`}
-    </button>
-    ${main}${actions}
+  return `<span class="ti" data-k="${kind}">${ext && ext.length <= 4 && !['image', 'video', 'audio'].includes(kind) ? `<span class="ext">${esc(ext)}</span>` : `<svg class="ic"><use href="#i-${kindIcon(kind)}"/></svg>`}</span>`;
+}
+
+function dropTitle(it) {
+  if (it.kind === 'file') return it.data.name || 'File';
+  const url = singleUrl(it.data.text || '');
+  if (url) return (it.data.link && it.data.link.title) || url.replace(/^https?:\/\/(www\.)?/, '');
+  return it.data.text || '';
+}
+
+function metaParts(it, prog) {
+  const parts = [];
+  if (it.kind === 'file') {
+    if (prog) {
+      if (prog.state === 'err') parts.push(`<span class="err">${esc(prog.err || 'Upload failed')}</span>`);
+      else if (prog.state === 'wait') parts.push('Waiting for connection…');
+      else parts.push(`Sending <span class="pct">${pct(prog)}%</span>`);
+    } else parts.push(esc(fmtBytes(it.data.size)));
+  } else {
+    const url = singleUrl(it.data.text || '');
+    if (url) parts.push(esc((it.data.link && it.data.link.site) || new URL(url).hostname.replace(/^www\./, '')));
+  }
+  parts.push(esc(deviceLabel(it.device)), clock(it.created));
+  const f = folderOf(it);
+  let extra = '';
+  if (f && !ui.dview.startsWith('f:')) extra += `<span class="fchip"><svg class="ic"><use href="#i-folder"/></svg>${esc(f.data.name || 'Folder')}</span>`;
+  if (it.kind === 'file' && files.isOffline(it.id)) extra += '<span class="pin-flag off" title="Saved on this device — opens without internet"><svg class="ic"><use href="#i-ondevice"/></svg></span>';
+  if (it.data.keep) extra += '<span class="pin-flag" title="Pinned — never cleaned up"><svg class="ic"><use href="#i-pin"/></svg></span>';
+  return parts.join('<span class="sep"></span>') + extra;
+}
+
+function primaryAction(it, prog) {
+  if (it.kind === 'clip') {
+    const url = singleUrl(it.data.text || '');
+    return url
+      ? `<a class="icon-btn act" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="Open link" title="Open link"><svg class="ic"><use href="#i-link"/></svg></a>`
+      : `<button class="icon-btn act" data-act="copy" aria-label="Copy text" title="Copy"><svg class="ic"><use href="#i-copy"/></svg></button>`;
+  }
+  if (prog) return '';
+  const kind = fileKind(it.data.type, it.data.name);
+  if (isIOS() && (kind === 'image' || kind === 'video') && files.canShare()) {
+    return `<button class="icon-btn act" data-act="share" aria-label="Save to Photos" title="Save"><svg class="ic"><use href="#i-download"/></svg></button>`;
+  }
+  return `<button class="icon-btn act" data-act="download" aria-label="Download" title="Download"><svg class="ic"><use href="#i-download"/></svg></button>`;
+}
+
+function rowHTML(it, prog) {
+  const isText = it.kind === 'clip' && !singleUrl(it.data.text || '');
+  const expanded = ui.expanded.has(it.id);
+  const sel = ui.selected.has(it.id);
+  return `<article class="ri${sel ? ' selected' : ''}${ui.selecting ? ' selecting' : ''}" data-id="${it.id}" draggable="${!isTouch()}">
+    ${ui.selecting ? `<span class="ri-check" aria-hidden="true"><svg class="ic"><use href="#i-check"/></svg></span>` : ''}
+    <button class="ri-thumb" data-act="open" aria-label="Open">${thumbHTML(it)}</button>
+    <div class="ri-main" data-act="${isText ? 'expand' : 'open'}">
+      ${isText && expanded
+        ? `<div class="ri-text">${linkify(it.data.text || '')}</div>`
+        : `<div class="ri-title${isText ? ' is-text' : ''}" title="${esc(dropTitle(it).slice(0, 300))}">${esc(dropTitle(it).slice(0, 400))}</div>`}
+      <div class="ri-meta">${metaParts(it, prog)}</div>
+      ${prog && prog.state !== 'err' ? `<div class="progress"><span style="width:${pct(prog)}%"></span></div>` : ''}
+    </div>
+    <div class="ri-actions">${primaryAction(it, prog)}<button class="icon-btn" data-act="menu" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button></div>
   </article>`;
 }
+
+function tileHTML(it, prog) {
+  const sel = ui.selected.has(it.id);
+  const isText = it.kind === 'clip' && !singleUrl(it.data.text || '');
+  return `<article class="tile${sel ? ' selected' : ''}${ui.selecting ? ' selecting' : ''}" data-id="${it.id}" draggable="${!isTouch()}">
+    <button class="tile-media" data-act="${isText ? 'expand-tile' : 'open'}" aria-label="Open">
+      ${isText ? `<span class="tile-text">${esc((it.data.text || '').slice(0, 220))}</span>` : thumbHTML(it)}
+    </button>
+    ${ui.selecting ? `<span class="ri-check" aria-hidden="true"><svg class="ic"><use href="#i-check"/></svg></span>` : ''}
+    <button class="tile-more icon-btn sm" data-act="menu" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button>
+    <div class="tile-name" title="${esc(dropTitle(it).slice(0, 300))}">${esc(dropTitle(it).slice(0, 120))}</div>
+    <div class="tile-meta">${it.kind === 'file' && !prog ? esc(fmtBytes(it.data.size)) + ' · ' : ''}${clock(it.created)}</div>
+    ${prog && prog.state !== 'err' ? `<div class="progress"><span style="width:${pct(prog)}%"></span></div>` : ''}
+  </article>`;
+}
+
 const pct = (p) => (p.total ? Math.min(100, Math.floor((p.sent / p.total) * 100)) : 0);
 
 function updateProgress(id) {
@@ -706,28 +893,39 @@ function updateProgress(id) {
   if (!c || !p || p.state !== 'up') { scheduleRender(); renderStatus(); return; }
   const bar = c.node.querySelector('.progress > span');
   const pc = c.node.querySelector('.pct');
-  if (!bar || !pc) { scheduleRender(); return; }
+  if (!bar) { scheduleRender(); return; }
   bar.style.width = pct(p) + '%';
-  pc.textContent = pct(p);
+  if (pc) pc.textContent = pct(p);
 }
 
 async function onFeedClick(e) {
+  if (ui.suppressClick) { ui.suppressClick = false; e.preventDefault(); return; }
   const a = e.target.closest('[data-act]');
-  if (!a) return;
-  const card = a.closest('[data-id]');
+  const card = e.target.closest('[data-id]');
   const it = card && store.items.get(card.dataset.id);
+  if (ui.selecting && it && !(a && a.dataset.act === 'menu')) {
+    e.preventDefault();
+    toggleSelect(it.id);
+    return;
+  }
+  if (!a) return;
   const act = a.dataset.act;
   if (act === 'pick') return el.fileInput.click();
   if (act === 'connect') return openConnect();
   if (!it) return;
   if (act === 'copy') {
     await copyText(it.data.text || '');
-    flashButton(a, 'Copied');
+    toast('Copied');
   } else if (act === 'expand') {
+    if (e.target.closest('a')) return;
     ui.expanded.has(it.id) ? ui.expanded.delete(it.id) : ui.expanded.add(it.id);
     renderDrops();
+  } else if (act === 'expand-tile') {
+    openTextViewer(it);
   } else if (act === 'open') {
-    openFile(it);
+    if (it.kind === 'file') openFile(it);
+    else if (singleUrl(it.data.text || '')) window.open(singleUrl(it.data.text), '_blank', 'noopener');
+    else openTextViewer(it);
   } else if (act === 'download') {
     files.download(it);
   } else if (act === 'share') {
@@ -735,6 +933,15 @@ async function onFeedClick(e) {
   } else if (act === 'menu') {
     dropMenu(a, it);
   }
+}
+
+function openTextViewer(it) {
+  ui.viewing = null;
+  el.viewerTitle.textContent = 'Message';
+  el.viewerShare.hidden = true;
+  el.viewerDownload.hidden = true;
+  el.viewerBody.innerHTML = `<pre class="text-view">${linkify(it.data.text || '')}</pre>`;
+  openDialog(el.dlgViewer);
 }
 
 function dropMenu(anchor, it) {
@@ -767,9 +974,153 @@ function dropMenu(anchor, it) {
       m.push({ icon: 'copy', label: 'Copy image', run: () => files.copyImage(it).then(() => toast('Image copied')).catch(() => toast('Copy is not supported for this image.')) });
     }
   }
+  m.push({ icon: 'folder', label: folderOf(it) ? 'Move to another folder…' : 'Move to folder…', run: () => moveMenu(anchor, [it.id]) });
+  m.push({ icon: 'check', label: 'Select', run: () => { enterSelect(); toggleSelect(it.id); } });
   m.push({ icon: 'pin', label: it.data.keep ? 'Unpin' : 'Pin (never auto-delete)', run: () => { it.data = { ...it.data, keep: !it.data.keep }; store.save(it).then(() => sync.schedule()); } });
   m.push({ icon: 'trash', label: 'Move to Trash', danger: true, run: () => deleteWithUndo(it, it.kind === 'clip' ? 'Message' : 'File') });
   openMenu(anchor, m);
+}
+
+/* ───────── folders ───────── */
+
+async function createFolder() {
+  const name = await promptDialog('New folder', 'e.g. School, Receipts, Photos', '');
+  if (!name) return null;
+  const now = Date.now();
+  const f = { id: rid(16), kind: 'folder', rev: 0, created: now, updated: now, device: me(), data: { name: name.slice(0, 60) } };
+  await store.save(f);
+  sync.schedule();
+  return f;
+}
+async function renameFolder(id) {
+  const f = store.items.get(id);
+  if (!f) return;
+  const name = await promptDialog('Rename folder', 'Folder name', f.data.name || '');
+  if (!name || name === f.data.name) return;
+  f.data = { ...f.data, name: name.slice(0, 60) };
+  await store.save(f);
+  sync.schedule();
+}
+async function deleteFolder(id) {
+  const f = store.items.get(id);
+  if (!f) return;
+  const n = dropItems().filter((i) => i.data.folder === id).length;
+  const ok = await confirmDialog(`Delete the folder “${f.data.name}”?`, n ? `The ${n} item${n === 1 ? '' : 's'} inside stay${n === 1 ? 's' : ''} in All drops.` : 'It is empty.', 'Delete folder', true);
+  if (!ok) return;
+  if (ui.dview === 'f:' + id) ui.dview = 'all';
+  await store.remove(f);
+  sync.schedule();
+  renderDrops();
+}
+function folderMenu(anchor) {
+  const id = currentFolder();
+  if (!id) return;
+  openMenu(anchor, [
+    { icon: 'note', label: 'Rename folder', run: () => renameFolder(id) },
+    { icon: 'trash', label: 'Delete folder', danger: true, run: () => deleteFolder(id) }
+  ]);
+}
+function moveMenu(anchor, ids) {
+  const items = folders().map((f) => ({ icon: 'folder', label: f.data.name || 'Folder', run: () => moveTo(ids, f.id) }));
+  if (ids.some((id) => { const it = store.items.get(id); return it && folderOf(it); })) items.push({ icon: 'drops', label: 'Take out of folder', run: () => moveTo(ids, null) });
+  items.push({ icon: 'plus', label: 'New folder…', run: async () => { const f = await createFolder(); if (f) moveTo(ids, f.id); } });
+  openMenu(anchor, items);
+}
+async function moveTo(ids, folderId) {
+  let n = 0;
+  for (const id of ids) {
+    const it = store.items.get(id);
+    if (!it || (it.data.folder || null) === folderId) continue;
+    const { folder, ...rest } = it.data;
+    it.data = folderId ? { ...rest, folder: folderId } : rest;
+    await store.save(it);
+    n++;
+  }
+  sync.schedule();
+  exitSelect();
+  const f = folderId && store.items.get(folderId);
+  if (n) toast(f ? `Moved ${n} item${n === 1 ? '' : 's'} to “${f.data.name}”` : `Took ${n} item${n === 1 ? '' : 's'} out of the folder`);
+}
+
+/* ───────── selecting several drops ───────── */
+
+function enterSelect() {
+  if (ui.selecting) return;
+  ui.selecting = true;
+  ui.selected.clear();
+  el.app.classList.add('selecting');
+  renderSelectBar();
+  renderDrops();
+}
+function exitSelect() {
+  if (!ui.selecting) return;
+  ui.selecting = false;
+  ui.selected.clear();
+  el.app.classList.remove('selecting');
+  renderSelectBar();
+  renderDrops();
+}
+function toggleSelect(id) {
+  ui.selected.has(id) ? ui.selected.delete(id) : ui.selected.add(id);
+  renderSelectBar();
+  renderDrops();
+}
+function renderSelectBar() {
+  el.selectBar.hidden = !ui.selecting;
+  el.composer.hidden = ui.selecting;
+  el.btnSelect.textContent = ui.selecting ? 'Done' : 'Select';
+  const n = ui.selected.size;
+  el.selCount.textContent = n ? `${n} selected` : 'Tap items to select';
+  for (const b of $$('[data-sel]', el.selectBar)) if (!['cancel', 'all'].includes(b.dataset.sel)) b.disabled = !n;
+}
+async function onSelectBar(e) {
+  const b = e.target.closest('[data-sel]');
+  if (!b) return;
+  const ids = [...ui.selected].filter((id) => store.items.has(id));
+  const act = b.dataset.sel;
+  if (act === 'cancel') return exitSelect();
+  if (act === 'all') {
+    const visible = dropItems().filter((i) => matchesView(i)).map((i) => i.id);
+    const allOn = visible.every((id) => ui.selected.has(id));
+    ui.selected = new Set(allOn ? [] : visible);
+    renderSelectBar();
+    renderDrops();
+    return;
+  }
+  if (!ids.length) return;
+  if (act === 'move') moveMenu(b, ids);
+  else if (act === 'download') {
+    const fl = ids.map((id) => store.items.get(id)).filter((i) => i && i.kind === 'file');
+    for (const it of fl) { files.download(it); await new Promise((r) => setTimeout(r, 350)); }
+    if (!fl.length) toast('Only files can be downloaded.');
+    exitSelect();
+  } else if (act === 'trash') {
+    for (const id of ids) {
+      const it = store.items.get(id);
+      if (!it) continue;
+      it.data = { ...it.data, trashed: Date.now() };
+      await store.save(it);
+    }
+    sync.schedule();
+    exitSelect();
+    toast(`${ids.length} item${ids.length === 1 ? '' : 's'} moved to Trash`, {
+      action: 'Undo', duration: 6000,
+      onAction: async () => { for (const id of ids) await restoreItem(id); }
+    });
+  }
+}
+
+function promptDialog(title, placeholder, value) {
+  return new Promise((resolve) => {
+    el.promptTitle.textContent = title;
+    el.promptInput.placeholder = placeholder;
+    el.promptInput.value = value || '';
+    let result = null;
+    el.promptForm.onsubmit = (e) => { e.preventDefault(); result = el.promptInput.value.trim() || null; el.dlgPrompt.close(); };
+    el.dlgPrompt.addEventListener('close', () => resolve(result), { once: true });
+    openDialog(el.dlgPrompt);
+    setTimeout(() => { el.promptInput.focus(); el.promptInput.select(); }, 30);
+  });
 }
 
 /* ───────── sending ───────── */
@@ -795,10 +1146,12 @@ async function sendText() {
   sendClip(text);
 }
 
-async function sendClip(text) {
+async function sendClip(text, folder = currentFolder()) {
   const now = Date.now();
-  const item = { id: rid(16), kind: 'clip', rev: 0, created: now, updated: now, device: me(), data: { text } };
-  ui.stickBottom = true;
+  const data = { text };
+  if (folder) data.folder = folder;
+  const item = { id: rid(16), kind: 'clip', rev: 0, created: now, updated: now, device: me(), data };
+  ui.scrollTop = true;
   await store.save(item);
   sync.schedule();
   const url = singleUrl(text);
@@ -817,11 +1170,11 @@ async function linkPreview(id, url) {
   } catch {}
 }
 
-async function sendFiles(list) {
+async function sendFiles(list, folder) {
   if (!list.length) return;
   setTab('drops');
-  ui.stickBottom = true;
-  const items = await files.add(list);
+  ui.scrollTop = true;
+  const items = await files.add(list, { folder: folder === undefined ? currentFolder() : folder });
   if (items.length > 1) toast(`Sending ${items.length} files…`);
 }
 
@@ -1388,6 +1741,7 @@ async function openFile(it) {
   if (kind === 'pdf' && (isTouch() || isMobileLayout())) { window.open(files.mem.has(it.id) ? src : files.url(it.id), '_blank', 'noopener'); return; }
   if (!['image', 'video', 'audio', 'pdf'].includes(kind) && !textual) { files.download(it); return; }
   ui.viewing = it;
+  el.viewerDownload.hidden = false;
   el.viewerTitle.textContent = d.name;
   el.viewerShare.hidden = !files.canShare();
   if (files.canShare()) files.prefetch(it);

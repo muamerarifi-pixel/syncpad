@@ -14,14 +14,14 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
 const TRASH_DAYS = 30;
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
-const KINDS = new Set(['note', 'clip', 'file', 'settings']);
+const KINDS = new Set(['note', 'clip', 'file', 'settings', 'folder']);
 const PAIR_TTL = 10 * 60 * 1000;
 const ROUTE = /^\/api\/s\/([A-Za-z0-9_-]{20,64})\/(.+)$/;
 const DAY = 86400000;
@@ -854,6 +854,7 @@ function sanitize(kind, d) {
       parent: d.parent && ID_RE.test(d.parent) ? d.parent : null,
       keep: !!d.keep
     };
+    if (d.folder && ID_RE.test(d.folder)) out.folder = d.folder;
     if (trashed) out.trashed = trashed;
     if (typeof d.thumb === 'string' && d.thumb.startsWith('data:image/') && d.thumb.length < 200000) out.thumb = d.thumb;
     if (Number.isFinite(d.w) && Number.isFinite(d.h)) { out.w = Math.floor(d.w); out.h = Math.floor(d.h); }

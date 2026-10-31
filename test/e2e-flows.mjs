@@ -43,8 +43,8 @@ await P.evaluate(async () => {
   return r.type;
 });
 await P.goto(BASE + '/?shared=1');
-await P.waitForSelector('.drop-title >> text=scan.pdf', { timeout: 15000 });
-await P.waitForSelector('.drop-text >> text=example.org/article', { timeout: 5000 });
+await P.waitForSelector('.ri-title >> text=scan.pdf', { timeout: 15000 });
+await P.waitForSelector('.ri-title >> text=example.org/article', { timeout: 5000 });
 step('Android share target → file + link land in Drops');
 
 // 3) Join by link on a device that already has content → confirm → merged
@@ -60,8 +60,8 @@ await Q.goto(BASE + '/#join=' + key);
 await Q.waitForSelector('#dlg-confirm[open]', { timeout: 8000 });
 await Q.screenshot({ path: `${OUT}/13-mobile-join-confirm.png` });
 await Q.click('#confirm-ok');
-await Q.waitForSelector('.drop-title >> text=scan.pdf', { timeout: 15000 });
-await P.waitForSelector('.drop-text >> text=Note from the iPhone before joining', { timeout: 15000 });
+await Q.waitForSelector('.ri-title >> text=scan.pdf', { timeout: 15000 });
+await P.waitForSelector('.ri-title >> text=Note from the iPhone before joining', { timeout: 15000 });
 if ((await space(Q)) !== key) throw new Error('not joined');
 step('join link with confirm merges both sides');
 await Q.screenshot({ path: `${OUT}/14-iphone-feed.png` });

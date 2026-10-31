@@ -41,21 +41,21 @@ step('A sees 2 devices online');
 // Text message A -> B
 await A.fill('#composer-input', 'Hello from my laptop 👋 https://example.com');
 await A.keyboard.press('Enter');
-await B.waitForSelector('.drop-text >> text=Hello from my laptop', { timeout: 8000 });
+await B.waitForSelector('.ri-title >> text=Hello from my laptop', { timeout: 8000 });
 step('message A → B');
 
 // Message B -> A (mobile send button)
 await B.fill('#composer-input', 'Reply from phone');
 await B.click('#btn-send');
-await A.waitForSelector('.drop-text >> text=Reply from phone', { timeout: 8000 });
+await A.waitForSelector('.ri-title >> text=Reply from phone', { timeout: 8000 });
 step('message B → A');
 
 // File upload (2.5 MB binary) via picker on A
 const big = Buffer.alloc(2.5 * 1024 * 1024); for (let i = 0; i < big.length; i++) big[i] = (i * 7) & 255;
 await A.setInputFiles('#file-input', [{ name: 'report.zip', mimeType: 'application/zip', buffer: big }]);
-await B.waitForSelector('.drop-title >> text=report.zip', { timeout: 20000 });
+await B.waitForSelector('.ri-title >> text=report.zip', { timeout: 20000 });
 step('2.5 MB file A → B');
-const id = await B.getAttribute('.drop:has(.drop-title:text("report.zip"))', 'data-id');
+const id = await B.getAttribute('.ri:has(.ri-title:text("report.zip"))', 'data-id');
 const got = await B.evaluate(async ([s, id]) => { const r = await fetch(`/api/s/${s}/file/${id}?dl=1`); const b = new Uint8Array(await r.arrayBuffer()); let h = 0; for (const x of b) h = (h * 31 + x) >>> 0; return [b.length, h]; }, [spaceB, id]);
 let h = 0; for (const x of big) h = (h * 31 + x) >>> 0;
 if (got[0] !== big.length || got[1] !== h) throw new Error('file content mismatch ' + got);
@@ -71,7 +71,7 @@ await A.dispatchEvent('#feed', 'dragenter', { dataTransfer: dt });
 await A.dispatchEvent('#feed', 'dragover', { dataTransfer: dt });
 await A.screenshot({ path: `${OUT}/04-desktop-dragover.png` });
 await A.dispatchEvent('#feed', 'drop', { dataTransfer: dt });
-await B.waitForSelector('.drop.media .drop-title >> text=holiday-photo.png', { timeout: 15000 });
+await B.waitForSelector('.ri-title >> text=holiday-photo.png', { timeout: 15000 });
 step('drag & drop image A → B with thumbnail');
 await A.waitForTimeout(600);
 await A.screenshot({ path: `${OUT}/05-desktop-feed.png` });
@@ -138,7 +138,7 @@ await A.click('#editor-text');
 
 // Delete with undo on A, propagates to B
 await A.click('.tab[data-tab="drops"]');
-await A.click('.drop:has(.drop-text:text("Reply from phone")) [data-act="menu"]');
+await A.click('.ri:has(.ri-title:text("Reply from phone")) [data-act="menu"]');
 await A.click('.menu button.danger');
 await A.waitForTimeout(5600);
 await B.click('#btn-editor-back'); await B.waitForTimeout(250);
@@ -155,7 +155,7 @@ await B.waitForTimeout(400);
 await B.screenshot({ path: `${OUT}/09-mobile-offline.png` });
 await ctxB.setOffline(false);
 await B.evaluate(() => dispatchEvent(new Event('online')));
-await A.waitForSelector('.drop-text >> text=Written while offline', { timeout: 20000 });
+await A.waitForSelector('.ri-title >> text=Written while offline', { timeout: 20000 });
 step('offline message synced after reconnect');
 
 // Dark mode + settings on mobile
