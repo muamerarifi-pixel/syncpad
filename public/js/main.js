@@ -10,8 +10,9 @@ import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js
 import qrcode from '/vendor/qrcode.mjs';
 import { Markup } from './markup.js';
 import { Collage } from './collage.js';
+import { ZoomView } from './zoom.js';
 
-const VERSION = '2.8.1';
+const VERSION = '2.9.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -385,7 +386,26 @@ function wire() {
   el.viewerDownload.addEventListener('click', () => ui.viewing && files.download(ui.viewing));
   el.viewerShare.addEventListener('click', () => ui.viewing && files.share(ui.viewing).catch(() => {}));
   el.viewerMarkup.addEventListener('click', () => ui.viewing && openMarkup(ui.viewing));
-  el.dlgViewer.addEventListener('close', () => { el.viewerBody.innerHTML = ''; ui.viewing = null; });
+  el.dlgViewer.addEventListener('close', () => {
+    if (ui.zoom) { ui.zoom.destroy(); ui.zoom = null; }
+    el.viewerBody.innerHTML = '';
+    el.viewerBody.classList.remove('is-zoom');
+    ui.viewing = null;
+  });
+  el.viewerBody.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-zoom]');
+    if (!b || !ui.zoom) return;
+    if (b.dataset.zoom === 'in') ui.zoom.zoomBy(1.6);
+    else if (b.dataset.zoom === 'out') ui.zoom.zoomBy(1 / 1.6);
+    else ui.zoom.toggle();
+  });
+  el.dlgViewer.addEventListener('keydown', (e) => {
+    if (!ui.zoom || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === '+' || e.key === '=') ui.zoom.zoomBy(1.6);
+    else if (e.key === '-') ui.zoom.zoomBy(1 / 1.6);
+    else if (e.key === '0') ui.zoom.fit(true);
+  });
+  el.btnRefresh.addEventListener('click', refreshNow);
   markup = new Markup(el.dlgMarkup);
   collage = new Collage(el.dlgCollage);
 
@@ -1159,6 +1179,25 @@ async function openMarkup(it) {
     toast('Saved. The old version is deleted from every device.');
   } else toast('Saved as a new copy. The original is unchanged.');
   scheduleRender(true, false);
+}
+
+/* ───────── refresh: fresh connection + sync now ───────── */
+
+async function refreshNow() {
+  if (ui.refreshing) return;
+  ui.refreshing = true;
+  el.btnRefresh.classList.add('spinning');
+  el.btnRefresh.disabled = true;
+  const t0 = Date.now();
+  let ok = false;
+  try { ok = navigator.onLine && (await sync.refresh()); } catch {}
+  files.resumeAll();
+  await new Promise((r) => setTimeout(r, Math.max(0, 600 - (Date.now() - t0))));
+  el.btnRefresh.classList.remove('spinning');
+  el.btnRefresh.disabled = false;
+  ui.refreshing = false;
+  renderAll();
+  toast(ok ? 'Up to date' : !navigator.onLine ? 'You’re offline. Everything syncs when you’re back online.' : 'Could not reach SyncPad. Try again in a moment.');
 }
 
 /* ───────── collage: many photos in one picture ───────── */
@@ -2040,13 +2079,26 @@ async function openFile(it) {
   el.viewerShare.hidden = !files.canShare();
   if (files.canShare()) files.prefetch(it);
   let html = '';
-  if (kind === 'image') html = `<img src="${esc(src)}" alt="${esc(d.name)}">`;
+  if (kind === 'image') {
+    html = `<div class="zoom-stage"><img src="${esc(src)}" alt="${esc(d.name)}" draggable="false"></div>
+      <div class="zoom-bar" role="group" aria-label="Zoom">
+        <button data-zoom="out" aria-label="Zoom out" title="Zoom out (−)">−</button>
+        <button class="zoom-pct" data-zoom="fit" title="Whole photo / closer look (double-click)">Fit</button>
+        <button data-zoom="in" aria-label="Zoom in" title="Zoom in (+)">+</button>
+      </div>`;
+  }
   else if (kind === 'video') html = `<video src="${esc(src)}" controls autoplay playsinline></video>`;
   else if (kind === 'audio') html = `<audio src="${esc(src)}" controls autoplay></audio>`;
   else if (kind === 'pdf') html = `<iframe src="${esc(src)}" title="${esc(d.name)}"></iframe>`;
   else html = '<pre>Loading…</pre>';
+  if (ui.zoom) { ui.zoom.destroy(); ui.zoom = null; }
   el.viewerBody.innerHTML = html;
+  el.viewerBody.classList.toggle('is-zoom', kind === 'image');
   openDialog(el.dlgViewer);
+  if (kind === 'image') {
+    const pct = el.viewerBody.querySelector('.zoom-pct');
+    ui.zoom = new ZoomView(el.viewerBody.querySelector('.zoom-stage'), el.viewerBody.querySelector('img'), (label) => { pct.textContent = label; });
+  }
   if (textual) {
     try {
       const b = await files.blobOf(it);

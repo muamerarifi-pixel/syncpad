@@ -714,7 +714,21 @@ kbd { font: 600 12px var(--font); padding: 1px 6px; border-radius: 6px; border: 
 .viewer-bar { display: flex; align-items: center; gap: 6px; padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); }
 .viewer-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; padding-left: 6px; }
 .viewer-body { flex: 1; min-height: 0; display: grid; place-items: center; padding: 0 12px 16px; padding-bottom: max(16px, var(--safe-b)); }
-.viewer-body img, .viewer-body video { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; }
+.viewer-body { position: relative; overflow: hidden; }
+.viewer-body video { position: absolute; inset: 0 12px 16px; margin: auto; max-width: calc(100% - 24px); max-height: calc(100% - 16px); border-radius: 8px; }
+.viewer-body.is-zoom { display: block; padding: 0; }
+.zoom-stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; cursor: zoom-in; }
+.zoom-stage.zoomed { cursor: grab; }
+.zoom-stage.zoomed:active { cursor: grabbing; }
+.zoom-stage img { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; opacity: 0; -webkit-user-drag: none; will-change: transform; }
+.zoom-stage.ready img { opacity: 1; transition: opacity .12s; }
+.zoom-stage img.anim { transition: transform .22s ease, opacity .12s; }
+.zoom-bar { position: absolute; left: 50%; bottom: max(16px, var(--safe-b)); transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 999px; background: rgba(24,26,32,.8); backdrop-filter: blur(10px); box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.zoom-bar button { width: 38px; height: 38px; border: 0; border-radius: 999px; background: transparent; color: #fff; font: 500 21px/1 var(--font); cursor: pointer; }
+.zoom-bar .zoom-pct { width: auto; min-width: 62px; padding: 0 12px; font: 600 13.5px var(--font); }
+.zoom-bar button:hover { background: rgba(255,255,255,.14); }
+#btn-refresh.spinning .ic { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .viewer-body audio { width: min(520px, 100%); }
 .viewer-body iframe { width: 100%; height: 100%; border: 0; border-radius: 8px; background: #fff; }
 .viewer-body pre { width: min(900px, 100%); height: 100%; overflow: auto; margin: 0; padding: 16px; border-radius: 12px; background: #111318; color: #e5e7eb; font: 13px/1.6 var(--mono); white-space: pre-wrap; }

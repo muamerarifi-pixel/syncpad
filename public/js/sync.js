@@ -49,16 +49,55 @@ export class Sync extends EventTarget {
       });
       addEventListener('offline', () => this.setState('offline'));
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') { this.connect(); this.schedule(); }
+        if (document.visibilityState === 'visible') { this.checkAlive(3000); this.connect(); this.schedule(); }
       });
       // Safety net when WebSockets are blocked (some proxies / captive networks)
       setInterval(() => {
         if (!this.stopped && !this.wsOpen && navigator.onLine && document.visibilityState === 'visible') this.syncNow();
       }, 15000);
-      setInterval(() => { if (this.wsOpen) try { this.ws.send('ping'); } catch {} }, 30000);
+      setInterval(() => this.checkAlive(10000), 30000);
     }
     this.connect();
     this.syncNow();
+  }
+
+  /** A socket can look open after sleep / network changes but be dead: ping it, reconnect if no answer */
+  checkAlive(wait) {
+    const ws = this.ws;
+    if (!this.wsOpen || !ws) return;
+    const sent = Date.now();
+    try { ws.send('ping'); } catch { return this.reconnect(); }
+    setTimeout(() => { if (this.ws === ws && this.wsOpen && (this.lastPong || 0) < sent) this.reconnect(); }, wait);
+  }
+
+  /** Drop the current socket (without the usual close handling) and open a fresh one */
+  reconnect() {
+    const old = this.ws;
+    if (old) {
+      old.onopen = old.onmessage = old.onclose = null;
+      try { old.close(); } catch {}
+    }
+    this.ws = null;
+    this.wsOpen = false;
+    for (const w of this.waiters.values()) w.reject(new Error('closed')); // in-flight calls fall back to HTTP
+    this.waiters.clear();
+    this.backoff = 1000;
+    clearTimeout(this.reconnectTimer);
+    this.connect();
+  }
+
+  /** The refresh button: fresh connection + a full sync round now. Resolves true when synced. */
+  async refresh() {
+    if (this.stopped || this.denied || !this.space) return false;
+    const done = new Promise((res) => {
+      const on = () => { clearTimeout(t); res(true); };
+      const t = setTimeout(() => { this.removeEventListener('synced', on); res(false); }, 12000);
+      this.addEventListener('synced', on, { once: true });
+    });
+    this.reconnect();
+    await sleep(0);
+    this.syncNow();
+    return done;
   }
 
   stop() {
@@ -97,7 +136,7 @@ export class Sync extends EventTarget {
       this.syncNow();
     };
     ws.onmessage = (ev) => {
-      if (ev.data === 'pong') return;
+      if (ev.data === 'pong') { this.lastPong = Date.now(); return; }
       let m;
       try { m = JSON.parse(ev.data); } catch { return; }
       if (m.t === 'poke') {
@@ -191,7 +230,7 @@ export class Sync extends EventTarget {
       const id = rid(10);
       const p = new Promise((resolve, reject) => {
         this.waiters.set(id, { resolve, reject });
-        setTimeout(() => { if (this.waiters.has(id)) { this.waiters.delete(id); reject(new Error('timeout')); } }, 20000);
+        setTimeout(() => { if (this.waiters.has(id)) { this.waiters.delete(id); reject(new Error('timeout')); } }, 9000);
       });
       try {
         this.ws.send(JSON.stringify({ t: 'sync', rid: id, ...body }));

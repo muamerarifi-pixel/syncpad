@@ -1,6 +1,6 @@
 {
   "name": "syncpad",
-  "version": "2.8.1",
+  "version": "2.9.0",
   "description": "Send files, links and notes between all your devices \u2014 offline-first PWA on Cloudflare Workers (free plan)",
   "type": "module",
   "main": "worker.js",
