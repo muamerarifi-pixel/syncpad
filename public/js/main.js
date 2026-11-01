@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.27.7';
+const VERSION = '2.27.8';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -179,7 +179,7 @@ function wire() {
   // text zoom (note editor)
   el.btnZoomIn.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(1) : stepZoom(1)));
   el.btnZoomOut.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(-1) : stepZoom(-1)));
-  el.btnZoomReset.addEventListener('click', () => { if (canvasOpen()) { ui.canvas.zoomStep(0); return; } try { localStorage.setItem('sp-zoom', '1'); } catch {} applyZoom(); });
+  el.btnZoomReset.addEventListener('click', () => { if (canvasOpen()) { ui.canvas.zoomStep(0); return; } currentZoom = 1; try { localStorage.setItem('sp-zoom', '1'); } catch {} applyZoom(); });
   $('.zoom').addEventListener('mousedown', (e) => e.preventDefault());
   setupEditorZoomGestures();
 
@@ -3677,26 +3677,55 @@ function dataUrlToBlob(u) {
 /* ═════════════════════════ text zoom (this device) ═════════════════════════ */
 
 const ZOOMS = [0.7, 0.8, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2, 2.5, 3, 3.5, 4, 5];
+let currentZoom = null;
+let zoomRaf = 0;
+let zoomSaveTimer = null;
+
 function getZoom() {
+  if (currentZoom != null) return currentZoom;
   let z = 1;
   try { z = Number(localStorage.getItem('sp-zoom')) || 1; } catch {}
-  return Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z));
+  currentZoom = Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z));
+  return currentZoom;
 }
+
+function applyZoomStyles() {
+  const z = currentZoom || getZoom();
+  document.documentElement.style.setProperty('--note-zoom', String(z));
+  if (canvasOpen()) return;
+  const label = Math.round(z * 100) + '%';
+  if (el.btnZoomReset && el.btnZoomReset.textContent !== label) el.btnZoomReset.textContent = label;
+  if (ui.presenting) {
+    const pz = document.querySelector('.present-bar .zv');
+    if (pz && pz.textContent !== label) pz.textContent = label;
+  }
+  if (el.btnZoomOut) el.btnZoomOut.disabled = z <= ZOOMS[0] + 0.01;
+  if (el.btnZoomIn) el.btnZoomIn.disabled = z >= ZOOMS[ZOOMS.length - 1] - 0.01;
+}
+
 function setContinuousZoom(z, persist = true) {
   const clamped = Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z));
-  const rounded = Math.round(clamped * 100) / 100;
+  currentZoom = clamped;
+
   if (persist) {
-    try { localStorage.setItem('sp-zoom', String(rounded)); } catch {}
+    clearTimeout(zoomSaveTimer);
+    try { localStorage.setItem('sp-zoom', String(Math.round(clamped * 100) / 100)); } catch {}
+  } else {
+    clearTimeout(zoomSaveTimer);
+    zoomSaveTimer = setTimeout(() => {
+      try { localStorage.setItem('sp-zoom', String(Math.round(currentZoom * 100) / 100)); } catch {}
+    }, 180);
   }
-  document.documentElement.style.setProperty('--note-zoom', String(clamped));
-  if (canvasOpen()) return;
-  const label = Math.round(clamped * 100) + '%';
-  if (el.btnZoomReset) el.btnZoomReset.textContent = label;
-  const pz = document.querySelector('.present-bar .zv');
-  if (pz) pz.textContent = label;
-  if (el.btnZoomOut) el.btnZoomOut.disabled = clamped <= ZOOMS[0] + 0.01;
-  if (el.btnZoomIn) el.btnZoomIn.disabled = clamped >= ZOOMS[ZOOMS.length - 1] - 0.01;
+
+  // Batch DOM/CSS update via requestAnimationFrame for silky-smooth 60/120fps
+  if (!zoomRaf) {
+    zoomRaf = requestAnimationFrame(() => {
+      zoomRaf = 0;
+      applyZoomStyles();
+    });
+  }
 }
+
 function applyZoom() {
   if (canvasOpen()) {
     const cz = ui.canvas.zoom;
@@ -3708,7 +3737,9 @@ function applyZoom() {
     return;
   }
   setContinuousZoom(getZoom(), false);
+  applyZoomStyles();
 }
+
 function stepZoom(dir) {
   const z = getZoom();
   let i;
@@ -3718,8 +3749,8 @@ function stepZoom(dir) {
   } else {
     i = ZOOMS.reduce((acc, v, idx) => (v < z - 0.01 ? idx : acc), 0);
   }
-  try { localStorage.setItem('sp-zoom', String(ZOOMS[i])); } catch {}
-  applyZoom();
+  setContinuousZoom(ZOOMS[i], true);
+  applyZoomStyles();
 }
 
 function setupEditorZoomGestures() {
@@ -3732,22 +3763,22 @@ function setupEditorZoomGestures() {
   };
 
   // 1. PC Touchpad pinch & Ctrl+Wheel (scales note content only, never toolbars)
-  let wheelZoomTimer = null;
-  target.addEventListener('wheel', (e) => {
+  // Listening on window prevents edge-drift viewport zoom jumps while checking target container
+  window.addEventListener('wheel', (e) => {
     if (!e.ctrlKey) return;
     if (canvasOpen() || (el.editor && el.editor.hidden)) return;
     if (isExcluded(e.target)) return;
+    if (!target.contains(e.target) && !document.body.classList.contains('presenting')) return;
     e.preventDefault();
 
-    const dy = Math.max(-120, Math.min(120, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 40 : e.deltaY));
-    const factor = Math.exp(-dy * 0.0035);
-    const cur = getZoom();
-    setContinuousZoom(cur * factor, false);
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16;
+    else if (e.deltaMode === 2) dy *= 100;
 
-    clearTimeout(wheelZoomTimer);
-    wheelZoomTimer = setTimeout(() => {
-      setContinuousZoom(getZoom(), true);
-    }, 160);
+    dy = Math.max(-100, Math.min(100, dy));
+    const factor = Math.exp(-dy * 0.003);
+    const nextZoom = getZoom() * factor;
+    setContinuousZoom(nextZoom, false);
   }, { passive: false });
 
   // 2. iOS Safari gesture events (gesturestart / gesturechange / gestureend)
