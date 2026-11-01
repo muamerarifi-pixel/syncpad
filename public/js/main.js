@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.27.1';
+const VERSION = '2.27.2';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -335,8 +335,9 @@ function wire() {
   el.editorText.addEventListener('input', onEditorInput);
   el.editorText.addEventListener('input', (e) => {
     // a link typed in a note becomes a real link once you press space or Enter
-    if (e.inputType === 'insertParagraph' || (e.inputType === 'insertText' && /\s/.test(e.data || ''))) autoLink(e.inputType === 'insertParagraph');
+    if (e.inputType === 'insertFromPaste') linkifyAfterPaste(); else if (e.inputType === 'insertParagraph' || (e.inputType === 'insertText' && /\s/.test(e.data || ''))) autoLink(e.inputType === 'insertParagraph');
   });
+  el.editorText.addEventListener('paste', pasteIntoEditor);
   el.editorText.addEventListener('blur', () => saveNote.flush());
   el.editorText.addEventListener('keydown', onEditorKey);
   el.editorText.addEventListener('click', onEditorClick);
@@ -1742,11 +1743,26 @@ const previewCache = new Map();
 function linkPreviewData(url) {
   if (!previewCache.has(url)) {
     previewCache.set(url, (async () => {
-      const r = await fetch(`/api/link?s=${store.get('space')}&img=1&url=${encodeURIComponent(url)}`);
-      const j = await r.json();
-      if (!j || j.error) return null;
-      const thumb = j.image ? await shrinkImage(j.image, 160) : '';
-      return { title: j.title || '', site: j.site || '', desc: j.desc || '', thumb };
+      let host = '';
+      try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+      try {
+        const r = await fetch(`/api/link?s=${store.get('space')}&img=1&url=${encodeURIComponent(url)}`);
+        const j = await r.json();
+        if (j && !j.error) {
+          let thumb = j.image ? await shrinkImage(j.image, 160) : '';
+          if (!thumb && host) thumb = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`;
+          return { title: j.title || host, site: j.site || host, desc: j.desc || '', thumb };
+        }
+      } catch {}
+      if (host) {
+        return {
+          title: host,
+          site: host,
+          desc: '',
+          thumb: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`
+        };
+      }
+      return null;
     })().catch(() => { previewCache.delete(url); return null; }));
   }
   return previewCache.get(url);
@@ -1791,6 +1807,8 @@ function linkifyIn(root) {
       frag.append(t.slice(last, start));
       const a = document.createElement('a');
       a.href = /^www\./i.test(m[2]) ? 'https://' + m[2] : m[2];
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
       a.textContent = m[2];
       frag.append(a);
       made.push(a);
@@ -1837,7 +1855,7 @@ async function addLinkCard(a) {
   const p = await linkPreviewData(url);
   if (!p || !(p.title || p.thumb) || ui.noteId !== noteId || !a.isConnected) return;
   if ([...el.editorText.querySelectorAll('a.link-card')].some((c) => c.href === url)) return;
-  const blk = topBlock(a);
+  const blk = topBlock(a) || a;
   if (!blk) return;
   let host = '';
   try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
@@ -1847,7 +1865,7 @@ async function addLinkCard(a) {
   card.target = '_blank';
   card.rel = 'noopener noreferrer';
   card.contentEditable = 'false';
-  card.innerHTML = `${p.thumb ? `<img class="lc-img" src="${esc(p.thumb)}" alt="">` : ''}<span class="lc-t">${esc(p.title || host)}</span><span class="lc-d">${esc(p.site || host)}</span>`;
+  card.innerHTML = `${p.thumb ? `<img class="lc-img" src="${esc(p.thumb)}" alt="" loading="lazy">` : ''}<span class="lc-t">${esc(p.title || host)}</span><span class="lc-d">${esc(p.site || host)}</span>`;
   blk.after(card);
   if (!card.nextSibling) { const q = document.createElement('p'); q.innerHTML = '<br>'; card.after(q); }
   onEditorInput();
@@ -2345,6 +2363,11 @@ function noteMedia(n) {
     if (it && it.data.trashed) continue;
     thumb = (it && it.data.thumb) || files_src(id);
     if (thumb) break;
+  }
+  if (!thumb) {
+    const linkImg = html.match(/<img\b[^>]*class=["'][^"']*lc-img[^"']*["'][^>]*src=["']([^"']+)["']/i) ||
+                    html.match(/<img\b[^>]*src=["']([^"']+)["'][^>]*class=["'][^"']*lc-img[^"']*["']/i);
+    if (linkImg && linkImg[1]) thumb = linkImg[1];
   }
   return { imgs: imgs.length, files, thumb };
 }
@@ -3109,10 +3132,47 @@ async function attachToNote(list, point, at) {
 }
 
 function pasteIntoEditor(e) {
+  if (e._spHandled) return;
+  e._spHandled = true;
   const cd = e.clipboardData;
+  if (!cd) return;
   const html = cd.getData('text/html');
   const text = cd.getData('text/plain');
   e.preventDefault();
+
+  const trimmed = (text || '').trim();
+  const isUrl = /^https?:\/\/\S+$/i.test(trimmed) ? trimmed : (/^www\.[a-z0-9\-]+(\.[a-z0-9\-]+)+[^\s]*$/i.test(trimmed) ? 'https://' + trimmed : null);
+  if (isUrl) {
+    const linkHtml = `<a href="${esc(isUrl)}" target="_blank" rel="noopener noreferrer">${esc(trimmed)}</a>&nbsp;`;
+    let ok = false;
+    try {
+      ok = document.execCommand('insertHTML', false, linkHtml);
+    } catch {}
+    if (!ok) {
+      const sel = getSelection();
+      if (sel && sel.rangeCount && el.editorText.contains(sel.anchorNode)) {
+        const r = sel.getRangeAt(0);
+        r.deleteContents();
+        const a = document.createElement('a');
+        a.href = isUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = trimmed;
+        r.insertNode(a);
+        const sp = document.createTextNode('\u00A0');
+        a.after(sp);
+        r.setStartAfter(sp);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+    }
+    onEditorInput();
+    const links = [...el.editorText.querySelectorAll(`a[href="${CSS.escape ? CSS.escape(isUrl) : isUrl}"]`)].filter((x) => !x.classList.contains('link-card'));
+    const newlyAdded = links[links.length - 1];
+    if (newlyAdded) addLinkCard(newlyAdded);
+    return;
+  }
   const o = declutterOpts();
   if (o && text && De.isAiText(text, html)) {
     const out = noteFromAi(text, html, o);

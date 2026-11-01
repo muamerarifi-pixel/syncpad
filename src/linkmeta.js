@@ -192,7 +192,9 @@ export function extractHtmlMetadata(html, targetUrl) {
 
     // 5. Favicon from <link rel="icon">
     const iconMatch = html.match(/<link\s+[^>]*rel=["'](?:shortcut\s+)?icon["'][^>]*href=["']([^"']+)["']/i) ||
-                      html.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut\s+)?icon["']/i);
+                      html.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut\s+)?icon["']/i) ||
+                      html.match(/<link\s+[^>]*rel=["']apple-touch-icon(?:-precomposed)?["'][^>]*href=["']([^"']+)["']/i) ||
+                      html.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']apple-touch-icon(?:-precomposed)?["']/i);
     if (iconMatch && iconMatch[1]) {
       try {
         result.favicon = new URL(iconMatch[1].trim(), targetUrl).href;
@@ -243,6 +245,7 @@ export async function getLinkPreview(target, opts = {}) {
       desc: String(meta.description || '').slice(0, 300)
     };
     if (opts.image && meta.image) out.image = await smallImage(meta.image, controller.signal);
+    if (opts.image && !out.image && meta.favicon) out.image = await smallImage(meta.favicon, controller.signal);
     return out;
   } catch {
     return { error: 'unreachable' };
@@ -258,7 +261,7 @@ async function smallImage(src, signal) {
     if (!['http:', 'https:'].includes(u.protocol) || isPrivateOrLocalHost(u.hostname)) return '';
     const res = await safeFetchWithRedirects(u.href, { signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SyncPadPreview/2.0)', 'Accept': 'image/*' } });
     const type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (!res.ok || !/^image\/(png|jpe?g|webp|gif|avif)$/.test(type)) return '';
+    if (!res.ok || !/^image\/(png|jpe?g|webp|gif|avif|x-icon|vnd\.microsoft\.icon|svg\+xml)$/.test(type)) return '';
     const reader = res.body.getReader();
     const chunks = [];
     let total = 0;
