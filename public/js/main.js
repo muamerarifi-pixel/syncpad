@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.24.0';
+const VERSION = '2.25.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -852,7 +852,7 @@ function renderDropsNav(all) {
   el.dhTitle.textContent = viewTitle();
   el.btnFolderMore.hidden = !currentFolder() || !!ui.query;
   for (const b of $$('[data-layout]', el.viewToggle)) b.setAttribute('aria-pressed', String(b.dataset.layout === ui.layout));
-  el.composerInput.placeholder = sendAs() === 'note' ? (currentFolder() ? `Write a note… (files go to “${viewTitle()}”)` : 'Write a note… (files and photos go to Drops)')
+  el.composerInput.placeholder = sendAs() === 'note' ? 'Write a note…'
     : currentFolder() ? `Send to “${viewTitle()}” — type, paste or drop…` : 'Type, paste or drop anything…';
 }
 
@@ -1708,7 +1708,7 @@ async function sendText() {
 /** what typed text in the Drops box becomes on this device: 'note' (default) or 'drop' */
 function sendAs() { return lsGet('sp-send-as', 'note') === 'drop' ? 'drop' : 'note'; }
 function renderComposerHint() {
-  el.composerInput.placeholder = sendAs() === 'note' ? 'Write a note… (files and photos go to Drops)' : 'Type, paste or drop anything…';
+  el.composerInput.placeholder = sendAs() === 'note' ? 'Write a note…' : 'Type, paste or drop anything…';
   el.btnSend.title = sendAs() === 'note' ? 'Save as a note' : 'Send to your devices';
   el.btnSend.setAttribute('aria-label', el.btnSend.title);
 }
