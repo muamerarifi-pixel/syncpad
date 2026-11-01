@@ -19,8 +19,8 @@
     <stop offset="0" stop-color="#3be39b"/><stop offset=".5" stop-color="#14b072"/><stop offset="1" stop-color="#0a8250"/>
   </linearGradient>
   <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
-    <feGaussianBlur in="SourceAlpha" stdDeviation="16"/><feOffset dy="22"/>
-    <feComponentTransfer><feFuncA type="linear" slope=".45"/></feComponentTransfer>
+    <feGaussianBlur in="SourceAlpha" stdDeviation="18"/><feOffset dy="22" result="b"/>
+    <feFlood flood-color="#12c27a" flood-opacity=".85"/><feComposite in2="b" operator="in"/>
     <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
   </filter>
   <filter id="inner" x="-10%" y="-10%" width="120%" height="120%">
@@ -40,11 +40,9 @@
 </defs>
 <rect width="512" height="512" rx="116" fill="url(#bg)"/>
 <rect width="512" height="512" rx="116" fill="url(#sheen)"/>
-<rect width="512" height="512" rx="116" fill="url(#glow)"/>
 <rect x="3" y="3" width="506" height="506" rx="113" fill="none" stroke="#fff" stroke-opacity=".15" stroke-width="3"/>
 <g transform="translate(256 262) scale(1.07) translate(-256 -262)">
 <g filter="url(#shadow)"><path d="M168.00 356.00A62.00 62.00 0 0 1 141.63 237.89A20 20 0 0 0 152.93 222.54A98.00 98.00 0 0 1 338.41 193.72A20 20 0 0 0 353.44 204.87A76.00 76.00 0 0 1 342.00 356.00Z" fill="url(#cloud)"/></g>
 <g clip-path="url(#cl)"><rect width="512" height="512" fill="url(#gloss)"/><path d="M168.00 356.00A62.00 62.00 0 0 1 141.63 237.89A20 20 0 0 0 152.93 222.54A98.00 98.00 0 0 1 338.41 193.72A20 20 0 0 0 353.44 204.87A76.00 76.00 0 0 1 342.00 356.00Z" filter="url(#inner)" fill="#000"/></g>
-<g filter="url(#inset)"><path d="M215.30 313.50A47 47 0 0 1 290.93 258.55" fill="none" stroke="url(#gr)" stroke-width="21" stroke-linecap="round"/><path d="M308.99 278.62L306.68 241.67L272.50 272.45Z" fill="url(#gr)" stroke="url(#gr)" stroke-width="6" stroke-linejoin="round"/><path d="M296.70 266.50A47 47 0 0 1 221.07 321.45" fill="none" stroke="url(#gr)" stroke-width="21" stroke-linecap="round"/><path d="M203.01 301.38L205.32 338.33L239.50 307.55Z" fill="url(#gr)" stroke="url(#gr)" stroke-width="6" stroke-linejoin="round"/></g>
 </g>
 </svg>
