@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.27.2';
+const VERSION = '2.27.3';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -390,6 +390,12 @@ function wire() {
   el.btnPin.addEventListener('click', togglePin);
   el.btnNoteMore.addEventListener('click', () => noteMenu(el.btnNoteMore));
   el.btnEditorBack.addEventListener('click', () => closeEditor());
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 3 && openNoteItem() && !$('dialog[open]')) {
+      e.preventDefault();
+      closeEditor();
+    }
+  });
   el.fmtBar.addEventListener('click', (e) => {
     const b = e.target.closest('[data-fmt]');
     if (b) format(b.dataset.fmt, b);
@@ -580,6 +586,14 @@ function wire() {
       return;
     }
     const mod = e.ctrlKey || e.metaKey;
+    const isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
+    if ((e.altKey && (e.key === 'ArrowLeft' || e.key === 'Left') && !isMac) || (isMac && e.metaKey && e.key === '[')) {
+      if (openNoteItem() && !$('dialog[open]')) {
+        e.preventDefault();
+        closeEditor();
+        return;
+      }
+    }
     if (ui.presenting && e.key === 'Escape') { e.preventDefault(); stopPresent(); return; }
     if (mod && e.key === '\\' && ui.tab === 'notes') { e.preventDefault(); toggleNotesList(); return; }
     if (mod && e.key.toLowerCase() === 'k') {
@@ -2377,8 +2391,12 @@ function openNote(id, { focus = true } = {}) {
   if (ui.noteId && ui.noteId !== id) saveNote.flush();
   ui.noteId = id;
   ui.savedRange = null;
-  if (isMobileLayout() && !el.app.classList.contains('editing')) {
-    el.app.classList.add('editing');
+  if (isMobileLayout()) {
+    if (!el.app.classList.contains('editing')) {
+      el.app.classList.add('editing');
+      pushLayer({ key: 'editor', close: () => closeEditor(true) });
+    }
+  } else if (!layers.some((l) => l.key === 'editor')) {
     pushLayer({ key: 'editor', close: () => closeEditor(true) });
   }
   renderEditor(true);
@@ -2422,8 +2440,10 @@ function closeEditor(fromLayer = false) {
   }
   if (isMobileLayout()) {
     el.app.classList.remove('editing');
-    if (!fromLayer) closeLayer('editor');
+  } else if (el.app.classList.contains('notes-hidden')) {
+    toggleNotesList(false);
   }
+  if (!fromLayer) closeLayer('editor');
   ui.noteId = null;
   ui.newNote = null;
   renderEditor(true);
@@ -3051,6 +3071,12 @@ function format(kind, btn) {
 function onEditorKey(e) {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveNote.flush(); return; }
+  const isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
+  if ((e.altKey && (e.key === 'ArrowLeft' || e.key === 'Left') && !isMac) || (isMac && e.metaKey && e.key === '[')) {
+    e.preventDefault();
+    closeEditor();
+    return;
+  }
   if (e.key === ' ' && !mod && !e.isComposing) autoFormat(e);
   if (e.key === 'Enter' && !e.shiftKey) {
     const li = caretElement() && caretElement().closest('ul[data-checklist] > li');
