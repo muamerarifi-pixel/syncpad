@@ -127,11 +127,11 @@ export function noteTitle(body) {
   }
   return 'Untitled';
 }
-export function noteSnippet(body) {
+export function noteSnippet(body, max = 140, sep = ' · ') {
   const lines = (body || '').split('\n')
     .map((l) => l.trim().replace(/^(#{1,6}\s+|>\s*|(?:[-*+]|\d+\.)\s+(?:\[([ xX])\]\s+)?)/, (m, a, x) => (x === undefined ? '' : x === ' ' ? '☐ ' : '☑ ')))
     .filter(Boolean);
-  return lines.slice(1).join(' · ').replace(/!\[[^\]]*\]\([^)]*\)/g, '🖼').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`~]/g, '').trim().slice(0, 140);
+  return lines.slice(1).join(sep).replace(/!\[[^\]]*\]\([^)]*\)/g, '🖼').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`~]/g, '').trim().slice(0, max);
 }
 const TAG_RE = /(?:^|\s)#([\p{L}\p{N}_-]{1,32})/gu;
 export function noteTags(body) {

@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.25.4';
+const VERSION = '2.26.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -304,6 +304,8 @@ function wire() {
   el.feedInner.addEventListener('contextmenu', onFeedContext);
   el.dropsSide.addEventListener('contextmenu', onSideContext);
   el.noteList.addEventListener('contextmenu', onNoteListContext);
+  if (window.ResizeObserver) { let w = 0; new ResizeObserver(() => { const nw = el.noteList.offsetWidth; if (nw !== w) { w = nw; layoutNoteGrid(); } }).observe(el.noteList); }
+  document.fonts?.ready.then(() => layoutNoteGrid());
   el.feed.addEventListener('scroll', () => {
     ui.atBottom = el.feed.scrollHeight - el.feed.scrollTop - el.feed.clientHeight < 60;
   }, { passive: true });
@@ -2312,10 +2314,24 @@ function renderNotesList() {
     .map((n) => { const m = noteMedia(n); return `<button class="note-item${m.thumb ? ' has-thumb' : ''}" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}"${n.data.color ? ` data-color="${esc(n.data.color)}"` : ''}${isTouch() ? '' : ' draggable="true"'}>
       ${m.thumb ? `<img class="ni-thumb" src="${esc(m.thumb)}" alt="" loading="lazy" draggable="false">` : ''}
       <div class="t">${n.data.pinned ? '<svg class="ic"><use href="#i-pin"/></svg>' : ''}${n.data.canvas ? '<svg class="ic"><use href="#i-canvas"/></svg>' : ''}<span>${esc(noteTitle(noteText(n)))}</span></div>
-      <div class="s">${esc(noteSnippet(noteText(n))) || '&nbsp;'}</div>
+      ${(() => { const sn = noteSnippet(noteText(n), 600, '\n'); return sn ? `<div class="s">${esc(sn)}</div>` : ''; })()}
       <div class="d">${esc(shortDate(n.updated))}${m.imgs ? `<span class="ni-badge" title="${m.imgs} picture${m.imgs > 1 ? 's' : ''}"><svg class="ic"><use href="#i-image"/></svg>${m.imgs > 1 ? m.imgs : ''}</span>` : ''}${m.files ? `<span class="ni-badge" title="${m.files} file${m.files > 1 ? 's' : ''}"><svg class="ic"><use href="#i-clip"/></svg>${m.files > 1 ? m.files : ''}</span>` : ''}${n.data.conflictOf ? ' · <span class="warn">Conflict copy</span>' : ''}</div>
     </button>`; })
     .join('');
+  layoutNoteGrid();
+}
+
+/** grid view: each card takes only the height it needs, cards pack like a masonry wall */
+function layoutNoteGrid() {
+  const L = el.noteList;
+  if (!L.classList.contains('view-grid')) { L.classList.remove('masonry'); return; }
+  if (!L.offsetWidth) return;
+  L.classList.add('masonry');
+  const items = [...L.querySelectorAll(':scope > .note-item')];
+  for (const b of items) b.style.gridRowEnd = '';
+  const gap = parseFloat(getComputedStyle(L).columnGap) || 8;
+  const hs = items.map((b) => b.getBoundingClientRect().height);
+  items.forEach((b, i) => { b.style.gridRowEnd = `span ${Math.max(1, Math.ceil((hs[i] + gap) / 2))}`; });
 }
 
 /** pictures and files inside a note (normal or canvas), for the list */

@@ -1521,3 +1521,39 @@ html, body { overscroll-behavior-x: none; }
   margin: calc(-1 * var(--pad)) calc(-1 * var(--pad)) 6px; border: 0; border-bottom: 1px solid var(--border);
   border-radius: 13px 13px 0 0; object-fit: cover;
 }
+
+/* ───────── 2.26: titles wrap, more of each note shows in the list and grid ───────── */
+.note-item .t { align-items: flex-start; }
+.note-item .t .ic { margin-top: .22em; }
+.note-item .t span, .note-item .s {
+  white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+  display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; text-overflow: clip;
+}
+.note-item .s { white-space: pre-line; line-height: 1.42; margin-top: 2px; }
+.note-item .d { margin-top: 4px; }
+/* list */
+.note-list .note-item .t span { -webkit-line-clamp: 2; }
+.note-list .note-item .s { -webkit-line-clamp: 3; }
+.note-list.size-s .note-item .t span { -webkit-line-clamp: 1; }
+.note-list.size-s .note-item .s { display: -webkit-box; -webkit-line-clamp: 1; }
+.note-list.size-l .note-item .t span { -webkit-line-clamp: 3; }
+.note-list.size-l .note-item .s { -webkit-line-clamp: 7; }
+.note-list.view-list .note-item .ni-thumb { top: 12px; transform: none; }
+/* grid */
+.note-list.view-grid .note-item .t span { -webkit-line-clamp: 3; }
+.note-list.view-grid .note-item .s { -webkit-line-clamp: 7; flex: 0 0 auto; font-size: 13px; }
+.note-list.view-grid .note-item.has-thumb .s { -webkit-line-clamp: 4; }
+.note-list.view-grid.size-s .note-item .t span { -webkit-line-clamp: 2; }
+.note-list.view-grid.size-s .note-item .s { display: -webkit-box; -webkit-line-clamp: 3; font-size: 12px; }
+.note-list.view-grid.size-s .note-item.has-thumb .s { -webkit-line-clamp: 2; }
+.note-list.view-grid.size-l .note-item .t span { -webkit-line-clamp: 4; }
+.note-list.view-grid.size-l .note-item .s { -webkit-line-clamp: 12; }
+.note-list.view-grid.size-l .note-item.has-thumb .s { -webkit-line-clamp: 6; }
+.note-list.view-grid .note-item .d { margin-top: auto; padding-top: 6px; }
+/* masonry grid: rows are 2px tall, each card spans as many as it needs */
+.note-list.view-grid.masonry { grid-auto-rows: 2px; row-gap: 0; }
+.note-list.view-grid.masonry .note-item { align-self: start; }
+.note-list .note-item .s { white-space: pre-line; }
+.note-list.view-grid.masonry .note-item { min-height: 0; }
+.note-list.view-grid.masonry .note-item:not(.has-thumb) { min-height: calc(var(--card, 140px) * .5); }
+.note-list.view-grid .note-item .s, .note-list.size-l .note-item .s { white-space: pre-line; }
