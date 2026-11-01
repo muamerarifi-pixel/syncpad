@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.22.0';
+const VERSION = '2.23.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -852,7 +852,8 @@ function renderDropsNav(all) {
   el.dhTitle.textContent = viewTitle();
   el.btnFolderMore.hidden = !currentFolder() || !!ui.query;
   for (const b of $$('[data-layout]', el.viewToggle)) b.setAttribute('aria-pressed', String(b.dataset.layout === ui.layout));
-  el.composerInput.placeholder = currentFolder() ? `Send to “${viewTitle()}” — type, paste or drop…` : 'Type, paste or drop anything…';
+  el.composerInput.placeholder = sendAs() === 'note' ? (currentFolder() ? `Write a note… (files go to “${viewTitle()}”)` : 'Write a note… (files and photos go to Drops)')
+    : currentFolder() ? `Send to “${viewTitle()}” — type, paste or drop…` : 'Type, paste or drop anything…';
 }
 
 function typeMenu(anchor) {
@@ -2237,7 +2238,17 @@ function positionPasteChip() {
   const show = !!t && el.app.classList.contains('kb-open') && !!(navigator.clipboard && navigator.clipboard.read) && !ui.presenting;
   chip.hidden = !show;
   if (!show) return;
-  chip.style.top = (vv ? vv.offsetTop + vv.height : innerHeight) - chip.offsetHeight - 10 + 'px';
+  if (t === el.composerInput) {
+    // sit just above the message box, never on top of its buttons
+    const r = el.composer.getBoundingClientRect();
+    chip.style.left = r.left + 6 + 'px';
+    chip.style.right = 'auto';
+    chip.style.top = r.top - chip.offsetHeight - 8 + 'px';
+  } else {
+    chip.style.left = 'auto';
+    chip.style.right = '12px';
+    chip.style.top = (vv ? vv.offsetTop + vv.height : innerHeight) - chip.offsetHeight - 10 + 'px';
+  }
 }
 async function pasteFromClipboard() {
   const t = pasteTarget();

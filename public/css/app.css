@@ -8,10 +8,10 @@
   --muted: #646b76;
   --faint: #9aa1ab;
   --border: #e3e6eb;
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-soft: #eef0ff;
-  --accent-text: #3f37c9;
+  --accent: #4b5260;
+  --accent-hover: #3a404c;
+  --accent-soft: #eceef1;
+  --accent-text: #3a404c;
   --danger: #dc2626;
   --danger-soft: #fdecec;
   --ok: #16a34a;
@@ -37,10 +37,10 @@
   --muted: #9ba2ae;
   --faint: #6b7280;
   --border: #272b34;
-  --accent: #7c7ff5;
-  --accent-hover: #9497f8;
-  --accent-soft: rgba(124, 127, 245, .14);
-  --accent-text: #a5a8fb;
+  --accent: #6b7380;
+  --accent-hover: #7d8592;
+  --accent-soft: rgba(255, 255, 255, .09);
+  --accent-text: #d0d4db;
   --danger: #f87171;
   --danger-soft: rgba(248, 113, 113, .12);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
@@ -114,8 +114,8 @@ a { color: var(--accent-text); }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: -.01em; min-width: 0; }
 .logo {
   width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: #fff;
-  background: linear-gradient(135deg, #6366f1, #7c3aed);
 }
+.logo img { width: 32px; height: 32px; display: block; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .18)); }
 .logo .ic { width: 18px; height: 18px; stroke-width: 2.4; }
 .tabs { display: flex; gap: 4px; background: var(--surface-2); padding: 4px; border-radius: 12px; margin-left: 12px; }
 .tab {
@@ -608,7 +608,7 @@ a { color: var(--accent-text); }
 .type-btn.on { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
 .type-btn .ic { width: 15px; height: 15px; }
 .feed { position: relative; }
-.marquee { position: absolute; z-index: 6; border: 1px solid var(--accent); background: rgba(99, 102, 241, .14); border-radius: 4px; pointer-events: none; }
+.marquee { position: absolute; z-index: 6; border: 1px solid var(--accent); background: rgba(107, 114, 128, .14); border-radius: 4px; pointer-events: none; }
 .app.marquee-on .feed { user-select: none; -webkit-user-select: none; }
 @media (hover: hover) and (pointer: fine) { .ri, .tile { user-select: none; -webkit-user-select: none; } .ri-text { user-select: text; -webkit-user-select: text; } }
 @media (max-width: 860px) {
@@ -674,7 +674,7 @@ html.locked .app, html.privacy .app { visibility: hidden; }
 .drop-overlay {
   pointer-events: none;
   position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px;
-  background: rgba(79, 70, 229, .12); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  background: rgba(75, 82, 96, .12); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
 }
 .drop-card {
   width: min(520px, 100%); padding: 48px 24px; border-radius: 28px; border: 3px dashed var(--accent);
