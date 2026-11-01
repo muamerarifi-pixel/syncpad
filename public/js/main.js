@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.27.6';
+const VERSION = '2.27.7';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -181,6 +181,7 @@ function wire() {
   el.btnZoomOut.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(-1) : stepZoom(-1)));
   el.btnZoomReset.addEventListener('click', () => { if (canvasOpen()) { ui.canvas.zoomStep(0); return; } try { localStorage.setItem('sp-zoom', '1'); } catch {} applyZoom(); });
   $('.zoom').addEventListener('mousedown', (e) => e.preventDefault());
+  setupEditorZoomGestures();
 
   // PIN lock
   el.keypad.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) pinKey(b.dataset.k); });
@@ -3681,30 +3682,148 @@ function getZoom() {
   try { z = Number(localStorage.getItem('sp-zoom')) || 1; } catch {}
   return Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z));
 }
+function setContinuousZoom(z, persist = true) {
+  const clamped = Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z));
+  const rounded = Math.round(clamped * 100) / 100;
+  if (persist) {
+    try { localStorage.setItem('sp-zoom', String(rounded)); } catch {}
+  }
+  document.documentElement.style.setProperty('--note-zoom', String(clamped));
+  if (canvasOpen()) return;
+  const label = Math.round(clamped * 100) + '%';
+  if (el.btnZoomReset) el.btnZoomReset.textContent = label;
+  const pz = document.querySelector('.present-bar .zv');
+  if (pz) pz.textContent = label;
+  if (el.btnZoomOut) el.btnZoomOut.disabled = clamped <= ZOOMS[0] + 0.01;
+  if (el.btnZoomIn) el.btnZoomIn.disabled = clamped >= ZOOMS[ZOOMS.length - 1] - 0.01;
+}
 function applyZoom() {
-  queueMicrotask(() => { const pz = document.querySelector('.present-bar .zv'); if (pz) pz.textContent = el.btnZoomReset.textContent; });
-  const z = getZoom();
-  document.documentElement.style.setProperty('--note-zoom', String(z));
   if (canvasOpen()) {
     const cz = ui.canvas.zoom;
-    el.btnZoomReset.textContent = `${Math.round(cz * 100)}%`;
+    el.btnZoomReset.textContent = Math.round(cz * 100) + '%';
     el.btnZoomOut.disabled = cz <= 0.5;
     el.btnZoomIn.disabled = cz >= 5;
+    const pz = document.querySelector('.present-bar .zv');
+    if (pz) pz.textContent = el.btnZoomReset.textContent;
     return;
   }
-  el.btnZoomReset.textContent = `${Math.round(z * 100)}%`;
-  el.btnZoomOut.disabled = z <= ZOOMS[0];
-  el.btnZoomIn.disabled = z >= ZOOMS[ZOOMS.length - 1];
+  setContinuousZoom(getZoom(), false);
 }
 function stepZoom(dir) {
   const z = getZoom();
-  let i = ZOOMS.findIndex((v) => v >= z - 0.001);
-  if (i < 0) i = ZOOMS.length - 1;
-  i = Math.max(0, Math.min(ZOOMS.length - 1, i + dir));
+  let i;
+  if (dir > 0) {
+    i = ZOOMS.findIndex((v) => v > z + 0.01);
+    if (i < 0) i = ZOOMS.length - 1;
+  } else {
+    i = ZOOMS.reduce((acc, v, idx) => (v < z - 0.01 ? idx : acc), 0);
+  }
   try { localStorage.setItem('sp-zoom', String(ZOOMS[i])); } catch {}
   applyZoom();
 }
 
+function setupEditorZoomGestures() {
+  const target = el.editorPane;
+  if (!target) return;
+
+  const isExcluded = (node) => {
+    if (!node || !node.closest) return false;
+    return !!node.closest('.editor-bar, .fmt-bar, .cv-bar, .editor-foot, dialog, .present-bar');
+  };
+
+  // 1. PC Touchpad pinch & Ctrl+Wheel (scales note content only, never toolbars)
+  let wheelZoomTimer = null;
+  target.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    if (canvasOpen() || (el.editor && el.editor.hidden)) return;
+    if (isExcluded(e.target)) return;
+    e.preventDefault();
+
+    const dy = Math.max(-120, Math.min(120, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 40 : e.deltaY));
+    const factor = Math.exp(-dy * 0.0035);
+    const cur = getZoom();
+    setContinuousZoom(cur * factor, false);
+
+    clearTimeout(wheelZoomTimer);
+    wheelZoomTimer = setTimeout(() => {
+      setContinuousZoom(getZoom(), true);
+    }, 160);
+  }, { passive: false });
+
+  // 2. iOS Safari gesture events (gesturestart / gesturechange / gestureend)
+  let gestureZoom = null;
+  target.addEventListener('gesturestart', (e) => {
+    if (canvasOpen() || (el.editor && el.editor.hidden) || isExcluded(e.target)) {
+      gestureZoom = null;
+      return;
+    }
+    e.preventDefault();
+    gestureZoom = getZoom();
+  }, { passive: false });
+
+  target.addEventListener('gesturechange', (e) => {
+    if (gestureZoom == null || canvasOpen() || (el.editor && el.editor.hidden)) return;
+    e.preventDefault();
+    setContinuousZoom(gestureZoom * e.scale, false);
+  }, { passive: false });
+
+  const finishGesture = () => {
+    if (gestureZoom != null) {
+      setContinuousZoom(getZoom(), true);
+      gestureZoom = null;
+    }
+  };
+  target.addEventListener('gestureend', finishGesture);
+  target.addEventListener('gesturecancel', finishGesture);
+
+  // 3. Mobile Touchscreen two-finger pinch (Android, touchscreen PCs, iOS fallback)
+  let notePinch = null;
+  target.addEventListener('touchstart', (e) => {
+    if (canvasOpen() || (el.editor && el.editor.hidden) || isExcluded(e.target)) {
+      notePinch = null;
+      return;
+    }
+    if (e.touches.length === 2) {
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const d = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+      notePinch = {
+        d: Math.max(d, 8),
+        z: getZoom()
+      };
+    } else {
+      notePinch = null;
+    }
+  }, { passive: true });
+
+  target.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2) {
+      if (canvasOpen() || (el.editor && el.editor.hidden) || isExcluded(e.target)) return;
+      // Prevent mobile browser viewport from zooming the entire page/toolbar
+      e.preventDefault();
+      if (gestureZoom != null) return; // handled by gesturechange
+      const t0 = e.touches[0];
+      const t1 = e.touches[1];
+      const d = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+      if (!notePinch) {
+        notePinch = { d: Math.max(d, 8), z: getZoom() };
+        return;
+      }
+      const ratio = d / notePinch.d;
+      setContinuousZoom(notePinch.z * ratio, false);
+    } 
+  }, { passive: false });
+
+  const finishPinch = (e) => {
+    if (notePinch) {
+      if (e.touches && e.touches.length >= 2) return;
+      setContinuousZoom(getZoom(), true);
+      notePinch = null;
+    }
+  };
+  target.addEventListener('touchend', finishPinch, { passive: true });
+  target.addEventListener('touchcancel', finishPinch, { passive: true });
+}
 /* ═════════════════════════ PIN lock (this device only) ═════════════════════════ */
 
 const lk = { mode: null, digits: '', first: '', done: null, busy: false, queue: [], hiddenAt: 0, away: 0 };
