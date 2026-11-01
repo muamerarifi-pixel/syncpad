@@ -10,7 +10,7 @@ const SYS = "system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif";
 const PAPER = { sepia: '#f4ecd8', 'sepia-lined': '#f4ecd8' };
 const INK = { sepia: '#3b2f20', 'sepia-lined': '#3b2f20' };
 const TEXT_CSS = 'h1{font-size:1.6em;margin:.15em 0 .3em;line-height:1.2}h2{font-size:1.35em;margin:.15em 0 .3em;line-height:1.2}h3{font-size:1.15em;margin:.15em 0 .3em}' +
-  'p,div{margin:0}p+p{margin-top:.35em}ul,ol{margin:.15em 0 .35em;padding-left:1.3em}a{color:#3a404c}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.2em .45em}' +
+  'p,div{margin:0}p+p{margin-top:.35em}ul,ol{margin:.15em 0 .35em;padding-left:1.3em}a{color:#087a4c}table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:.2em .45em}' +
   'ul[data-checklist]{list-style:none;padding-left:.2em}ul[data-checklist]>li::before{content:"☐ "}ul[data-checklist]>li[data-checked="true"]::before{content:"☑ "}';
 
 const ns = (svg) => svg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
