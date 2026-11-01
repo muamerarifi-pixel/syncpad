@@ -1,32 +1,50 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
 <defs>
   <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="#8f96a0"/><stop offset=".55" stop-color="#5f656f"/><stop offset="1" stop-color="#353a42"/>
+    <stop offset="0" stop-color="#959ca6"/><stop offset=".5" stop-color="#626872"/><stop offset="1" stop-color="#30353c"/>
   </linearGradient>
   <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/>
+    <stop offset="0" stop-color="#fff" stop-opacity=".24"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/>
   </linearGradient>
-  <linearGradient id="cloud" gradientUnits="userSpaceOnUse" x1="256.0" y1="148.0" x2="256.0" y2="360.0">
-    <stop offset="0" stop-color="#ffffff"/><stop offset=".6" stop-color="#f2f4f7"/><stop offset="1" stop-color="#cdd2d9"/>
-  </linearGradient>
-  <radialGradient id="gloss" gradientUnits="userSpaceOnUse" cx="236.0" cy="196.0" r="110.0">
-    <stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+  <radialGradient id="glow" cx=".5" cy=".8" r=".42">
+    <stop offset="0" stop-color="#1fc47f" stop-opacity=".16"/><stop offset="1" stop-color="#1fc47f" stop-opacity="0"/>
   </radialGradient>
+  <linearGradient id="cloud" gradientUnits="userSpaceOnUse" x1="0" y1="138" x2="0" y2="356">
+    <stop offset="0" stop-color="#ffffff"/><stop offset=".55" stop-color="#f3f5f8"/><stop offset="1" stop-color="#d3d8df"/>
+  </linearGradient>
+  <radialGradient id="gloss" gradientUnits="userSpaceOnUse" cx="226" cy="186" r="120">
+    <stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="gr" gradientUnits="userSpaceOnUse" x1="0" y1="219" x2="0" y2="361">
+    <stop offset="0" stop-color="#3be39b"/><stop offset=".5" stop-color="#14b072"/><stop offset="1" stop-color="#0a8250"/>
+  </linearGradient>
   <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
-    <feGaussianBlur in="SourceAlpha" stdDeviation="15.0"/><feOffset dy="20.0" result="b"/>
-    <feComponentTransfer><feFuncA type="linear" slope=".5"/></feComponentTransfer>
+    <feGaussianBlur in="SourceAlpha" stdDeviation="16"/><feOffset dy="22"/>
+    <feComponentTransfer><feFuncA type="linear" slope=".45"/></feComponentTransfer>
     <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
   </filter>
   <filter id="inner" x="-10%" y="-10%" width="120%" height="120%">
-    <feOffset dy="-7.0"/><feGaussianBlur stdDeviation="6.0" result="o"/>
+    <feOffset dy="-8"/><feGaussianBlur stdDeviation="7" result="o"/>
     <feComposite in="SourceAlpha" in2="o" operator="out" result="edge"/>
-    <feFlood flood-color="#8d95a0" flood-opacity=".5"/><feComposite in2="edge" operator="in"/>
+    <feFlood flood-color="#8a93a0" flood-opacity=".55"/><feComposite in2="edge" operator="in"/>
   </filter>
-  <clipPath id="cl"><circle cx="184.0" cy="280.0" r="60.0"/><circle cx="266.0" cy="238.0" r="90.0"/><circle cx="348.0" cy="288.0" r="54.0"/><rect x="118.0" y="278.0" width="276.0" height="82.0" rx="41.0"/></clipPath>
+  <filter id="inset" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur in="SourceAlpha" stdDeviation="2.2"/><feOffset dy="2.5" result="s"/>
+    <feFlood flood-color="#05522f" flood-opacity=".38"/><feComposite in2="s" operator="in" result="sh"/>
+    <feGaussianBlur in="SourceAlpha" stdDeviation="1.4"/><feOffset dy="2.2" result="o"/>
+    <feComposite in="SourceAlpha" in2="o" operator="out" result="edge"/>
+    <feFlood flood-color="#fff" flood-opacity=".55"/><feComposite in2="edge" operator="in" result="hl"/>
+    <feMerge><feMergeNode in="sh"/><feMergeNode in="SourceGraphic"/><feMergeNode in="hl"/></feMerge>
+  </filter>
+  <clipPath id="cl"><path d="M168.00 356.00A62.00 62.00 0 0 1 141.63 237.89A20 20 0 0 0 152.93 222.54A98.00 98.00 0 0 1 338.41 193.72A20 20 0 0 0 353.44 204.87A76.00 76.00 0 0 1 342.00 356.00Z"/></clipPath>
 </defs>
 <rect width="512" height="512" rx="116" fill="url(#bg)"/>
 <rect width="512" height="512" rx="116" fill="url(#sheen)"/>
-<rect x="3" y="3" width="506" height="506" rx="113" fill="none" stroke="#fff" stroke-opacity=".14" stroke-width="3"/>
-<g filter="url(#shadow)"><g fill="url(#cloud)"><circle cx="184.0" cy="280.0" r="60.0"/><circle cx="266.0" cy="238.0" r="90.0"/><circle cx="348.0" cy="288.0" r="54.0"/><rect x="118.0" y="278.0" width="276.0" height="82.0" rx="41.0"/></g></g>
-<g clip-path="url(#cl)"><rect width="512" height="512" fill="url(#gloss)"/><g filter="url(#inner)" fill="#000"><circle cx="184.0" cy="280.0" r="60.0"/><circle cx="266.0" cy="238.0" r="90.0"/><circle cx="348.0" cy="288.0" r="54.0"/><rect x="118.0" y="278.0" width="276.0" height="82.0" rx="41.0"/></g></g>
+<rect width="512" height="512" rx="116" fill="url(#glow)"/>
+<rect x="3" y="3" width="506" height="506" rx="113" fill="none" stroke="#fff" stroke-opacity=".15" stroke-width="3"/>
+<g transform="translate(256 262) scale(1.07) translate(-256 -262)">
+<g filter="url(#shadow)"><path d="M168.00 356.00A62.00 62.00 0 0 1 141.63 237.89A20 20 0 0 0 152.93 222.54A98.00 98.00 0 0 1 338.41 193.72A20 20 0 0 0 353.44 204.87A76.00 76.00 0 0 1 342.00 356.00Z" fill="url(#cloud)"/></g>
+<g clip-path="url(#cl)"><rect width="512" height="512" fill="url(#gloss)"/><path d="M168.00 356.00A62.00 62.00 0 0 1 141.63 237.89A20 20 0 0 0 152.93 222.54A98.00 98.00 0 0 1 338.41 193.72A20 20 0 0 0 353.44 204.87A76.00 76.00 0 0 1 342.00 356.00Z" filter="url(#inner)" fill="#000"/></g>
+<g filter="url(#inset)"><path d="M215.30 313.50A47 47 0 0 1 290.93 258.55" fill="none" stroke="url(#gr)" stroke-width="21" stroke-linecap="round"/><path d="M308.99 278.62L306.68 241.67L272.50 272.45Z" fill="url(#gr)" stroke="url(#gr)" stroke-width="6" stroke-linejoin="round"/><path d="M296.70 266.50A47 47 0 0 1 221.07 321.45" fill="none" stroke="url(#gr)" stroke-width="21" stroke-linecap="round"/><path d="M203.01 301.38L205.32 338.33L239.50 307.55Z" fill="url(#gr)" stroke="url(#gr)" stroke-width="6" stroke-linejoin="round"/></g>
+</g>
 </svg>
