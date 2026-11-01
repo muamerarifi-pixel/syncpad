@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.27.5';
+const VERSION = '2.27.6';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -372,7 +372,7 @@ function wire() {
     el.app.classList.add('dragging-note');
   });
   el.noteList.addEventListener('dragend', () => el.app.classList.remove('dragging-note'));
-  setupNoteSwipe();
+  setupNoteLongPress();
   setupTabSwipe();
   fitToKeyboard();
   setupPasteChip();
@@ -2045,18 +2045,18 @@ function notesViewMenu(anchor) {
   ]);
 }
 
-/* swipe a note left or right on a phone: it goes to Trash (Undo brings it back) */
-function setupNoteSwipe() {
+/* long-press a note on mobile: opens its menu */
+function setupNoteLongPress() {
   let s = null;
   el.noteList.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'touch') return;
     const b = e.target.closest('.note-item');
     ui.blockClick = false;
     if (!b) return;
-    s = { b, x: e.clientX, y: e.clientY, id: e.pointerId, on: false };
+    s = { b, x: e.clientX, y: e.clientY };
     const held = s;
     s.hold = setTimeout(() => {
-      if (s !== held || held.on) return;
+      if (s !== held) return;
       s = null;
       ui.blockClick = true; // the finger lifting must not open the note
       if (navigator.vibrate) navigator.vibrate(12);
@@ -2064,46 +2064,12 @@ function setupNoteSwipe() {
       if (n) noteItemMenu(b, n, { x: held.x, y: held.y });
     }, 500);
   });
+  const cancel = () => { if (s) { clearTimeout(s.hold); s = null; } };
   el.noteList.addEventListener('pointermove', (e) => {
-    if (!s || e.pointerId !== s.id) return;
-    const dx = e.clientX - s.x;
-    const dy = e.clientY - s.y;
-    if (Math.hypot(dx, dy) > 10) clearTimeout(s.hold);
-    if (!s.on) {
-      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { clearTimeout(s.hold); s = null; return; }
-      if (Math.abs(dx) < 14) return;
-      s.on = true;
-      s.b.classList.add('swiping');
-      try { s.b.setPointerCapture(e.pointerId); } catch {}
-    }
-    s.b.style.transform = `translateX(${dx}px)`;
-    s.b.style.opacity = String(Math.max(0.35, 1 - Math.abs(dx) / s.b.offsetWidth));
-    s.b.dataset.swipe = dx < 0 ? 'left' : 'right';
+    if (s && Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10) cancel();
   });
-  const end = (e) => {
-    if (!s || e.pointerId !== s.id) return;
-    clearTimeout(s.hold);
-    const { b, on } = s;
-    const dx = e.clientX - s.x;
-    s = null;
-    if (!on) return;
-    ui.swiped = Date.now();
-    const gone = Math.abs(dx) > b.offsetWidth * 0.35;
-    b.style.transition = 'transform .18s ease, opacity .18s ease';
-    b.style.transform = gone ? `translateX(${dx < 0 ? -110 : 110}%)` : '';
-    b.style.opacity = gone ? '0' : '';
-    setTimeout(() => {
-      b.classList.remove('swiping');
-      b.style.transition = '';
-      if (gone) {
-        const n = store.items.get(b.dataset.id);
-        if (n && dx > 0) archiveNote(n, !n.data.archived); // right: archive (in Archive: bring back)
-        else if (n) deleteWithUndo(n, 'Note'); // left: Trash
-      }
-    }, 190);
-  };
-  el.noteList.addEventListener('pointerup', end);
-  el.noteList.addEventListener('pointercancel', end);
+  el.noteList.addEventListener('pointerup', cancel);
+  el.noteList.addEventListener('pointercancel', cancel);
 }
 
 /* swipe between Drops and Notes: finger on phones, two-finger trackpad swipe on computers */
@@ -2139,7 +2105,7 @@ function setupTabSwipe() {
   views.addEventListener('touchstart', (e) => {
     if (e.touches.length !== 1 || tabSwipeBlocked(e.target)) { t = null; return; }
     const p = e.touches[0];
-    t = { x: p.clientX, y: p.clientY, t0: Date.now(), on: false, onNote: !!e.target.closest('.note-item'), view: ui.tab === 'notes' ? el.viewNotes : el.viewDrops };
+    t = { x: p.clientX, y: p.clientY, t0: Date.now(), on: false, view: ui.tab === 'notes' ? el.viewNotes : el.viewDrops };
   }, { passive: true });
   views.addEventListener('touchmove', (e) => {
     if (!t) return;
@@ -2150,7 +2116,7 @@ function setupTabSwipe() {
       if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) { t = null; return; }
       if (Math.abs(dx) < 16) return;
       const next = dx < 0 ? 'notes' : 'drops';
-      if (next === ui.tab || t.onNote) { t = null; return; } // swipes on a note archive / trash it instead
+      if (next === ui.tab) { t = null; return; }
       t.on = true;
     }
     t.dx = dx;

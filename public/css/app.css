@@ -1324,9 +1324,6 @@ kbd { font: 600 12px var(--font); padding: 1px 6px; border-radius: 6px; border: 
 /* swipe to Trash */
 .note-item { touch-action: pan-y; }
 .note-item.swiping { position: relative; z-index: 1; background: var(--surface-2); }
-.note-item.swiping[data-swipe]::after { content: "Trash"; position: absolute; top: 50%; transform: translateY(-50%); font-size: 12px; font-weight: 700; color: var(--danger); }
-.note-item.swiping[data-swipe="right"]::after { left: -64px; }
-.note-item.swiping[data-swipe="left"]::after { right: -64px; }
 /* status: just a quiet dot */
 .status-chip { width: 34px; padding: 0; justify-content: center; border: 0; background: transparent; opacity: .55; transition: opacity .3s; }
 .status-chip:hover { opacity: 1; }
@@ -1410,11 +1407,7 @@ html, body { overscroll-behavior-x: none; }
 .editor[data-font="system"] .editor-text, .editor[data-font="system"] .cv-world { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
 
 /* 2.20: right swipe = Archive (green), left swipe = Trash (red) */
-.note-item.swiping[data-swipe="right"]::after { content: "Archive"; color: var(--ok); left: -70px; }
-.app .note-list:has(.note-item) .note-item.swiping[data-swipe="right"] { box-shadow: -6px 0 0 var(--ok); }
-.note-item.swiping[data-swipe="left"] { box-shadow: 6px 0 0 var(--danger); }
 .note-item.ctx { background: var(--accent-soft); }
-.note-list.in-archive .note-item.swiping[data-swipe="right"]::after { content: "Restore"; }
 
 /* ───────── 2.22: links in notes ───────── */
 .rt a:not(.file-chip):not(.link-card) { text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; cursor: pointer; }
@@ -1551,8 +1544,6 @@ html, body { overscroll-behavior-x: none; }
 [data-theme="dark"] .note-list.view-list .note-item[aria-current="true"] { background: var(--green-soft); }
 [data-theme="dark"] .notes-pane { background: var(--bg); }
 @media (hover: none) { .note-list.view-list .note-item:hover { background: var(--surface); border-color: var(--border-strong); } [data-theme="dark"] .note-list.view-list .note-item:hover { background: var(--surface-2); } }
-.note-list.view-list .note-item.swiping[data-swipe="left"] { box-shadow: 6px 0 0 var(--danger), 0 3px 10px rgba(16, 24, 40, .08); }
-.note-list.view-list .note-item.swiping[data-swipe="right"] { box-shadow: -6px 0 0 var(--ok), 0 3px 10px rgba(16, 24, 40, .08); }
 
 /* ───────── 2.25.4: grid cards never squeeze; pictures fill the card top ───────── */
 .note-list.view-grid { grid-auto-rows: max-content; }
