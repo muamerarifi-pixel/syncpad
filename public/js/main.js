@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.27.3';
+const VERSION = '2.27.4';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2391,6 +2391,7 @@ function openNote(id, { focus = true } = {}) {
   if (ui.noteId && ui.noteId !== id) saveNote.flush();
   ui.noteId = id;
   ui.savedRange = null;
+  el.app.classList.remove('show-sidebar');
   if (isMobileLayout()) {
     if (!el.app.classList.contains('editing')) {
       el.app.classList.add('editing');
@@ -2399,6 +2400,7 @@ function openNote(id, { focus = true } = {}) {
   } else if (!layers.some((l) => l.key === 'editor')) {
     pushLayer({ key: 'editor', close: () => closeEditor(true) });
   }
+  applyNotesList();
   renderEditor(true);
   renderNotesList();
   if (focus && !isTouch()) focusEditorEnd();
@@ -2440,14 +2442,14 @@ function closeEditor(fromLayer = false) {
   }
   if (isMobileLayout()) {
     el.app.classList.remove('editing');
-  } else if (el.app.classList.contains('notes-hidden')) {
-    toggleNotesList(false);
   }
+  el.app.classList.remove('show-sidebar');
   if (!fromLayer) closeLayer('editor');
   ui.noteId = null;
   ui.newNote = null;
   renderEditor(true);
   renderNotesList();
+  applyNotesList();
 }
 
 function renderEditor(force) {
@@ -2586,18 +2588,16 @@ async function saveCanvas(n) {
 
 /* ───── privacy: hide the notes list, present one note full screen ───── */
 function applyNotesList() {
-  let hidden = false;
-  try { hidden = localStorage.getItem('sp-notes-list') === 'hidden'; } catch {}
-  el.app.classList.toggle('notes-hidden', hidden);
-  el.btnToggleList.setAttribute('aria-pressed', String(hidden));
-  el.btnToggleList.title = hidden ? 'Show the notes list (Ctrl+\\)' : 'Hide the notes list (Ctrl+\\)';
-  el.btnToggleList.setAttribute('aria-label', hidden ? 'Show the notes list' : 'Hide the notes list');
+  const show = el.app.classList.contains('show-sidebar');
+  el.btnToggleList.setAttribute('aria-pressed', String(show));
+  el.btnToggleList.title = show ? 'Hide the notes list (Ctrl+\\)' : 'Show the notes list (Ctrl+\\)';
+  el.btnToggleList.setAttribute('aria-label', show ? 'Hide the notes list' : 'Show the notes list');
   if (ui.canvas) ui.canvas.layout();
 }
-function toggleNotesList(hide) {
-  const now = el.app.classList.contains('notes-hidden');
-  const next = hide == null ? !now : hide;
-  try { localStorage.setItem('sp-notes-list', next ? 'hidden' : 'shown'); } catch {}
+function toggleNotesList(show) {
+  const now = el.app.classList.contains('show-sidebar');
+  const next = show == null ? !now : show;
+  el.app.classList.toggle('show-sidebar', next);
   applyNotesList();
 }
 function startPresent() {
