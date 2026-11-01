@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.26.2';
+const VERSION = '2.27.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1948,7 +1948,7 @@ function setNoteData(n, patch) {
 }
 function pickMenu(anchor, title, list, cur, apply, at) {
   openMenu(anchor, list.map(([v, label, color]) => ({
-    html: `${color ? `<span class="menu-swatch" style="--c:${color}"></span>` : `<svg class="ic"><use href="#i-${v === cur ? 'check' : 'box'}"/></svg>`}<span>${esc(label)}${v === cur ? ' ✓' : ''}</span>`,
+    html: `${color ? `<span class="menu-swatch" style="--c:${color}"></span>` : `<svg class="ic"><use href="#i-${v === cur ? 'check' : 'box'}"/></svg>`}<span>${esc(label)}${v === cur && color ? ' ✓' : ''}</span>`,
     run: () => apply(v)
   })), at ? { at } : {});
 }
