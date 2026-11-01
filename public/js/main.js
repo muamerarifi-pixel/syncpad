@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.25.3';
+const VERSION = '2.25.4';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;

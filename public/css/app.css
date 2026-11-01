@@ -1507,3 +1507,17 @@ html, body { overscroll-behavior-x: none; }
 @media (hover: none) { .note-list.view-list .note-item:hover { background: var(--surface); border-color: var(--border-strong); } [data-theme="dark"] .note-list.view-list .note-item:hover { background: var(--surface-2); } }
 .note-list.view-list .note-item.swiping[data-swipe="left"] { box-shadow: 6px 0 0 var(--danger), 0 3px 10px rgba(16, 24, 40, .08); }
 .note-list.view-list .note-item.swiping[data-swipe="right"] { box-shadow: -6px 0 0 var(--ok), 0 3px 10px rgba(16, 24, 40, .08); }
+
+/* ───────── 2.25.4: grid cards never squeeze; pictures fill the card top ───────── */
+.note-list.view-grid { grid-auto-rows: max-content; }
+.note-list.view-grid .note-item { --pad: 12px; padding: var(--pad); overflow: hidden; }
+.note-list.view-grid.size-s .note-item { --pad: 9px; }
+.note-list.view-grid.size-l .note-item { --pad: 14px; }
+.note-list.view-grid .note-item > * { flex-shrink: 0; }
+.note-list.view-grid .note-item .s { flex: 1 0 auto; }
+.note-list.view-grid .note-item.has-thumb { padding-right: var(--pad); }
+.note-list.view-grid .note-item .ni-thumb {
+  display: block; width: calc(100% + 2 * var(--pad)); max-width: none; height: auto; aspect-ratio: 16 / 10;
+  margin: calc(-1 * var(--pad)) calc(-1 * var(--pad)) 6px; border: 0; border-bottom: 1px solid var(--border);
+  border-radius: 13px 13px 0 0; object-fit: cover;
+}
