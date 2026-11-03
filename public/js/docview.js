@@ -83,6 +83,9 @@ async function viewPdf(box, blob, onLabel) {
 
   const wrap = document.createElement('div');
   wrap.className = 'dv-scroll dv-pdf';
+  const pagesBox = document.createElement('div');
+  pagesBox.className = 'dv-pdf-pages';
+  wrap.append(pagesBox);
   box.replaceChildren(wrap);
   const pages = [];
   let z = 1;
@@ -97,7 +100,7 @@ async function viewPdf(box, blob, onLabel) {
     const hlLayer = document.createElement('div');
     hlLayer.className = 'dv-highlights';
     el.append(hlLayer);
-    wrap.append(el);
+    pagesBox.append(el);
     pages.push({
       page,
       el,
@@ -211,12 +214,65 @@ async function viewPdf(box, blob, onLabel) {
   const label = () => onLabel(z === 1 ? 'Fit' : Math.round(z * 100) + '%');
   label();
 
+  const getAnchor = (at) => {
+    const r = wrap.getBoundingClientRect();
+    if (!at) return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, localX: r.width / 2, localY: r.height / 2 };
+    if ('clientX' in at) {
+      return { clientX: at.clientX, clientY: at.clientY, localX: at.clientX - r.left, localY: at.clientY - r.top };
+    }
+    return { clientX: r.left + at.x, clientY: r.top + at.y, localX: at.x, localY: at.y };
+  };
+
   let zoomTimer = 0;
-  const rezoom = (nz) => {
-    const anchor = wrap.scrollTop / Math.max(1, wrap.scrollHeight);
-    z = Math.max(0.5, Math.min(6, nz));
-    size();
-    wrap.scrollTop = anchor * wrap.scrollHeight;
+  const rezoom = (nz, at = null) => {
+    const oldZ = z;
+    const targetZ = Math.max(0.5, Math.min(6, nz));
+    if (Math.abs(targetZ - oldZ) < 0.001) return;
+
+    const anchor = getAnchor(at);
+
+    // Find if anchor is over a page
+    const pageUnder = pages.find((p) => {
+      const pr = p.el.getBoundingClientRect();
+      return anchor.clientX >= pr.left && anchor.clientX <= pr.right &&
+             anchor.clientY >= pr.top && anchor.clientY <= pr.bottom;
+    });
+
+    let targetScrollLeft;
+    let targetScrollTop;
+
+    if (pageUnder) {
+      const pr = pageUnder.el.getBoundingClientRect();
+      const fracX = Math.max(0, Math.min(1, (anchor.clientX - pr.left) / Math.max(1, pr.width)));
+      const fracY = Math.max(0, Math.min(1, (anchor.clientY - pr.top) / Math.max(1, pr.height)));
+
+      z = targetZ;
+      size();
+
+      const newPageX = pageUnder.el.offsetLeft;
+      const newPageY = pageUnder.el.offsetTop;
+      const newPageW = pageUnder.el.offsetWidth;
+      const newPageH = pageUnder.el.offsetHeight;
+
+      targetScrollLeft = newPageX + (fracX * newPageW) - anchor.localX;
+      targetScrollTop = newPageY + (fracY * newPageH) - anchor.localY;
+    } else {
+      const docX = wrap.scrollLeft + anchor.localX;
+      const docY = wrap.scrollTop + anchor.localY;
+      const ratio = targetZ / oldZ;
+
+      z = targetZ;
+      size();
+
+      targetScrollLeft = (docX * ratio) - anchor.localX;
+      targetScrollTop = (docY * ratio) - anchor.localY;
+    }
+
+    wrap.scrollLeft = Math.max(0, targetScrollLeft);
+    wrap.scrollTop = Math.max(0, targetScrollTop);
+
+    wrap.classList.toggle('is-zoomed', z > 1.05);
+
     clearTimeout(zoomTimer);
     zoomTimer = setTimeout(() => {
       pages.forEach((p) => { if (p.visible) render(p); });
@@ -224,43 +280,135 @@ async function viewPdf(box, blob, onLabel) {
     label();
   };
 
+  // Trackpad pinch & Ctrl+Wheel zoom pinpointed to cursor
   wrap.addEventListener('wheel', (e) => {
     if (e.ctrlKey) {
       e.preventDefault();
-      rezoom(z * Math.exp(-e.deltaY * 0.01));
+      const factor = Math.exp(-e.deltaY * 0.005);
+      rezoom(z * factor, { clientX: e.clientX, clientY: e.clientY });
     }
   }, { passive: false });
 
-  // Touch Pinch-to-zoom for PDF viewer
-  const touches = new Map();
-  let pinchStartDist = 0;
-  let pinchStartZ = 1;
-  wrap.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'touch') {
-      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (touches.size === 2) {
-        const pts = [...touches.values()];
-        pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        pinchStartZ = z;
-      }
+  // Double click to zoom in at point or fit
+  wrap.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.dv-hl-pop, .dv-hl, button')) return;
+    if (z > 1.1) {
+      rezoom(1);
+    } else {
+      rezoom(2.5, { clientX: e.clientX, clientY: e.clientY });
     }
   });
-  wrap.addEventListener('pointermove', (e) => {
-    if (touches.has(e.pointerId)) {
-      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (touches.size === 2 && pinchStartDist > 10) {
-        const pts = [...touches.values()];
-        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        rezoom(pinchStartZ * (dist / pinchStartDist));
-      }
+
+  // Touch Pinch-to-zoom and 2-finger panning for mobile
+  let touchPinch = null;
+  wrap.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      const a = e.touches[0];
+      const b = e.touches[1];
+      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+      const mid = {
+        clientX: (a.clientX + b.clientX) / 2,
+        clientY: (a.clientY + b.clientY) / 2
+      };
+      touchPinch = {
+        d,
+        startZ: z,
+        lastMid: mid
+      };
+    } else {
+      touchPinch = null;
     }
-  });
-  const onPointerUp = (e) => {
-    touches.delete(e.pointerId);
-    if (touches.size < 2) pinchStartDist = 0;
+  }, { passive: true });
+
+  wrap.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2 && touchPinch) {
+      if (e.cancelable) e.preventDefault();
+      const a = e.touches[0];
+      const b = e.touches[1];
+      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+      const curMid = {
+        clientX: (a.clientX + b.clientX) / 2,
+        clientY: (a.clientY + b.clientY) / 2
+      };
+
+      const newZ = touchPinch.startZ * (d / touchPinch.d);
+      rezoom(newZ, curMid);
+
+      const dx = curMid.clientX - touchPinch.lastMid.clientX;
+      const dy = curMid.clientY - touchPinch.lastMid.clientY;
+      wrap.scrollLeft -= dx;
+      wrap.scrollTop -= dy;
+
+      touchPinch.lastMid = curMid;
+    }
+  }, { passive: false });
+
+  const onTouchEnd = (e) => {
+    if (e.touches.length < 2) touchPinch = null;
   };
-  wrap.addEventListener('pointerup', onPointerUp);
-  wrap.addEventListener('pointercancel', onPointerUp);
+  wrap.addEventListener('touchend', onTouchEnd, { passive: true });
+  wrap.addEventListener('touchcancel', () => { touchPinch = null; }, { passive: true });
+
+  // Mouse Drag-to-Pan (Desktop PC)
+  let isDragging = false;
+  let dragStart = { x: 0, y: 0, sl: 0, st: 0, moved: false };
+  let spaceDown = false;
+
+  const onKeyDown = (e) => {
+    if (e.code === 'Space' && wrap.isConnected && !e.target.closest('input, textarea, [contenteditable="true"]')) {
+      spaceDown = true;
+      wrap.classList.add('is-panning-ready');
+    }
+  };
+  const onKeyUp = (e) => {
+    if (e.code === 'Space') {
+      spaceDown = false;
+      wrap.classList.remove('is-panning-ready');
+    }
+  };
+
+  const onMouseDown = (e) => {
+    if (e.button !== 0 && e.button !== 1) return;
+    if (e.target.closest('.dv-hl-pop, .dv-hl, button')) return;
+
+    const isText = !!e.target.closest('.textLayer span');
+    const allowDrag = spaceDown || e.button === 1 || (z > 1.05 && (!isText || e.altKey));
+
+    if (allowDrag) {
+      isDragging = true;
+      dragStart = {
+        x: e.clientX,
+        y: e.clientY,
+        sl: wrap.scrollLeft,
+        st: wrap.scrollTop,
+        moved: false
+      };
+      wrap.classList.add('is-panning');
+      if (spaceDown || e.button === 1 || e.altKey) e.preventDefault();
+    }
+  };
+
+  const onMouseMove = (e) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragStart.moved = true;
+    wrap.scrollLeft = dragStart.sl - dx;
+    wrap.scrollTop = dragStart.st - dy;
+  };
+
+  const onMouseUp = () => {
+    if (isDragging) {
+      isDragging = false;
+      wrap.classList.remove('is-panning');
+    }
+  };
+
+  wrap.addEventListener('mousedown', onMouseDown);
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
 
   /* ──────── Text Highlighting Toolbar ──────── */
   let popEl = null;
@@ -353,6 +501,11 @@ async function viewPdf(box, blob, onLabel) {
       hidePop();
       io.disconnect();
       removeEventListener('resize', onResize);
+      wrap.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
       pages.forEach((p) => { if (p.renderTask) { try { p.renderTask.cancel(); } catch {} } });
       task.destroy().catch(() => {});
     }

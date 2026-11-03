@@ -30,6 +30,21 @@ test('2. PDF viewer HD rendering and robust cancelation queue', () => {
   assert.ok(docviewJs.includes('p.renderTask.cancel()'), 'In-flight PDF render task should be cancelled on zoom to prevent blur/exceptions');
   assert.ok(docviewJs.includes('p.pendingScale != null || p.rendered !== p.scale'), 'Finally block must re-execute pending renders on cancellation');
   assert.ok(docviewJs.includes('Math.min(6, nz)'), 'Zoom ceiling should allow up to 600%');
+
+  // Pinpoint zoom & pan verification
+  assert.ok(docviewJs.includes('getAnchor'), 'docview.js must define getAnchor to calculate pinpoint zoom target');
+  assert.ok(docviewJs.includes('fracX = Math.max(0, Math.min(1, (anchor.clientX - pr.left) / Math.max(1, pr.width)))'), 'Must calculate exact fractional position under cursor');
+  assert.ok(docviewJs.includes('targetScrollLeft = newPageX + (fracX * newPageW) - anchor.localX'), 'Must align zoomed point directly under cursor x');
+  assert.ok(docviewJs.includes('targetScrollTop = newPageY + (fracY * newPageH) - anchor.localY'), 'Must align zoomed point directly under cursor y');
+  assert.ok(docviewJs.includes('isDragging'), 'docview.js must support mouse drag-to-pan');
+  assert.ok(docviewJs.includes('touchPinch'), 'docview.js must support 2-finger pinch and pan');
+  assert.ok(docviewJs.includes('wrap.scrollLeft -= dx'), 'docview.js must pan scrollLeft during gesture');
+  assert.ok(docviewJs.includes('wrap.scrollTop -= dy'), 'docview.js must pan scrollTop during gesture');
+
+  const css = fs.readFileSync(path.join(ROOT, 'public/css/app.css'), 'utf8');
+  assert.ok(css.includes('.dv-scroll.is-zoomed'), 'CSS must define grab cursor when zoomed in');
+  assert.ok(css.includes('.dv-scroll.is-panning'), 'CSS must define grabbing cursor while panning');
+  assert.ok(css.includes('.dv-pdf-pages'), 'CSS must define dv-pdf-pages to prevent negative flex centering data loss');
 });
 
 test('3. PDF text highlighting and PDF editing support', () => {
