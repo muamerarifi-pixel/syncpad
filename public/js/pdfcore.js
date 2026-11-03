@@ -646,7 +646,21 @@ export async function addObjects(L, fontkit, bytes, objs, loadFontFile) {
   const doc = await loadDoc(L, bytes);
   const wrapped = new Set();
   let n = 0;
-  const rgbOf = (c) => L.rgb(clamp01(c[0] / 255), clamp01(c[1] / 255), clamp01(c[2] / 255));
+  const rgbOf = (c) => {
+    if (!c) return L.rgb(0, 0, 0);
+    if (typeof c === 'string') {
+      if (c.startsWith('#')) {
+        const h = c.slice(1);
+        const r = parseInt(h.length === 3 ? h[0] + h[0] : h.slice(0, 2), 16) || 0;
+        const g = parseInt(h.length === 3 ? h[1] + h[1] : h.slice(2, 4), 16) || 0;
+        const b = parseInt(h.length === 3 ? h[2] + h[2] : h.slice(4, 6), 16) || 0;
+        return L.rgb(clamp01(r / 255), clamp01(g / 255), clamp01(b / 255));
+      }
+      const m = c.match(/\d+/g);
+      if (m && m.length >= 3) return L.rgb(clamp01(+m[0] / 255), clamp01(+m[1] / 255), clamp01(+m[2] / 255));
+    }
+    return L.rgb(clamp01((c[0] || 0) / 255), clamp01((c[1] || 0) / 255), clamp01((c[2] || 0) / 255));
+  };
   const resDict = (page, key) => {
     const res = page.node.Resources() || page.node.normalizedEntries().Resources;
     let d = res.lookupMaybe(PDFName.of(key), PDFDict);
@@ -702,6 +716,15 @@ export async function addObjects(L, fontkit, bytes, objs, loadFontFile) {
       }
       const img = /png/.test(o.mime) ? await doc.embedPng(o.bytes) : await doc.embedJpg(o.bytes);
       page.drawImage(img, { x: o.x, y: o.y, width: o.w, height: o.h });
+    } else if (o.type === 'highlight') {
+      page.drawRectangle({
+        x: o.x,
+        y: o.y,
+        width: o.w,
+        height: o.h,
+        color: rgbOf(o.color || [254, 240, 138]),
+        opacity: o.opacity != null ? o.opacity : 0.42
+      });
     } else if (o.type === 'rect') {
       page.drawRectangle({ x: o.x, y: o.y, width: o.w, height: o.h, borderColor: color, borderWidth: o.width, color: o.fill ? color : undefined });
     } else if (o.type === 'ellipse') {

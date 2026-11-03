@@ -14,7 +14,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '2.27.8';
+const VERSION = '2.28.0';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -44,6 +44,19 @@ function globalStub(env) {
 
 function manifest(url) {
   const s = url.searchParams.get('s') || '';
+  const dark = url.searchParams.get('theme') === 'dark';
+  const bg = url.searchParams.get('bg') || '';
+  const bgColors = {
+    light: { classic: '#f2e8d0', smooth: '#f7f4f0', cotton: '#f3efe6', recycled: '#e6dfd0', lined: '#f6f7f9', linen: '#ece6da', washi: '#f5f1e8', vintage: '#e5d7b8', none: '#ffffff' },
+    dark: { classic: '#262119', smooth: '#181b22', cotton: '#1e2028', recycled: '#2a261f', lined: '#181b22', linen: '#21252d', washi: '#1c2028', vintage: '#2a2015', none: '#16181e' }
+  };
+  const bodyColors = {
+    light: { classic: '#f4ecd8', smooth: '#faf8f5', cotton: '#f7f4ee', recycled: '#ebe5d8', lined: '#fbfbfc', linen: '#f3efe6', washi: '#fbf9f4', vintage: '#ede1c7', none: '#f6f7f9' },
+    dark: { classic: '#221e17', smooth: '#14161c', cotton: '#1a1c22', recycled: '#24211a', lined: '#13161c', linen: '#191c22', washi: '#161920', vintage: '#241c12', none: '#0e1014' }
+  };
+  const scheme = dark ? 'dark' : 'light';
+  const themeColor = (bg && bgColors[scheme][bg]) || bgColors[scheme].none;
+  const bgColor = (bg && bodyColors[scheme][bg]) || bodyColors[scheme].none;
   // The link in start_url lets iOS home-screen installs (which get their own storage) open connected.
   const ok = /^[A-Za-z0-9_-]{20,64}(~[A-Za-z0-9_-]{20,64})?$/.test(s);
   return new Response(
@@ -55,8 +68,8 @@ function manifest(url) {
       start_url: ok ? `/?s=${s}` : '/',
       scope: '/',
       display: 'standalone',
-      background_color: '#f6f7f9',
-      theme_color: '#ffffff',
+      background_color: bgColor,
+      theme_color: themeColor,
       icons: [
         { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
         { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },

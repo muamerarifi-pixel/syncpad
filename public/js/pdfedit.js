@@ -6,7 +6,7 @@ import { applyLineEdit, pickFont, pageInfo, removeImage, addObjects, loadDoc } f
 
 const V = '/vendor/pdf/';
 const $ = (s, r = document) => r.querySelector(s);
-const SHAPES = new Set(['rect', 'ellipse', 'line', 'arrow', 'check', 'cross']);
+const SHAPES = new Set(['rect', 'ellipse', 'line', 'arrow', 'check', 'cross', 'highlight']);
 const hex = (c) => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
 const unhex = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
 let libs = null;
@@ -137,7 +137,7 @@ export class PdfEditor {
     this.objs = [];
     this.history = [];
     this.tool = 'select';
-    this.colors = { text: [17, 17, 17], shape: [220, 38, 38] };
+    this.colors = { text: [17, 17, 17], shape: [220, 38, 38], highlight: [254, 240, 138] };
     this.stroke = 2;
     this.fill = false;
     this.textSize = 12;
@@ -240,9 +240,9 @@ export class PdfEditor {
     const hasSel = !!(s || this.ed);
     for (const b of this.bar.querySelectorAll('[data-act="copy"], [data-act="delete"]')) b.disabled = !hasSel;
     for (const b of this.bar.querySelectorAll('[data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === this.tool));
-    const kind = o ? (o.type === 'text' ? 'text' : SHAPES.has(o.type) ? 'shape' : 'image') : this.tool === 'text' ? 'text' : SHAPES.has(this.tool) ? 'shape' : 'none';
+    const kind = o ? (o.type === 'text' ? 'text' : o.type === 'highlight' ? 'highlight' : SHAPES.has(o.type) ? 'shape' : 'image') : this.tool === 'text' ? 'text' : this.tool === 'highlight' ? 'highlight' : SHAPES.has(this.tool) ? 'shape' : 'none';
     this.bar.dataset.kind = kind;
-    const col = o && o.color ? o.color : kind === 'text' ? this.colors.text : this.colors.shape;
+    const col = o && o.color ? o.color : kind === 'text' ? this.colors.text : kind === 'highlight' ? this.colors.highlight : this.colors.shape;
     for (const b of this.bar.querySelectorAll('[data-color]')) b.setAttribute('aria-pressed', String(b.dataset.color === hex(col)));
     this.customColor.value = hex(col);
     $('#pe-fill', this.d).setAttribute('aria-pressed', String(o && 'fill' in o ? !!o.fill : this.fill));
@@ -441,6 +441,7 @@ export class PdfEditor {
     const tips = {
       select: 'Click a line to change it, a picture to select it, or something you added to move it.',
       text: 'Click where the new text should go.',
+      highlight: 'Click a line or drag to highlight words and sentences.',
       rect: 'Drag to draw a rectangle.', ellipse: 'Drag to draw a circle / oval.', line: 'Drag to draw a line.',
       arrow: 'Drag from where the arrow starts to where it points.', check: 'Click or drag to place a tick.', cross: 'Click or drag to place a cross.'
     };
@@ -458,6 +459,7 @@ export class PdfEditor {
       this.ted.obj.color = c;
       this.ted.area.style.color = hex(c);
     } else if (this.tool === 'text') this.colors.text = c;
+    else if (this.tool === 'highlight') this.colors.highlight = c;
     else this.colors.shape = c;
     if (!o && !this.ted && this.tool === 'select') this.colors.shape = c;
     this.sync();
@@ -578,8 +580,26 @@ export class PdfEditor {
       this.closeEditor();
       this.closeTextEditor(true);
       if (this.tool === 'text') { this.newText(i, p.x, p.y); return; }
+      if (this.tool === 'highlight') {
+        const lineEl = e.target.closest('.pe-line');
+        if (lineEl) {
+          const lIdx = +lineEl.dataset.l;
+          const line = st.lines && st.lines[lIdx];
+          if (line) {
+            const o = { id: nid(), page: i, type: 'highlight', x: line.rect.x, y: line.rect.y, w: Math.max(16, line.rect.w), h: Math.max(12, line.rect.h), color: this.colors.highlight, fill: true };
+            this.snapshot();
+            this.objs.push(o);
+            this.renderObj(o);
+            this.select({ kind: 'obj', id: o.id });
+            this.setStatus('Line highlighted. Drag corners to adjust.');
+            return;
+          }
+        }
+      }
       const o = SHAPES.has(this.tool) && (this.tool === 'line' || this.tool === 'arrow')
         ? { id: nid(), page: i, type: this.tool, x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: this.colors.shape, width: this.stroke }
+        : this.tool === 'highlight'
+        ? { id: nid(), page: i, type: 'highlight', x: p.x, y: p.y, w: 0, h: 0, color: this.colors.highlight, fill: true }
         : { id: nid(), page: i, type: this.tool, x: p.x, y: p.y, w: 0, h: 0, color: this.colors.shape, width: this.stroke, fill: this.fill };
       this.snapshot();
       this.objs.push(o);
@@ -757,8 +777,10 @@ export class PdfEditor {
     const W = o.w;
     const H = o.h;
     const inset = sw / 2;
+    el.classList.toggle('pe-hl', o.type === 'highlight');
     let shape = '';
-    if (o.type === 'rect') shape = `<rect x="${inset}" y="${inset}" width="${Math.max(0, W - sw)}" height="${Math.max(0, H - sw)}" stroke="${col}" stroke-width="${sw}" fill="${o.fill ? col : 'none'}"/>`;
+    if (o.type === 'highlight') shape = `<rect x="0" y="0" width="${W}" height="${H}" fill="${col}" fill-opacity="0.45"/>`;
+    else if (o.type === 'rect') shape = `<rect x="${inset}" y="${inset}" width="${Math.max(0, W - sw)}" height="${Math.max(0, H - sw)}" stroke="${col}" stroke-width="${sw}" fill="${o.fill ? col : 'none'}"/>`;
     else if (o.type === 'ellipse') shape = `<ellipse cx="${W / 2}" cy="${H / 2}" rx="${Math.max(0, W / 2 - inset)}" ry="${Math.max(0, H / 2 - inset)}" stroke="${col}" stroke-width="${sw}" fill="${o.fill ? col : 'none'}"/>`;
     else if (o.type === 'check') shape = `<polyline points="${0.08 * W},${0.5 * H} ${0.38 * W},${0.82 * H} ${0.94 * W},${0.14 * H}" fill="none" stroke="${col}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
     else if (o.type === 'cross') shape = `<path d="M${0.12 * W} ${0.12 * H} L${0.88 * W} ${0.88 * H} M${0.12 * W} ${0.88 * H} L${0.88 * W} ${0.12 * H}" stroke="${col}" stroke-width="${sw}" stroke-linecap="round"/>`;
@@ -1038,7 +1060,7 @@ export class PdfEditor {
     grow();
     const tools = document.createElement('div');
     tools.className = 'pe-tools';
-    tools.innerHTML = '<button class="pe-apply" data-pe="apply">Apply</button><button data-pe="delete">Delete line</button><button data-pe="copy">Copy</button><button data-pe="cancel">Cancel</button><span>Enter = apply · Esc = cancel</span>';
+    tools.innerHTML = '<button class="pe-apply" data-pe="apply">Apply</button><button data-pe="highlight">Highlight</button><button data-pe="delete">Delete line</button><button data-pe="copy">Copy</button><button data-pe="cancel">Cancel</button><span>Enter = apply · Esc = cancel</span>';
     const below = r.y + r.h + 46 < st.el.clientHeight;
     Object.assign(tools.style, { left: Math.max(4, Math.min(r.x, st.el.clientWidth - 380)) + 'px', top: (below ? r.y + r.h + 6 : r.y - 42) + 'px' });
     wrap.append(patch, input, tools);
@@ -1053,6 +1075,15 @@ export class PdfEditor {
       const b = e.target.closest('[data-pe]');
       if (!b) return;
       if (b.dataset.pe === 'apply') this.apply(input.value);
+      else if (b.dataset.pe === 'highlight') {
+        const o = { id: nid(), page: ed.i, type: 'highlight', x: r.x, y: r.y, w: Math.max(16, r.w), h: Math.max(12, r.h), color: this.colors.highlight, fill: true };
+        this.snapshot();
+        this.objs.push(o);
+        this.renderObj(o);
+        this.closeEditor();
+        this.select({ kind: 'obj', id: o.id });
+        this.setStatus('Line highlighted.');
+      }
       else if (b.dataset.pe === 'delete') this.apply('');
       else if (b.dataset.pe === 'copy') this.copy();
       else this.closeEditor();

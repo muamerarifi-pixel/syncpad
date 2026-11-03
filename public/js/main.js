@@ -17,7 +17,7 @@ import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
 
-const VERSION = '2.27.8';
+const VERSION = '2.28.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -83,6 +83,8 @@ async function boot() {
   files = new Files(store, sync);
   ui.known = new Set(dropItems().map((i) => i.id));
   wire();
+  applyTheme();
+  renderBgGrid();
   applyZoom();
   renderLockButton();
   if (pinConf()) showLock('unlock');
@@ -112,8 +114,15 @@ function cleanUrl() {
 }
 
 function updateManifest() {
-  // lets iOS home-screen installs open already connected
-  el.manifestLink.href = '/app.webmanifest?s=' + linkCode();
+  // lets iOS home-screen installs open already connected and matches current dark theme and paper texture
+  let t = 'system';
+  let bg = '';
+  try {
+    t = localStorage.getItem('sp-theme') || 'system';
+    bg = localStorage.getItem('sp-bg') || '';
+  } catch {}
+  const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+  el.manifestLink.href = '/app.webmanifest?s=' + encodeURIComponent(linkCode()) + (dark ? '&theme=dark' : '') + (bg && bg !== 'none' ? '&bg=' + encodeURIComponent(bg) : '');
 }
 
 const me = () => store.get('device');
@@ -380,6 +389,7 @@ function wire() {
   el.btnShowList.addEventListener('click', () => toggleNotesList(false));
   el.btnPresent.addEventListener('click', startPresent);
   applyNotesList();
+  setupNoteListPinch();
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && ui.presenting && ui.presentFs) stopPresent(); });
   document.addEventListener('selectionchange', () => {
     if (ui.selRaf) return;
@@ -391,6 +401,15 @@ function wire() {
   el.btnPin.addEventListener('click', togglePin);
   el.btnNoteMore.addEventListener('click', () => noteMenu(el.btnNoteMore));
   el.btnEditorBack.addEventListener('click', () => closeEditor());
+  if (el.btnNoteUndo) {
+    el.btnNoteUndo.addEventListener('mousedown', (e) => e.preventDefault());
+    el.btnNoteUndo.addEventListener('click', () => doNoteUndo());
+  }
+  if (el.btnNoteRedo) {
+    el.btnNoteRedo.addEventListener('mousedown', (e) => e.preventDefault());
+    el.btnNoteRedo.addEventListener('click', () => doNoteRedo());
+  }
+  el.editorText.addEventListener('keyup', () => syncNoteUndoRedo());
   window.addEventListener('mouseup', (e) => {
     if (e.button === 3 && openNoteItem() && !$('dialog[open]')) {
       e.preventDefault();
@@ -437,6 +456,16 @@ function wire() {
     renderThemeSeg();
   });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+  if (el.setBgGrid) {
+    el.setBgGrid.addEventListener('click', (e) => {
+      const card = e.target.closest('[data-bg]');
+      if (!card) return;
+      const bg = card.dataset.bg || 'none';
+      try { localStorage.setItem('sp-bg', bg); } catch {}
+      applyTheme();
+      renderBgGrid();
+    });
+  }
   el.setAutodel.addEventListener('change', () => {
     const cur = store.items.get('settings');
     const item = cur || { id: 'settings', kind: 'settings', rev: 0, created: Date.now(), data: {} };
@@ -2357,6 +2386,8 @@ const files_src = (id) => { try { return files.src(id); } catch { return null; }
 function openNote(id, { focus = true } = {}) {
   if (ui.noteId && ui.noteId !== id) saveNote.flush();
   ui.noteId = id;
+  ui.noteEdits = 0;
+  ui.noteRedos = 0;
   ui.savedRange = null;
   el.app.classList.remove('show-sidebar');
   if (isMobileLayout()) {
@@ -2439,7 +2470,8 @@ function renderEditor(force) {
   const isCanvas = !!n.data.canvas;
   el.editor.classList.toggle('is-canvas', isCanvas);
   el.editor.dataset.font = n.data.font || '';
-  el.editor.dataset.paper = n.data.paper || '';
+  if (n.data.paper) el.editor.dataset.paper = n.data.paper;
+  else delete el.editor.dataset.paper;
   el.editor.dataset.color = n.data.color || '';
   el.noteCanvas.hidden = el.cvBar.hidden = !isCanvas;
   el.fmtBar.hidden = isCanvas;
@@ -2553,6 +2585,91 @@ async function saveCanvas(n) {
   renderFoot();
 }
 
+/* ───── pinch to zoom in notes list: cycle grid and list sizes ───── */
+function setupNoteListPinch() {
+  const L = el.noteList;
+  if (!L) return;
+  const container = el.notesPane || L.closest('.notes-pane') || L;
+
+  const MODES = [
+    { view: 'list', size: 's', label: 'List · Small' },
+    { view: 'list', size: 'm', label: 'List · Medium' },
+    { view: 'list', size: 'l', label: 'List · Large' },
+    { view: 'grid', size: 's', label: 'Grid · Small' },
+    { view: 'grid', size: 'm', label: 'Grid · Medium' },
+    { view: 'grid', size: 'l', label: 'Grid · Large' }
+  ];
+
+  const getCurrentIndex = () => {
+    const curV = lsGet('sp-nview', 'list');
+    const curS = lsGet('sp-nsize', 'm');
+    const idx = MODES.findIndex((m) => m.view === curV && m.size === curS);
+    return idx >= 0 ? idx : (curV === 'grid' ? 4 : 1);
+  };
+
+  const step = (dir) => {
+    const cur = getCurrentIndex();
+    const next = Math.max(0, Math.min(MODES.length - 1, cur + dir));
+    if (next === cur) return false;
+    const target = MODES[next];
+    lsSet('sp-nview', target.view);
+    lsSet('sp-nsize', target.size);
+    renderNotesList();
+    toast(target.label, { duration: 1200 });
+    return true;
+  };
+
+  // Touch pinch (phones / tablets)
+  let startDist = 0;
+
+  container.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      startDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+    }
+  }, { passive: true });
+
+  container.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2 && startDist > 10) {
+      if (e.cancelable) e.preventDefault();
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const ratio = dist / startDist;
+      if (ratio > 1.25) {
+        if (step(1)) startDist = dist;
+      } else if (ratio < 0.8) {
+        if (step(-1)) startDist = dist;
+      }
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchend', (e) => {
+    if (e.touches.length < 2) startDist = 0;
+  }, { passive: true });
+
+  // Touchpad pinch / Ctrl+wheel (desktop)
+  let wheelAccum = 0;
+  let wheelTimer = null;
+  container.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    wheelAccum += e.deltaY;
+    clearTimeout(wheelTimer);
+    wheelTimer = setTimeout(() => { wheelAccum = 0; }, 200);
+    if (wheelAccum < -35) {
+      step(1);
+      wheelAccum = 0;
+    } else if (wheelAccum > 35) {
+      step(-1);
+      wheelAccum = 0;
+    }
+  }, { passive: false });
+}
+
 /* ───── privacy: hide the notes list, present one note full screen ───── */
 function applyNotesList() {
   const show = el.app.classList.contains('show-sidebar');
@@ -2648,7 +2765,7 @@ function getCanvas() {
     onOpen: (id) => { const it = store.items.get(id); if (it) openFile(it); else toast('This file is still on its way'); },
     onExport: () => exportCanvas(),
     toast: (m) => toast(m, { duration: 1500 }),
-    onChange: () => { ui.dirty = true; renderSaveState(); saveNote(); }
+    onChange: () => { ui.dirty = true; renderSaveState(); saveNote(); syncNoteUndoRedo(); }
   });
   ui.canvas.onZoom = () => applyZoom();
   return ui.canvas;
@@ -2757,13 +2874,15 @@ async function turnIntoPage() {
   renderNotesList();
 }
 
-function onEditorInput() {
+function onEditorInput(markEdit = true) {
+  if (markEdit) ui.noteEdits = (ui.noteEdits || 0) + 1;
   normalizeEditor();
   updateEmpty();
   ui.dirty = true;
   renderSaveState();
   saveNote();
   renderFoot();
+  syncNoteUndoRedo();
 }
 
 /** "Default colour" / "No highlight" use marker colours that are swapped for real values here */
@@ -2918,8 +3037,60 @@ function exec(cmd, val = null) {
   updateToolbar();
 }
 
+function syncNoteUndoRedo() {
+  const isCv = canvasOpen();
+  let canUndo = false;
+  let canRedo = false;
+  if (isCv && ui.canvas) {
+    canUndo = ui.canvas.undoStack.length > 0 || !!ui.canvas.editing;
+    canRedo = ui.canvas.redoStack.length > 0;
+  } else {
+    try {
+      canUndo = document.queryCommandEnabled('undo');
+      canRedo = document.queryCommandEnabled('redo');
+    } catch {}
+    if (!canUndo && (ui.noteEdits || 0) > 0) canUndo = true;
+    if (!canRedo && (ui.noteRedos || 0) > 0) canRedo = true;
+  }
+  if (el.btnNoteUndo) el.btnNoteUndo.disabled = !canUndo;
+  if (el.btnNoteRedo) el.btnNoteRedo.disabled = !canRedo;
+  const u = el.fmtBar && el.fmtBar.querySelector('[data-fmt="undo"]');
+  const r = el.fmtBar && el.fmtBar.querySelector('[data-fmt="redo"]');
+  if (u) u.disabled = !canUndo;
+  if (r) r.disabled = !canRedo;
+}
+
+function doNoteUndo() {
+  if (canvasOpen() && ui.canvas) {
+    ui.canvas.undo();
+  } else {
+    el.editorText.focus();
+    restoreSel();
+    try { document.execCommand('undo'); } catch {}
+    if ((ui.noteEdits || 0) > 0) { ui.noteEdits--; ui.noteRedos = (ui.noteRedos || 0) + 1; }
+    saveSel();
+    onEditorInput(false);
+  }
+  syncNoteUndoRedo();
+}
+
+function doNoteRedo() {
+  if (canvasOpen() && ui.canvas) {
+    ui.canvas.redo();
+  } else {
+    el.editorText.focus();
+    restoreSel();
+    try { document.execCommand('redo'); } catch {}
+    if ((ui.noteRedos || 0) > 0) { ui.noteRedos--; ui.noteEdits = (ui.noteEdits || 0) + 1; }
+    saveSel();
+    onEditorInput(false);
+  }
+  syncNoteUndoRedo();
+}
+
 function updateToolbar() {
   if (el.editor.hidden) return;
+  syncNoteUndoRedo();
   const e = caretElement();
   if (!e) return;
   const li = e.closest('li');
@@ -3018,6 +3189,8 @@ function clearFormat() {
 }
 
 function format(kind, btn) {
+  if (kind === 'undo') return doNoteUndo();
+  if (kind === 'redo') return doNoteRedo();
   if (kind === 'size') return sizeMenu(btn);
   if (kind === 'color') return colorMenu(btn);
   if (kind === 'insertUnorderedList') return bulletList();
@@ -3507,6 +3680,7 @@ function renderOpenWith() {
 function openSettings() {
   el.setName.value = store.get('deviceName') || '';
   renderThemeSeg();
+  renderBgGrid();
   const st = store.items.get('settings');
   el.setAutodel.value = String((st && st.data.autodel) || 0);
   el.setDeclutter.value = (st && st.data.declutter) || 'on';
@@ -3565,13 +3739,39 @@ function renderThemeSeg() {
   try { t = localStorage.getItem('sp-theme') || 'system'; } catch {}
   for (const b of $$('[data-theme-opt]', el.setTheme)) b.setAttribute('aria-pressed', String(b.dataset.themeOpt === t));
 }
+function renderBgGrid() {
+  let bg = 'none';
+  try { bg = localStorage.getItem('sp-bg') || 'none'; } catch {}
+  if (!el.setBgGrid) return;
+  for (const card of $$('[data-bg]', el.setBgGrid)) {
+    const active = card.dataset.bg === bg;
+    card.setAttribute('aria-checked', String(active));
+    card.classList.toggle('active', active);
+  }
+}
 function applyTheme() {
   let t = 'system';
-  try { t = localStorage.getItem('sp-theme') || 'system'; } catch {}
+  let bg = '';
+  try {
+    t = localStorage.getItem('sp-theme') || 'system';
+    bg = localStorage.getItem('sp-bg') || '';
+  } catch {}
   const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-  for (const m of document.querySelectorAll('meta[name="theme-color"]')) { m.removeAttribute('media'); m.content = dark ? '#14161c' : '#ffffff'; }
+  if (bg && bg !== 'none') document.documentElement.dataset.bg = bg;
+  else delete document.documentElement.dataset.bg;
+  const bgColors = {
+    light: { classic: '#f2e8d0', smooth: '#f7f4f0', cotton: '#f3efe6', recycled: '#e6dfd0', lined: '#f6f7f9', linen: '#ece6da', washi: '#f5f1e8', vintage: '#e5d7b8', none: '#ffffff' },
+    dark: { classic: '#262119', smooth: '#181b22', cotton: '#1e2028', recycled: '#2a261f', lined: '#181b22', linen: '#21252d', washi: '#1c2028', vintage: '#2a2015', none: '#16181e' }
+  };
+  const scheme = dark ? 'dark' : 'light';
+  const col = (bg && bgColors[scheme][bg]) || bgColors[scheme].none;
+  for (const m of document.querySelectorAll('meta[name="theme-color"]')) {
+    m.removeAttribute('media');
+    m.content = col;
+  }
+  updateManifest();
 }
 function renderStorage() {
   const i = sync.info;

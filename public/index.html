@@ -6,8 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>SyncPad</title>
   <meta name="description" content="Send files, links and notes between all your devices.">
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#14161c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" id="meta-theme-color">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -205,6 +204,8 @@
               <button class="icon-btn hide-mobile" id="btn-toggle-list" aria-label="Hide the notes list" aria-pressed="false" title="Hide the notes list (Ctrl+\)"><svg class="ic"><use href="#i-sidebar"/></svg></button>
               <span class="save-state" id="save-state"></span>
               <div class="spacer"></div>
+              <button class="icon-btn" id="btn-note-undo" aria-label="Undo" title="Undo (Ctrl+Z)"><svg class="ic"><use href="#i-undo"/></svg></button>
+              <button class="icon-btn" id="btn-note-redo" aria-label="Redo" title="Redo (Ctrl+Y)"><svg class="ic"><use href="#i-redo"/></svg></button>
               <div class="zoom" role="group" aria-label="Text zoom">
                 <button class="zo" id="btn-zoom-out" aria-label="Smaller text" title="Smaller text">A−</button>
                 <button class="zv" id="btn-zoom-reset" title="Reset zoom">100%</button>
@@ -220,6 +221,9 @@
               <button class="btn btn-sm btn-danger-soft" data-act="conflict-drop">Delete this copy</button>
             </div>
             <div class="fmt-bar" id="fmt-bar" role="toolbar" aria-label="Formatting">
+              <button class="icon-btn sm" data-fmt="undo" title="Undo (Ctrl+Z)"><svg class="ic"><use href="#i-undo"/></svg></button>
+              <button class="icon-btn sm" data-fmt="redo" title="Redo (Ctrl+Y)"><svg class="ic"><use href="#i-redo"/></svg></button>
+              <span class="fmt-sep"></span>
               <button class="fmt-size" data-fmt="size" title="Text size" aria-haspopup="menu"><span id="fmt-size-label">Normal</span><svg class="ic"><use href="#i-chev"/></svg></button>
               <button class="icon-btn sm fmt-color" data-fmt="color" title="Text colour &amp; highlight" aria-haspopup="menu"><span class="a-glyph">A</span><span class="color-bar" id="fmt-color-bar"></span></button>
               <span class="fmt-sep"></span>
@@ -332,6 +336,47 @@
           <button class="seg-btn" data-theme-opt="system">Auto</button>
           <button class="seg-btn" data-theme-opt="light">Light</button>
           <button class="seg-btn" data-theme-opt="dark">Dark</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="field-head">Paper texture <small class="muted">— replaces theme texture</small></span>
+        <div class="bg-grid" id="set-bg-grid" role="radiogroup" aria-label="Paper texture">
+          <button class="bg-card" data-bg="classic" role="radio" aria-checked="false" aria-label="Classic (Klasike)">
+            <span class="bg-preview bg-tex-classic"></span>
+            <span class="bg-name">Classic</span>
+          </button>
+          <button class="bg-card" data-bg="none" role="radio" aria-checked="false" aria-label="No texture (Pa teksturë)">
+            <span class="bg-preview bg-tex-none"></span>
+            <span class="bg-name">No texture</span>
+          </button>
+          <button class="bg-card" data-bg="smooth" role="radio" aria-checked="false" aria-label="Smooth (E lëmuar)">
+            <span class="bg-preview bg-tex-smooth"></span>
+            <span class="bg-name">Smooth</span>
+          </button>
+          <button class="bg-card" data-bg="cotton" role="radio" aria-checked="false" aria-label="Cotton (Pambuk)">
+            <span class="bg-preview bg-tex-cotton"></span>
+            <span class="bg-name">Cotton</span>
+          </button>
+          <button class="bg-card" data-bg="recycled" role="radio" aria-checked="false" aria-label="Recycled (E ricikluar)">
+            <span class="bg-preview bg-tex-recycled"></span>
+            <span class="bg-name">Recycled</span>
+          </button>
+          <button class="bg-card" data-bg="lined" role="radio" aria-checked="false" aria-label="Lined (Me vija)">
+            <span class="bg-preview bg-tex-lined"></span>
+            <span class="bg-name">Lined</span>
+          </button>
+          <button class="bg-card" data-bg="linen" role="radio" aria-checked="false" aria-label="Linen (Li)">
+            <span class="bg-preview bg-tex-linen"></span>
+            <span class="bg-name">Linen</span>
+          </button>
+          <button class="bg-card" data-bg="washi" role="radio" aria-checked="false" aria-label="Washi">
+            <span class="bg-preview bg-tex-washi"></span>
+            <span class="bg-name">Washi</span>
+          </button>
+          <button class="bg-card" data-bg="vintage" role="radio" aria-checked="false" aria-label="Vintage (E vjetër)">
+            <span class="bg-preview bg-tex-vintage"></span>
+            <span class="bg-name">Vintage</span>
+          </button>
         </div>
       </div>
       <label class="field">
@@ -528,6 +573,7 @@
     <div class="pe-toolbar" id="pe-toolbar" role="toolbar" aria-label="PDF tools" data-kind="none">
       <div class="pe-g">
         <button class="pe-t" data-tool="select" aria-pressed="true" title="Edit text, select pictures and things you added"><svg class="ic"><use href="#i-cursor"/></svg><span>Edit</span></button>
+        <button class="pe-t" data-tool="highlight" aria-pressed="false" title="Highlight words or sentences"><svg class="ic"><use href="#i-marker"/></svg><span>Highlight</span></button>
         <button class="pe-t" data-tool="text" aria-pressed="false" title="Add text"><svg class="ic"><use href="#i-text"/></svg><span>Text</span></button>
         <button class="pe-t" data-act="picture" title="Add a picture"><svg class="ic"><use href="#i-image"/></svg><span>Picture</span></button>
       </div>
@@ -541,12 +587,13 @@
       </div>
       <div class="pe-g pe-g-color" aria-label="Colour">
         <button class="pe-c" data-color="#111111" style="--c:#111111" aria-label="Black"></button>
+        <button class="pe-c" data-color="#fde047" style="--c:#fde047" aria-label="Yellow"></button>
         <button class="pe-c" data-color="#dc2626" style="--c:#dc2626" aria-label="Red"></button>
         <button class="pe-c" data-color="#2563eb" style="--c:#2563eb" aria-label="Blue"></button>
         <button class="pe-c" data-color="#16a34a" style="--c:#16a34a" aria-label="Green"></button>
         <button class="pe-c" data-color="#f59e0b" style="--c:#f59e0b" aria-label="Orange"></button>
         <button class="pe-c" data-color="#ffffff" style="--c:#ffffff" aria-label="White"></button>
-        <label class="pe-c pe-custom" title="Any colour"><input type="color" id="pe-color" value="#dc2626" aria-label="Any colour"></label>
+        <label class="pe-c pe-custom" title="Any colour"><input type="color" id="pe-color" value="#fde047" aria-label="Any colour"></label>
       </div>
       <div class="pe-g pe-g-shape" aria-label="Line thickness and fill">
         <button class="pe-w" data-w="1" aria-label="Thin"><i style="--d:2px"></i></button>
