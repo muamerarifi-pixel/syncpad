@@ -82,7 +82,7 @@ async function viewPdf(box, blob, onLabel) {
   try { source = await sourceOf(pdf); } catch {}
 
   const wrap = document.createElement('div');
-  wrap.className = 'dv-scroll dv-pdf';
+  wrap.className = 'dv-scroll';
   const pagesBox = document.createElement('div');
   pagesBox.className = 'dv-pdf-pages';
   wrap.append(pagesBox);
@@ -349,9 +349,9 @@ async function viewPdf(box, blob, onLabel) {
   wrap.addEventListener('touchend', onTouchEnd, { passive: true });
   wrap.addEventListener('touchcancel', () => { touchPinch = null; }, { passive: true });
 
-  // Mouse Drag-to-Pan (Desktop PC)
+  // Pointer Drag-to-Pan (Desktop PC & Touch)
   let isDragging = false;
-  let dragStart = { x: 0, y: 0, sl: 0, st: 0, moved: false };
+  let dragStart = { x: 0, y: 0, sl: 0, st: 0, moved: false, id: null };
   let spaceDown = false;
 
   const onKeyDown = (e) => {
@@ -367,45 +367,54 @@ async function viewPdf(box, blob, onLabel) {
     }
   };
 
-  const onMouseDown = (e) => {
+  const onPointerDown = (e) => {
     if (e.button !== 0 && e.button !== 1) return;
     if (e.target.closest('.dv-hl-pop, .dv-hl, button')) return;
+    if (e.pointerType === 'touch' && touchPinch) return;
 
-    const allowDrag = spaceDown || e.button === 1 || z > 1.05;
+    const allowDrag = spaceDown || e.button === 1 || (z > 1.05 && !e.shiftKey);
 
     if (allowDrag) {
-      e.preventDefault();
       isDragging = true;
       dragStart = {
         x: e.clientX,
         y: e.clientY,
         sl: wrap.scrollLeft,
         st: wrap.scrollTop,
-        moved: false
+        moved: false,
+        id: e.pointerId
       };
+      try { wrap.setPointerCapture(e.pointerId); } catch {}
       wrap.classList.add('is-panning');
+      e.preventDefault();
     }
   };
 
-  const onMouseMove = (e) => {
+  const onPointerMove = (e) => {
     if (!isDragging) return;
+    if (dragStart.id != null && e.pointerId !== dragStart.id) return;
     const dx = e.clientX - dragStart.x;
     const dy = e.clientY - dragStart.y;
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragStart.moved = true;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragStart.moved = true;
     wrap.scrollLeft = dragStart.sl - dx;
     wrap.scrollTop = dragStart.st - dy;
   };
 
-  const onMouseUp = () => {
+  const onPointerUp = (e) => {
     if (isDragging) {
+      if (dragStart.id != null && e.pointerId != null && e.pointerId !== dragStart.id) return;
       isDragging = false;
       wrap.classList.remove('is-panning');
+      if (dragStart.id != null) {
+        try { wrap.releasePointerCapture(dragStart.id); } catch {}
+      }
     }
   };
 
-  wrap.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup', onMouseUp);
+  wrap.addEventListener('pointerdown', onPointerDown);
+  wrap.addEventListener('pointermove', onPointerMove);
+  wrap.addEventListener('pointerup', onPointerUp);
+  wrap.addEventListener('pointercancel', onPointerUp);
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
 
@@ -500,9 +509,10 @@ async function viewPdf(box, blob, onLabel) {
       hidePop();
       io.disconnect();
       removeEventListener('resize', onResize);
-      wrap.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      wrap.removeEventListener('pointerdown', onPointerDown);
+      wrap.removeEventListener('pointermove', onPointerMove);
+      wrap.removeEventListener('pointerup', onPointerUp);
+      wrap.removeEventListener('pointercancel', onPointerUp);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       pages.forEach((p) => { if (p.renderTask) { try { p.renderTask.cancel(); } catch {} } });

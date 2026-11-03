@@ -1092,20 +1092,17 @@ kbd { font: 600 12px var(--font); padding: 1px 6px; border-radius: 6px; border: 
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: 16px 12px 90px;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-x pan-y;
   overscroll-behavior: contain;
 }
 .dv-scroll.is-zoomed { cursor: grab; user-select: none; }
-.dv-scroll.is-panning { cursor: grabbing !important; user-select: none; }
+.dv-scroll.is-zoomed .textLayer :is(span, br) { cursor: grab; }
+.dv-scroll.is-panning { cursor: grabbing !important; user-select: none; touch-action: none; }
+.dv-scroll.is-panning .textLayer :is(span, br) { cursor: grabbing !important; }
 .dv-scroll.is-panning-ready { cursor: grab !important; }
+.dv-scroll.is-panning-ready .textLayer :is(span, br) { cursor: grab !important; }
 .dv-zoom { min-width: min-content; }
-.dv-pdf {
-  min-width: 100%;
-  width: max-content;
-  box-sizing: border-box;
-}
 .dv-pdf-pages {
   display: flex;
   flex-direction: column;
@@ -1114,6 +1111,7 @@ kbd { font: 600 12px var(--font); padding: 1px 6px; border-radius: 6px; border: 
   min-width: 100%;
   width: max-content;
   box-sizing: border-box;
+  padding: 16px 20px 90px;
   margin: 0 auto;
 }
 .dv-page { position: relative; flex: none; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.15), 0 6px 20px rgba(0,0,0,.08); }
