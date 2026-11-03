@@ -371,10 +371,10 @@ async function viewPdf(box, blob, onLabel) {
     if (e.button !== 0 && e.button !== 1) return;
     if (e.target.closest('.dv-hl-pop, .dv-hl, button')) return;
 
-    const isText = !!e.target.closest('.textLayer span');
-    const allowDrag = spaceDown || e.button === 1 || (z > 1.05 && (!isText || e.altKey));
+    const allowDrag = spaceDown || e.button === 1 || z > 1.05;
 
     if (allowDrag) {
+      e.preventDefault();
       isDragging = true;
       dragStart = {
         x: e.clientX,
@@ -384,7 +384,6 @@ async function viewPdf(box, blob, onLabel) {
         moved: false
       };
       wrap.classList.add('is-panning');
-      if (spaceDown || e.button === 1 || e.altKey) e.preventDefault();
     }
   };
 
