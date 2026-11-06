@@ -2422,7 +2422,7 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 .skb-tools { display: inline-flex; align-items: center; gap: 6px; }
 .skb-mini[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text, var(--accent)); }
 .skb-mini .ic { width: 18px; height: 18px; }
-.skb .k-space { flex: 5 1 0; display: flex; align-items: center; justify-content: space-between; padding: 0 6px; }
+.skb .k-space { flex: 6 1 0; }
 .skb .k-space .k-lang { width: 34px; height: 100%; display: grid; place-items: center; font-size: 22px; color: var(--muted); }
 .skb .k-sym { flex: 2.2 1 0; }
 .skb .k-dot, .skb .k-e { flex: 1 1 0; }
