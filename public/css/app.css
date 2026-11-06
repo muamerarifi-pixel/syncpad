@@ -2435,3 +2435,6 @@ html.skb-on .qn, html.skb-on .tabbar { display: none !important; }
 .skb-open { position: fixed; right: 14px; bottom: calc(14px + var(--safe-b, 0px)); z-index: 119; height: 48px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--accent); color: #fff; font: inherit; font-size: 20px; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 10px 24px rgba(0,0,0,.22); }
 .skb-open span { font-size: 14px; }
 .skb-open[hidden] { display: none; }
+
+/* 3.0.29: slide ⌫ left to select words, let go to delete */
+.skb.del-sliding .k-del { background: #e03131; color: #fff; }

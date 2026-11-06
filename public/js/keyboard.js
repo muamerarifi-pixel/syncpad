@@ -156,7 +156,28 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   }
 
   /* keys fire on touch-down for speed; held ⌫ repeats; the space bar slides the cursor */
-  let rep = 0, repT = 0, slide = null, hold = null;
+  let rep = 0, repT = 0, slide = null, hold = null, dsl = null;
+  /* where the cursor was when ⌫ went down, then select n words back from there */
+  function caretStart() {
+    if (isText()) return { pos: target.selectionEnd };
+    const sel = getSelection();
+    if (!sel.rangeCount) return null;
+    const r = sel.getRangeAt(0);
+    return { node: r.endContainer, off: r.endOffset };
+  }
+  function selectWordsBack(st, n) {
+    if (!st || !target) return;
+    if (isText()) {
+      let p = st.pos;
+      const v = target.value;
+      for (let i = 0; i < n && p > 0; i++) { while (p > 0 && /\s/.test(v[p - 1])) p--; while (p > 0 && !/\s/.test(v[p - 1])) p--; }
+      target.setSelectionRange(p, st.pos, 'backward');
+      return;
+    }
+    const sel = getSelection();
+    try { sel.collapse(st.node, st.off); } catch { return; }
+    for (let i = 0; i < n; i++) sel.modify('extend', 'backward', 'word');
+  }
   const afterChar = () => { if (shift === 1) { shift = 0; render(); } };
   const stopRepeat = () => { clearTimeout(repT); clearInterval(rep); repT = rep = 0; };
   box.addEventListener('pointerdown', (e) => {
@@ -190,7 +211,13 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
       afterChar();
       return;
     }
-    if (k === 'del') { del(); repT = setTimeout(() => { rep = setInterval(del, 55); }, 380); return; }
+    if (k === 'del') {
+      // tap = delete one; hold = delete fast; slide left = select words backwards, let go = delete them
+      dsl = { x0: e.clientX, n: 0, sliding: false, start: caretStart() };
+      b.setPointerCapture(e.pointerId);
+      repT = setTimeout(() => { if (dsl && !dsl.sliding) { dsl.repeated = true; del(); rep = setInterval(del, 55); } }, 380);
+      return;
+    }
     if (k === 'space') { slide = { x: e.clientX, moved: 0 }; b.setPointerCapture(e.pointerId); return; }
     if (k === 'shift') { const now = Date.now(); shift = shift === 0 ? (now - lastShift < 320 ? 2 : 1) : (shift === 1 && now - lastShift < 320 ? 2 : 0); lastShift = now; render(); return; }
     if (k === 'enter') { enter(); return; }
@@ -207,6 +234,12 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
       setH(h);
       return;
     }
+    if (dsl) {
+      const n = Math.max(0, Math.floor((dsl.x0 - e.clientX) / 18));
+      if (!dsl.sliding && n >= 1) { dsl.sliding = true; stopRepeat(); box.classList.add('del-sliding'); }
+      if (dsl.sliding && n !== dsl.n) { dsl.n = n; selectWordsBack(dsl.start, n); }
+      return;
+    }
     if (!slide) return;
     const steps = Math.trunc((e.clientX - slide.x) / 14);
     if (steps) { moveCaret(steps); slide.x += steps * 14; slide.moved += Math.abs(steps); }
@@ -217,6 +250,14 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     stopRepeat();
     for (const d of box.querySelectorAll('.k.down')) d.classList.remove('down');
     if (slide) { if (!slide.moved && e.type === 'pointerup') type(' '); slide = null; }
+    if (dsl) {
+      const d = dsl;
+      dsl = null;
+      box.classList.remove('del-sliding');
+      if (e.type !== 'pointerup') return;
+      if (d.sliding) { if (d.n > 0) del(); } // the selected words go in one go
+      else if (!d.repeated) del();
+    }
   };
   box.addEventListener('pointerup', up);
   box.addEventListener('pointercancel', up);
