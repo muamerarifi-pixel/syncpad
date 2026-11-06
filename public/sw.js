@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v3.0.4';
+const VERSION = 'v3.0.5';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
@@ -208,6 +208,15 @@ function readKV(keys) {
 
 self.addEventListener('push', (event) => event.waitUntil(onPush()));
 
+/** reminders this device already showed (so a late push never repeats one) */
+async function remindSeen(add) {
+  const c = await caches.open('sp-meta');
+  let list = [];
+  try { const r = await c.match('/__remind-seen'); if (r) list = await r.json(); } catch {}
+  if (add && add.length) { list = [...add, ...list].slice(0, 100); await c.put('/__remind-seen', new Response(JSON.stringify(list))); }
+  return list;
+}
+
 async function onPush() {
   const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   if (wins.some((w) => w.visibilityState === 'visible')) return; // the open app already shows it
@@ -218,11 +227,16 @@ async function onPush() {
     if (kv.space) {
       const r = await fetch(`/api/s/${kv.space}/latest?k=${encodeURIComponent(kv.token || kv.space)}&d=${kv.device || ''}&since=${kv.seq || 0}`);
       const j = await r.json();
-      if (j.reminders && j.reminders.length) {
-        // a note reminder: one notification per note, tapping it opens the note
-        for (const n of j.reminders) {
+      const seen = await remindSeen();
+      const open = new Set((await self.registration.getNotifications()).map((x) => x.tag));
+      const rem = (j.reminders || []).filter((n) => !seen.includes(n.id + '@' + (n.at || 0)) && !open.has('remind-' + n.id));
+      if (rem.length) {
+        // a note reminder: one notification per note, tapping it opens the note; late ones say when they were due
+        for (const n of rem) {
+          const late = n.at && Date.now() - n.at > 2 * 60 * 1000;
+          const when = late ? 'Missed at ' + new Date(n.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' · ' : '';
           await self.registration.showNotification(kv.pinOn ? 'Reminder' : '🔔 ' + n.title, {
-            body: kv.pinOn ? 'Open SyncPad to see your note' : n.body || 'Reminder from SyncPad',
+            body: when + (kv.pinOn ? 'Open SyncPad to see your note' : n.body || 'Reminder from SyncPad'),
             tag: 'remind-' + n.id,
             renotify: true,
             requireInteraction: true,
@@ -231,7 +245,11 @@ async function onPush() {
             data: { url: '/?note=' + n.id }
           });
         }
+        await remindSeen(rem.map((n) => n.id + '@' + (n.at || 0)));
         return;
+      }
+      if (j.reminders && j.reminders.length && !j.count) {
+        return; // only reminders that were already shown — nothing new to say
       }
       if (kv.pinOn) {
         body = 'New drop — open SyncPad to see it';

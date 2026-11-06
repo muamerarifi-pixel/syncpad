@@ -14,7 +14,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '3.0.4';
+const VERSION = '3.0.5';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -518,7 +518,11 @@ export class SyncRoom extends DurableObject {
     const due = this.reminderRows().filter((r) => { const t = SyncRoom.nextAt(r, from); return t && t <= now + 1000; });
     this.setMeta('remindedUpTo', String(now + 1000));
     if (due.length) {
-      this.setMeta('lastReminders', JSON.stringify({ at: now, items: due.map((r) => ({ id: r.id, title: r.title, body: r.body })) }));
+      // keep a day of fired reminders, so a phone that was offline still gets the right one when it reconnects
+      let prev = [];
+      try { const lr = JSON.parse(this.meta('lastReminders') || 'null'); prev = Array.isArray(lr) ? lr : lr && lr.items ? lr.items.map((i) => ({ ...i, at: lr.at })) : []; } catch {}
+      const fresh = due.map((r) => ({ id: r.id, title: r.title, body: r.body, at: now }));
+      this.setMeta('lastReminders', JSON.stringify([...fresh, ...prev.filter((i) => now - i.at < 24 * 60 * MIN)].slice(0, 50)));
       for (const s of this.ctx.getWebSockets()) { try { s.send(JSON.stringify({ t: 'remind', items: due.map((r) => r.id) })); } catch {} }
       await this.sendPush(null, 'syncpad-remind').catch(() => {});
     }
@@ -543,7 +547,8 @@ export class SyncRoom extends DurableObject {
       reminders: (() => {
         try {
           const lr = JSON.parse(this.meta('lastReminders') || 'null');
-          return lr && Date.now() - lr.at < 3 * MIN ? lr.items : [];
+          const list = Array.isArray(lr) ? lr : lr && lr.items ? lr.items.map((i) => ({ ...i, at: lr.at })) : [];
+          return list.filter((i) => Date.now() - i.at < 24 * 60 * MIN);
         } catch { return []; }
       })()
     };

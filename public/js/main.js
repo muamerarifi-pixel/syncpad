@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.4';
+const VERSION = '3.0.5';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -5223,7 +5223,14 @@ function renderRemindButton() {
 function scheduleLocalReminders() {
   clearTimeout(ui.remindTimer);
   const now = Date.now();
-  if (!ui.remindFrom) ui.remindFrom = now;
+  if (!ui.remindFrom) {
+    // catch up on reminders that came due while SyncPad was closed (up to a week back)
+    let seen = 0;
+    try { seen = Number(localStorage.getItem('sp-remind-seen')) || 0; } catch {}
+    ui.remindFrom = seen ? Math.max(seen, now - 7 * 864e5) : now;
+    if (!ui.remindSeenT) ui.remindSeenT = setInterval(() => { try { localStorage.setItem('sp-remind-seen', String(Date.now())); } catch {} }, 30_000);
+    try { localStorage.setItem('sp-remind-seen', String(now)); } catch {}
+  }
   let next = null;
   for (const n of store.list('note')) {
     if (n.data.trashed || !n.data.remind) continue;
@@ -5239,21 +5246,24 @@ function fireLocalReminders() {
   for (const n of store.list('note')) {
     if (n.data.trashed || !n.data.remind) continue;
     const t = remindNext(n, from - 1);
-    if (t && t <= now + 500) showReminder(n);
+    if (t && t <= now + 500) showReminder(n, now - t > 2 * 60_000 ? t : 0);
   }
+  try { localStorage.setItem('sp-remind-seen', String(now)); } catch {}
   scheduleLocalReminders();
 }
-function showReminder(n) {
+function showReminder(n, missedAt = 0) {
   ui.shownReminders ||= new Map();
   const last = ui.shownReminders.get(n.id) || 0;
   if (Date.now() - last < 90_000) return;
   ui.shownReminders.set(n.id, Date.now());
   const title = noteTitle(noteText(n)) || 'Note';
+  const missed = missedAt ? `Missed at ${new Date(missedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ` : '';
   if (document.visibilityState === 'visible') {
     try { navigator.vibrate && navigator.vibrate([60, 60, 60]); } catch {}
-    toast(`🔔 ${title}`, { action: 'Open', onAction: () => openNote(n.id), duration: 15000 });
-  } else if (!store.get('push') && 'Notification' in window && Notification.permission === 'granted') {
-    navigator.serviceWorker.ready.then((reg) => reg.showNotification('🔔 ' + title, { body: noteSnippet(noteText(n), 140), tag: 'remind-' + n.id, data: { url: '/?note=' + n.id } })).catch(() => {});
+    toast(`🔔 ${missed}${title}`, { action: 'Open', onAction: () => openNote(n.id), duration: missed ? 30000 : 15000 });
+  } else if ('Notification' in window && Notification.permission === 'granted') {
+    // rings on this device by itself, even offline; the same tag means a server push for it replaces, not doubles, it
+    navigator.serviceWorker.ready.then((reg) => reg.showNotification('🔔 ' + title, { body: missed + noteSnippet(noteText(n), 140), tag: 'remind-' + n.id, requireInteraction: true, icon: '/icons/icon-192.png', data: { url: '/?note=' + n.id } })).catch(() => {});
   }
 }
 
