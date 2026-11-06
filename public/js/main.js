@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.16';
+const VERSION = '3.0.17';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -136,7 +136,10 @@ function updateManifest() {
     t = localStorage.getItem('sp-theme') || 'system';
   } catch {}
   const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-  el.manifestLink.href = '/app.webmanifest?s=' + encodeURIComponent(linkCode()) + (dark ? '&theme=dark' : '') + (bg && bg !== 'none' ? '&bg=' + encodeURIComponent(bg) : '');
+  // the installed app carries BOTH colour sets (light + dark) and Android picks by the phone's own mode,
+  // so the bottom bar is never stuck in whichever theme was on when the app was installed
+  void dark; void bg;
+  el.manifestLink.href = '/app.webmanifest?s=' + encodeURIComponent(linkCode());
 }
 
 const me = () => store.get('device');
