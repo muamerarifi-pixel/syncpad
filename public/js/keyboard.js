@@ -22,6 +22,21 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   let shift = 0; // 0 off, 1 once, 2 caps lock
   let lastShift = 0;
   let target = null;
+  let kh = Math.max(36, Math.min(84, Number(localStorage.getItem('sp-kb-h')) || 54));
+  const setH = (h) => {
+    kh = Math.max(36, Math.min(84, Math.round(h)));
+    box.style.setProperty('--kh', kh + 'px');
+    try { localStorage.setItem('sp-kb-h', String(kh)); } catch {}
+    if (!box.hidden) document.documentElement.style.setProperty('--skb-h', box.offsetHeight + 'px');
+  };
+  box.style.setProperty('--kh', kh + 'px');
+  const reopen = document.createElement('button');
+  reopen.className = 'skb-open';
+  reopen.hidden = true;
+  reopen.setAttribute('aria-label', 'Show keyboard');
+  reopen.innerHTML = '⌨<span>Keyboard</span>';
+  document.body.append(reopen);
+  reopen.addEventListener('pointerdown', (e) => { e.preventDefault(); if (target) show(target); });
 
   const rows = () => (page === 'sym' ? SYMBOLS : page === 'sym2' ? SYMBOLS2 : LAYOUTS[lang]);
   function render() {
@@ -32,9 +47,18 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
       if (k === '=\\<') return `<button class="k k-fn" data-k="sym2">=\\&lt;</button>`;
       if (k === '123') return `<button class="k k-fn" data-k="sym">123</button>`;
       const ch = page === 'abc' && shift ? k.toUpperCase() : k;
-      return `<button class="k" data-ch="${ch.replace(/"/g, '&quot;')}">${ch.replace(/</g, '&lt;')}</button>`;
+      const label = page === 'abc' ? k.toUpperCase() : k;
+      return `<button class="k${page === 'abc' && !shift ? ' lower' : ''}" data-ch="${ch.replace(/"/g, '&quot;')}">${label.replace(/</g, '&lt;')}</button>`;
     }).join('');
     box.innerHTML = `
+      <div class="skb-bar" data-bar="1">
+        <span class="skb-size">
+          <button class="skb-mini" data-k="smaller" aria-label="Smaller keys">A−</button>
+          <span class="skb-grip" aria-hidden="true"></span>
+          <button class="skb-mini" data-k="bigger" aria-label="Bigger keys">A+</button>
+        </span>
+        <button class="skb-hide" data-k="hide" aria-label="Hide keyboard">Hide <b>⌄</b></button>
+      </div>
       <div class="skb-row">${keys(r[0])}</div>
       <div class="skb-row${r[1].length < r[0].length ? ' inset' : ''}">${keys(r[1])}</div>
       <div class="skb-row">${keys(r[2])}</div>
@@ -101,9 +125,13 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   let rep = 0, repT = 0, slide = null;
   const stopRepeat = () => { clearTimeout(repT); clearInterval(rep); repT = rep = 0; };
   box.addEventListener('pointerdown', (e) => {
-    const b = e.target.closest('.k');
+    const b = e.target.closest('.k, .skb-mini, .skb-hide');
     e.preventDefault(); // never take focus away from the text
-    if (!b) return;
+    if (!b) {
+      if (e.target.closest('[data-bar]')) { drag = { y: e.clientY, h: kh }; box.setPointerCapture(e.pointerId); box.classList.add('resizing'); }
+      return;
+    }
+    if (b.classList.contains('skb-mini')) { setH(kh + (b.dataset.k === 'bigger' ? 6 : -6)); return; }
     b.classList.add('down');
     try { navigator.vibrate && navigator.vibrate(8); } catch {}
     const k = b.dataset.k;
@@ -118,14 +146,23 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     if (k === 'enter') { enter(); return; }
     if (k === 'sym' || k === 'sym2' || k === 'abc') { page = k; render(); return; }
     if (k === 'lang') { lang = lang === 'sq' ? 'en' : 'sq'; try { localStorage.setItem('sp-kb-lang', lang); } catch {} render(); return; }
-    if (k === 'hide') { hide(true); }
+    if (k === 'hide') { hide(false); }
   });
+  let drag = null;
   box.addEventListener('pointermove', (e) => {
+    if (drag) {
+      const dy = e.clientY - drag.y; // up = bigger
+      const h = drag.h - dy / 4.6;
+      if (h < 30 && dy > 90) { drag = null; box.classList.remove('resizing'); hide(false); return; } // pulled all the way down: hide
+      setH(h);
+      return;
+    }
     if (!slide) return;
     const steps = Math.trunc((e.clientX - slide.x) / 14);
     if (steps) { moveCaret(steps); slide.x += steps * 14; slide.moved += Math.abs(steps); }
   });
   const up = (e) => {
+    if (drag) { drag = null; box.classList.remove('resizing'); }
     stopRepeat();
     for (const d of box.querySelectorAll('.k.down')) d.classList.remove('down');
     if (slide) { if (!slide.moved && e.type === 'pointerup') type(' '); slide = null; }
@@ -137,6 +174,7 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   /* show for the note and the write box; the phone's keyboard stays closed (inputmode none) */
   function show(t) {
     target = t;
+    reopen.hidden = true;
     if (!box.hidden) return;
     page = 'abc';
     render();
@@ -147,6 +185,8 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     requestAnimationFrame(keepCaretVisible);
   }
   function hide(blur) {
+    // still writing (hidden on purpose): a small button brings it back
+    reopen.hidden = !(enabled && !blur && target && document.activeElement === target);
     if (box.hidden) return;
     box.hidden = true;
     document.documentElement.classList.remove('skb-on');
@@ -156,7 +196,7 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   let enabled = false;
   const mark = (on) => { for (const t of document.querySelectorAll('#editor-text, #composer-input')) { if (on) t.setAttribute('inputmode', 'none'); else if (!(t.id === 'editor-text' && t.classList.contains('sel-mode'))) t.removeAttribute('inputmode'); } };
   document.addEventListener('focusin', (e) => { if (enabled && isTarget(e.target)) show(e.target); else if (!box.contains(e.target)) hide(false); });
-  document.addEventListener('focusout', () => setTimeout(() => { if (!document.activeElement || !isTarget(document.activeElement)) hide(false); }, 120));
+  document.addEventListener('focusout', () => setTimeout(() => { if (!document.activeElement || !isTarget(document.activeElement)) { hide(false); reopen.hidden = true; } }, 120));
   // tapping into the text again brings the keyboard back after it was hidden
   document.addEventListener('pointerup', (e) => { if (enabled && box.hidden && isTarget(document.activeElement) && document.activeElement.contains(e.target)) show(document.activeElement); });
   return {
