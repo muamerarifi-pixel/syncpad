@@ -2288,3 +2288,8 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
   .app[data-tab="drops"] .qn { bottom: calc(16px + var(--safe-b)); }
   .composer { max-width: min(960px, calc(100% - 2 * (var(--qn-w) + 36px))); }
 }
+
+/* 3.0.4: breathing room between the type chips and the first drop (list or grid) */
+.chips.type-chips { padding: 8px 0 14px; }
+.feed-inner > .day:first-child { padding-top: 0; }
+.feed-inner > .tile-grid:first-child { margin-top: 0; }
