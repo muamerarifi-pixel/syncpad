@@ -76,7 +76,7 @@ await A.keyboard.press('Escape');
 step('Text: tap, type, A+ ×2, yellow, drag to move, Done; second text undone; saved into the photo');
 
 // ── 2) collage of the three photos
-await A.click('#btn-select');
+await A.$eval('#btn-select', b => b.click());
 for (const n of ['red.png', 'green.png', 'blue.png']) await A.click(`.ri:has-text("${n}")`);
 await A.waitForSelector('[data-sel="collage"]:not([hidden])');
 await A.click('[data-sel="collage"]');
@@ -134,7 +134,7 @@ P.on('dialog', (d) => d.accept());
 await P.click('#mk-cancel').catch(() => {});
 await P.waitForTimeout(300);
 await P.keyboard.press('Escape');
-await P.click('#btn-select');
+await P.$eval('#btn-select', b => b.click());
 await P.click('.ri:has-text("a.png")'); await P.click('.ri:has-text("b.png")');
 await P.click('[data-sel="collage"]');
 await P.waitForSelector('#dlg-collage[open]'); await P.waitForTimeout(200);

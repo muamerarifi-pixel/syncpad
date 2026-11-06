@@ -96,7 +96,7 @@ step(`Phone: whole photo, pinch zoom → ${pz}`);
 await B.keyboard.press('Escape');
 
 // 5) refresh button
-await A.click('#btn-refresh');
+await A.$eval('#btn-refresh', b => b.click());
 await A.waitForSelector('#btn-refresh.spinning');
 await A.waitForSelector('.toast >> text=Up to date', { timeout: 15000 });
 await A.waitForSelector('#btn-refresh:not(.spinning)');

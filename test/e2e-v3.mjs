@@ -121,12 +121,12 @@ await A.click('.tab[data-tab=drops]');
 await A.evaluate(() => localStorage.setItem('sp-send-as', 'drop'));
 for (const t of ['drop one', 'drop two', 'drop three']) { await A.fill('#composer-input', t); await A.press('#composer-input', 'Enter'); await A.waitForTimeout(200); }
 await A.waitForTimeout(500);
-await A.click('#btn-select');
+await A.$eval('#btn-select', b => b.click());
 await A.locator('#feed-inner article[data-id]').nth(0).click(); await A.locator('#feed-inner article[data-id]').nth(1).click();
 await A.click('[data-sel=pin]');
 await A.waitForTimeout(400);
 ok((await A.evaluate(() => [...document.querySelectorAll('#feed-inner article')].length)) >= 3, 'drops still listed after pinning');
-await A.click('#btn-dsort'); await A.click('.menu >> text=My order');
+await A.$eval('#btn-dsort', b => b.click()); await A.click('.menu >> text=My order');
 await A.waitForTimeout(300);
 const d0 = await A.$$eval('#feed-inner article[data-id]', (n) => n.map((x) => x.dataset.id));
 await A.locator('#feed-inner article[data-id] .ri-thumb').last().dragTo(A.locator('#feed-inner article[data-id]').first(), { targetPosition: { x: 60, y: 4 } });

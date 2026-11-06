@@ -157,7 +157,7 @@ const png = fs.readFileSync(new URL('../public/icons/icon-512.png', import.meta.
 await P.setInputFiles('#file-input', [{ name: 'a.png', mimeType: 'image/png', buffer: png }, { name: 'b.png', mimeType: 'image/png', buffer: png }, { name: 'Invoice.pdf', mimeType: 'application/pdf', buffer: fs.readFileSync(FX('invoice.pdf')) }]);
 await P.fill('#composer-input', 'a long message to press and hold'); await P.click('#btn-send');
 await P.waitForFunction(() => document.querySelectorAll('.ri').length === 4 && !document.querySelector('.ri .progress'), null, { timeout: 20000 });
-await P.click('#btn-select'); await P.click('.ri:has-text("a.png")'); await P.click('.ri:has-text("b.png")');
+await P.$eval('#btn-select', b => b.click()); await P.click('.ri:has-text("a.png")'); await P.click('.ri:has-text("b.png")');
 await P.waitForSelector('[data-sel="collage"]:not([hidden])');
 const ov = await P.evaluate(() => [document.documentElement.scrollWidth, innerWidth, document.querySelector('#select-bar').getBoundingClientRect().right]);
 if (ov[0] > ov[1] || ov[2] > ov[1]) throw new Error('selection bar overflows ' + ov);

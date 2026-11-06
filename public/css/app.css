@@ -2450,3 +2450,7 @@ html.skb-on .qn, html.skb-on .tabbar { display: none !important; }
 .pin-set input, #pin-login-form input { height: 44px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); padding: 0 14px; font: inherit; font-size: 16px; }
 .pin-set input:placeholder-shown, #pin-login-form input:placeholder-shown { letter-spacing: normal; }
 .signin-link { margin-top: 14px; font-size: 13.5px; color: var(--accent-text, var(--accent)); }
+
+/* 3.0.33: cleaner drops header (upload via +, sync is automatic, hold to select, pinch to change layout) */
+.drops-head #btn-upload, .drops-head #btn-refresh, .drops-head #btn-dsort,
+.drops-head #btn-select, .drops-head #view-toggle { display: none !important; }
