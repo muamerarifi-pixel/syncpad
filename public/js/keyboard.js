@@ -3,14 +3,16 @@
    compact rows, instant keys (fires on touch-down), slide on the space bar to move the cursor,
    hold ⌫ to delete fast, ⇧ once = one capital, twice = CAPS. */
 
-const LAYOUTS = {
-  en: [['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'], ['⇧', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '⌫']],
-  sq: [['q', 'w', 'e', 'r', 't', 'z', 'u', 'i', 'o', 'p', 'ç'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'ë'], ['⇧', 'y', 'x', 'c', 'v', 'b', 'n', 'm', ',', '⌫']]
-};
+// the same key positions as the phone's own (Samsung-style) English keyboard, for both languages;
+// Albanian adds an Ë key on the bottom row and Ç on a long press of C
+const QWERTY = [['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'], ['⇧', 'z', 'x', 'c', 'v', 'b', 'n', 'm', '⌫']];
+const LAYOUTS = { en: QWERTY, sq: QWERTY };
+// hold a key for its second character (shown small in the corner): numbers on the top row, ç on C, comma on the full stop
+const ALT = { q: '1', w: '2', e: '3', r: '4', t: '5', y: '6', u: '7', i: '8', o: '9', p: '0', c: 'ç', '.': ',' };
 const SPK = '<path d="M4 9.5h3.2L11.5 6v12l-4.3-3.5H4z"/>';
 const SPK_ON = `<svg class="ic" viewBox="0 0 24 24">${SPK}<path d="M15 9.2a4 4 0 0 1 0 5.6M17.6 6.8a7.5 7.5 0 0 1 0 10.4"/></svg>`;
 const SPK_OFF = `<svg class="ic" viewBox="0 0 24 24">${SPK}<path d="m15.5 10 4 4m0-4-4 4"/></svg>`;
-const SYMBOLS = [['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'], ['@', '#', '€', '&', '-', '+', '(', ')', '/', '"'], ['=\\<', '*', "'", ':', ';', '!', '?', '%', '⌫']];
+const SYMBOLS = [['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'], ['@', '#', '€', '&', '-', '+', '(', ')', '/', '"'], ['=\\<', ',', '*', "'", ':', ';', '!', '?', '⌫']];
 const SYMBOLS2 = [['~', '`', '|', '•', '√', 'π', '÷', '×', '§', '°'], ['$', '£', '¥', '^', '_', '[', ']', '{', '}', '<'], ['123', '>', '\\', '©', '®', '™', '✓', '…', '⌫']];
 
 export function createKeyboard({ isTarget, onShow, onHide }) {
@@ -76,7 +78,8 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
       if (k === '123') return `<button class="k k-fn" data-k="sym">123</button>`;
       const ch = page === 'abc' && shift ? k.toUpperCase() : k;
       const label = page === 'abc' ? k.toUpperCase() : k;
-      return `<button class="k${page === 'abc' && !shift ? ' lower' : ''}" data-ch="${ch.replace(/"/g, '&quot;')}">${label.replace(/</g, '&lt;')}</button>`;
+      const alt = page === 'abc' && ALT[k] && !(k === 'c' && lang !== 'sq') ? (shift ? ALT[k].toUpperCase() : ALT[k]) : '';
+      return `<button class="k" data-ch="${ch.replace(/"/g, '&quot;')}"${alt ? ` data-alt="${alt}"` : ''}>${label.replace(/</g, '&lt;')}${alt ? `<sup>${alt}</sup>` : ''}</button>`;
     }).join('');
     box.innerHTML = `
       <div class="skb-bar" data-bar="1">
@@ -96,10 +99,10 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
       <div class="skb-row${r[1].length < r[0].length ? ' inset' : ''}">${keys(r[1])}</div>
       <div class="skb-row">${keys(r[2])}</div>
       <div class="skb-row skb-bottom">
-        <button class="k k-fn" data-k="${page === 'abc' ? 'sym' : 'abc'}">${page === 'abc' ? '?123' : 'ABC'}</button>
-        <button class="k k-fn k-lang" data-k="lang" aria-label="Language">${lang === 'sq' ? 'SQ' : 'EN'}</button>
-        <button class="k k-space" data-k="space" aria-label="Space — slide to move the cursor">${lang === 'sq' ? 'Shqip' : 'English'}</button>
-        <button class="k" data-ch=".">.</button>
+        <button class="k k-fn k-sym" data-k="${page === 'abc' ? 'sym' : 'abc'}">${page === 'abc' ? '!#1' : 'ABC'}</button>
+        <button class="k k-space" data-k="space" aria-label="Space — slide to move the cursor"><span class="k-lang" data-k="lang" aria-label="Switch language">‹</span><span>${lang === 'sq' ? 'Shqip' : 'English (US)'}</span><span class="k-lang" data-k="lang" aria-label="Switch language">›</span></button>
+        ${lang === 'sq' && page === 'abc' ? `<button class="k k-e" data-ch="${shift ? 'Ë' : 'ë'}">Ë</button>` : ''}
+        <button class="k k-dot" data-ch="." data-alt=",">.<sup>,</sup></button>
         <button class="k k-fn k-enter" data-k="enter" aria-label="New line">⏎</button>
       </div>`;
   }
@@ -153,7 +156,8 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   }
 
   /* keys fire on touch-down for speed; held ⌫ repeats; the space bar slides the cursor */
-  let rep = 0, repT = 0, slide = null;
+  let rep = 0, repT = 0, slide = null, hold = null;
+  const afterChar = () => { if (shift === 1) { shift = 0; render(); } };
   const stopRepeat = () => { clearTimeout(repT); clearInterval(rep); repT = rep = 0; };
   box.addEventListener('pointerdown', (e) => {
     const b = e.target.closest('.k, .skb-mini, .skb-hide');
@@ -173,9 +177,17 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     b.classList.add('down');
     click();
     const k = b.dataset.k;
+    // the arrows on the space bar switch the language
+    if (e.target.closest('.k-lang')) { lang = lang === 'sq' ? 'en' : 'sq'; try { localStorage.setItem('sp-kb-lang', lang); } catch {} render(); return; }
     if (b.dataset.ch) {
+      if (b.dataset.alt) {
+        // a quick tap types the letter, holding types the small character in the corner
+        hold = { ch: b.dataset.ch, alt: b.dataset.alt, done: false };
+        hold.t = setTimeout(() => { if (hold) { hold.done = true; type(hold.alt); click(); afterChar(); } }, 330);
+        return;
+      }
       type(b.dataset.ch);
-      if (shift === 1) { shift = 0; render(); }
+      afterChar();
       return;
     }
     if (k === 'del') { del(); repT = setTimeout(() => { rep = setInterval(del, 55); }, 380); return; }
@@ -200,6 +212,7 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     if (steps) { moveCaret(steps); slide.x += steps * 14; slide.moved += Math.abs(steps); }
   });
   const up = (e) => {
+    if (hold) { clearTimeout(hold.t); const h = hold; hold = null; if (!h.done && e.type === 'pointerup') { type(h.ch); afterChar(); } }
     if (drag) { drag = null; box.classList.remove('resizing'); }
     stopRepeat();
     for (const d of box.querySelectorAll('.k.down')) d.classList.remove('down');
