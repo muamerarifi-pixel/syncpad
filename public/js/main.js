@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.7';
+const VERSION = '3.0.8';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1236,7 +1236,7 @@ async function onFeedClick(e) {
     openTextViewer(it);
   } else if (act === 'open') {
     if (it.kind === 'file') openFile(it);
-    else if (singleUrl(it.data.text || '')) window.open(singleUrl(it.data.text), '_blank', 'noopener');
+    else if (singleUrl(it.data.text || '')) openUrl(singleUrl(it.data.text));
     else openTextViewer(it);
   } else if (act === 'open-hit') {
     ui.openPage = Number(a.dataset.page) || 0;
@@ -1266,7 +1266,7 @@ function dropMenu(anchor, it, at) {
     const url = singleUrl(it.data.text || '');
     m.push({ icon: 'copy', label: 'Copy text', run: async () => { await copyText(it.data.text); toast('Copied'); } });
     if (De.isAiText(it.data.text || '')) m.push({ icon: 'sparkle', label: 'Copy clean text', run: async () => { await copyText(De.plainText(it.data.text, declutterOpts() || {})); toast('Clean text copied'); } });
-    if (url) m.push({ icon: 'link', label: 'Open link', run: () => window.open(url, '_blank', 'noopener') });
+    if (url) m.push({ icon: 'link', label: ytInfo(url) ? 'Play privately' : 'Open link', run: () => openUrl(url) });
     if (navigator.share && isTouch()) m.push({ icon: 'share', label: 'Share…', run: () => navigator.share(url ? { url } : { text: it.data.text }).catch(() => {}) });
     m.push({ icon: 'note', label: 'Save as note', run: () => saveClipAsNote(it) });
   } else {
@@ -3472,7 +3472,7 @@ function onEditorClick(e) {
   const a = e.target.closest('a[href]');
   if (a) {
     e.preventDefault();
-    window.open(a.href, '_blank', 'noopener');
+    openUrl(a.href);
     return;
   }
 }
@@ -5630,3 +5630,53 @@ boot().catch((err) => {
   console.error(err);
   document.body.insertAdjacentHTML('beforeend', `<div class="toasts" style="bottom:24px"><div class="toast"><span>SyncPad could not start: ${esc(err.message || err)}. Try reloading.</span></div></div>`);
 });
+
+
+/* ───────── YouTube links play privately, inside SyncPad (youtube-nocookie: no watch history, no cookies) ───────── */
+function ytInfo(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const h = u.hostname.replace(/^(www\.|m\.|music\.)/, '');
+  let id = '';
+  if (h === 'youtu.be') id = u.pathname.slice(1).split('/')[0];
+  else if (h === 'youtube.com' || h === 'youtube-nocookie.com') {
+    if (u.pathname === '/watch') id = u.searchParams.get('v') || '';
+    else { const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([\w-]{11})/); if (m) id = m[1]; }
+  }
+  if (!/^[\w-]{11}$/.test(id)) return null;
+  const t = u.searchParams.get('t') || u.searchParams.get('start') || '';
+  let start = 0;
+  if (/^\d+$/.test(t)) start = +t;
+  else { const m = t.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/); if (m) start = (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0); }
+  return { id, start, list: u.searchParams.get('list') || '' };
+}
+function openUrl(url) {
+  const yt = ytInfo(url);
+  if (!yt) { window.open(url, '_blank', 'noopener'); return; }
+  let d = $('#dlg-yt');
+  if (!d) {
+    d = document.createElement('dialog');
+    d.id = 'dlg-yt';
+    d.className = 'yt-dlg';
+    d.innerHTML = `<div class="yt-bar"><span class="yt-note"><svg class="ic"><use href="#i-lock"/></svg>Private — not saved to your YouTube history</span><span class="spacer"></span><a class="btn btn-sm" id="yt-open" target="_blank" rel="noopener noreferrer">Open in YouTube</a><button class="icon-btn" id="yt-close" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button></div><div class="yt-frame"></div>`;
+    document.body.append(d);
+    const stop = () => { d.querySelector('.yt-frame').innerHTML = ''; };
+    d.addEventListener('close', stop);
+    d.addEventListener('click', (e) => { if (e.target === d || e.target.closest('#yt-close')) d.close(); });
+    d.querySelector('#yt-open').addEventListener('click', () => { stop(); d.close(); });
+  }
+  const q = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1', modestbranding: '1' });
+  if (yt.start) q.set('start', String(yt.start));
+  if (yt.list) q.set('list', yt.list);
+  d.querySelector('.yt-frame').innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${yt.id}?${q}" title="YouTube video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+  d.querySelector('#yt-open').href = url;
+  openDialog(d);
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0 || a.closest('#dlg-yt')) return;
+  if (!ytInfo(a.href)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openUrl(a.href);
+}, true);

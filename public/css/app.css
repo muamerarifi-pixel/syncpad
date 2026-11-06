@@ -2299,3 +2299,14 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 @media (max-width: 860px) { .drop-chips { padding-bottom: 10px; } .feed-inner { padding-top: 6px; } }
 .tile.selected { box-shadow: 0 0 0 2px var(--accent), 0 4px 14px color-mix(in srgb, var(--accent) 18%, transparent); }
 .tile-media .tile-text { padding-top: 44px; }
+
+/* 3.0.8: private YouTube player */
+.yt-dlg { width: min(960px, 100vw - 24px); max-width: none; padding: 0; border: 0; border-radius: 18px; overflow: hidden; background: #000; box-shadow: 0 24px 60px rgba(0,0,0,.5); }
+.yt-dlg::backdrop { background: rgba(0,0,0,.72); }
+.yt-bar { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 14px; background: var(--surface); }
+.yt-note { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.yt-note .ic { width: 15px; height: 15px; }
+.yt-frame { aspect-ratio: 16 / 9; width: 100%; background: #000; }
+.yt-frame iframe { width: 100%; height: 100%; border: 0; display: block; }
+@media (max-width: 640px) { .yt-dlg { width: 100vw; border-radius: 0; margin: auto 0; } .yt-note { font-size: 11.5px; } }
+.yt-bar a.btn { text-decoration: none; color: var(--text); }
