@@ -162,7 +162,32 @@ const w1 = await B.$eval('.dv-page', (e) => e.offsetWidth);
 ok(w1 > w0 * 1.6, `pinch zoomed the page (${w0}px → ${w1}px)`);
 const sc = await B.$eval('.dv-scroll', (e) => ({ sw: e.scrollWidth, cw: e.clientWidth }));
 ok(sc.sw > sc.cw, 'zoomed page can be panned sideways');
+// the word under the fingers stays under the fingers
+const spanAt = (x, y) => B.evaluate(([x, y]) => { const e = document.elementsFromPoint(x, y).find((e) => e.matches('.textLayer span')); if (!e) return null; const pg = e.closest('.dv-page'); window.__probe = { n: pg.dataset.n, i: [...pg.querySelectorAll('.textLayer span')].indexOf(e) }; return 1; }, [x, y]);
+const probe = () => B.evaluate(() => { const q = window.__probe; if (!q) return null; const e = document.querySelector(`.dv-page[data-n="${q.n}"]`).querySelectorAll('.textLayer span')[q.i]; if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left, y: r.top + r.height / 2, w: r.width }; });
+await B.evaluate(() => { const w = document.querySelector('.dv-scroll'); const r = w.getBoundingClientRect(); w.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })); });
+await B.waitForTimeout(800);
+await B.waitForSelector('.textLayer span');
+const tgt = await B.evaluate(() => { const w = document.querySelector('.dv-scroll').getBoundingClientRect(); const vis = [...document.querySelectorAll('.textLayer span')].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 4 && r.top > w.top + 60 && r.bottom < w.bottom - 60 && r.left > w.left + 10 && r.right < w.right - 10); const r = vis[Math.floor(vis.length / 2)]; return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null; });
+await spanAt(tgt.x, tgt.y);
+const pb0 = await probe();
+await touch('touchStart', [{ x: tgt.x - 30, y: tgt.y }, { x: tgt.x + 30, y: tgt.y }]);
+for (let k = 1; k <= 8; k++) { await touch('touchMove', [{ x: tgt.x - 30 - k * 5, y: tgt.y }, { x: tgt.x + 30 + k * 5, y: tgt.y }]); await B.waitForTimeout(16); }
+await touch('touchEnd', []);
+await B.waitForTimeout(700);
+const pb1 = await probe();
+ok(pb0 && pb1 && Math.abs(pb1.y - pb0.y) < 20, `the line under the fingers stays put (moved ${pb1 ? Math.round(pb1.y - pb0.y) : '?'}px)`);
+const zBefore = await B.$eval('.dv-page', (e) => e.offsetWidth);
+const topBefore = await B.$eval('.dv-scroll', (e) => e.scrollTop);
 await B.screenshot({ path: `${OUT}/v3-pdf-zoom.png` });
+await B.keyboard.press('Escape'); await B.evaluate(() => document.querySelector('#dlg-viewer').close());
+await B.waitForTimeout(400);
+await B.click('#feed-inner article:has-text("invoice.pdf") [data-act=open]');
+await B.waitForSelector('.dv-page canvas', { timeout: 15000 });
+await B.waitForTimeout(600);
+const zAfter = await B.$eval('.dv-page', (e) => e.offsetWidth);
+const topAfter = await B.$eval('.dv-scroll', (e) => e.scrollTop);
+ok(Math.abs(zAfter - zBefore) < 4 && Math.abs(topAfter - topBefore) < 12, `reopening keeps the zoom and the spot (${zBefore}→${zAfter}px, top ${topBefore}→${topAfter})`);
 await B.keyboard.press('Escape'); await B.evaluate(() => document.querySelector('#dlg-viewer').close());
 
 step('ePUB: read in the viewer and import as a note');

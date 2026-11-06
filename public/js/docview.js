@@ -30,9 +30,9 @@ export function docKind(kind, name) {
 }
 
 /** Renders a document into `box`. Returns { zoomBy(f), fit(), destroy(), source? } */
-export async function viewDocument(box, blob, { kind, onLabel = () => {}, page = 0 } = {}) {
+export async function viewDocument(box, blob, { kind, onLabel = () => {}, page = 0, key = '' } = {}) {
   box.innerHTML = '<div class="dv-loading">Opening…</div>';
-  if (kind === 'pdf') return viewPdf(box, blob, onLabel, page);
+  if (kind === 'pdf') return viewPdf(box, blob, onLabel, page, key);
   const M = await import('./docmodel.js');
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let z = 1;
@@ -68,7 +68,7 @@ export async function viewDocument(box, blob, { kind, onLabel = () => {}, page =
   };
 }
 
-async function viewPdf(box, blob, onLabel, startPage = 0) {
+async function viewPdf(box, blob, onLabel, startPage = 0, key = '') {
   const lib = await loadPdfjs();
   const rawBytes = new Uint8Array(await blob.arrayBuffer());
   const task = lib.getDocument({ data: rawBytes, isEvalSupported: false, useWasm: false, standardFontDataUrl: V + 'standard_fonts/', verbosity: 0 });
@@ -252,97 +252,111 @@ async function viewPdf(box, blob, onLabel, startPage = 0) {
   };
   wrap.addEventListener('scroll', () => requestAnimationFrame(showPageNo), { passive: true });
 
-  const rezoom = (nz, at = null) => {
-    const oldZ = z;
-    const targetZ = Math.max(0.5, Math.min(6, nz));
-    if (Math.abs(targetZ - oldZ) < 0.001) return;
-    const r = wrap.getBoundingClientRect();
-    const ax = at ? at.clientX : r.left + r.width / 2;
-    const ay = at ? at.clientY : r.top + r.height / 2;
-    // the page under the anchor keeps the same spot under the finger / cursor
-    const under = pages.find((p) => { const pr = p.el.getBoundingClientRect(); return ay >= pr.top && ay <= pr.bottom; }) || pages[currentPage() - 1];
+  /* ── where you are reading: a page and a spot on it, so zooming, resizing and reopening never lose the line ── */
+  const pageAtY = (y) => pages.find((q) => { const pr = q.el.getBoundingClientRect(); return y >= pr.top - 7 && y <= pr.bottom + 7; }) || pages[currentPage() - 1];
+  const spotAt = (x, y) => {
+    const under = pageAtY(y);
     const pr = under.el.getBoundingClientRect();
-    const fx = (ax - pr.left) / Math.max(1, pr.width);
-    const fy = (ay - pr.top) / Math.max(1, pr.height);
-    z = targetZ;
+    return { under, fx: (x - pr.left) / Math.max(1, pr.width), fy: (y - pr.top) / Math.max(1, pr.height) };
+  };
+  const putSpot = (sp, x, y) => {
+    const r = wrap.getBoundingClientRect();
+    const pr = sp.under.el.getBoundingClientRect();
+    // move by the difference, so it is exact whatever the page's offset parent is
+    const nx = pr.left + sp.fx * pr.width;
+    const ny = pr.top + sp.fy * pr.height;
+    wrap.scrollLeft += nx - x;
+    wrap.scrollTop += ny - y;
+    void r;
+  };
+  const commitZoom = (nz, sp, x, y) => {
+    z = Math.max(0.5, Math.min(6, nz));
+    if (Math.abs(z - 1) < 0.06) z = 1;
     size();
-    wrap.scrollLeft = Math.max(0, under.el.offsetLeft + fx * under.el.offsetWidth - (ax - r.left));
-    wrap.scrollTop = Math.max(0, under.el.offsetTop + fy * under.el.offsetHeight - (ay - r.top));
+    putSpot(sp, x, y);
     wrap.classList.toggle('is-zoomed', z > 1.05);
     for (const p of pages) if (p.near) render(p);
     label();
+    saveView();
+  };
+  const rezoom = (nz, at = null) => {
+    const targetZ = Math.max(0.5, Math.min(6, nz));
+    if (Math.abs(targetZ - z) < 0.001) return;
+    const r = wrap.getBoundingClientRect();
+    const ax = at ? at.clientX : r.left + r.width / 2;
+    const ay = at ? at.clientY : r.top + r.height / 2;
+    commitZoom(targetZ, spotAt(ax, ay), ax, ay);
   };
 
-  // Trackpad pinch & Ctrl+wheel zoom at the cursor (batched per frame)
-  let wheelZ = null;
-  let wheelAt = null;
-  let wheelRaf = 0;
+  /* ── live zoom preview: the pages are only scaled on the GPU while the gesture runs (silky, even with
+        hundreds of pages); the real re-layout happens once, when the fingers lift or the trackpad stops ── */
+  let live = null;
+  const startLive = (x, y) => {
+    const st = { sp: spotAt(x, y), o: pagesBox.getBoundingClientRect(), x0: x, y0: y, k: 1, x, y, z0: z };
+    pagesBox.style.transformOrigin = '0 0';
+    pagesBox.style.willChange = 'transform';
+    return st;
+  };
+  const showLive = (st, k, x, y) => {
+    st.k = Math.max(0.5 / st.z0, Math.min(6 / st.z0, k));
+    st.x = x; st.y = y;
+    const tx = x - st.o.left - st.k * (st.x0 - st.o.left);
+    const ty = y - st.o.top - st.k * (st.y0 - st.o.top);
+    pagesBox.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${st.k})`;
+  };
+  const endLive = (st) => {
+    pagesBox.style.transform = '';
+    pagesBox.style.willChange = '';
+    commitZoom(st.z0 * st.k, st.sp, st.x, st.y);
+  };
+
+  // Trackpad pinch & Ctrl+wheel: smooth preview, committed 160 ms after the fingers stop
+  let wheelT = 0;
   wrap.addEventListener('wheel', (e) => {
     if (!e.ctrlKey) return;
     e.preventDefault();
-    wheelZ = (wheelZ || z) * Math.exp(-e.deltaY * 0.006);
-    wheelAt = { clientX: e.clientX, clientY: e.clientY };
-    if (wheelRaf) return;
-    wheelRaf = requestAnimationFrame(() => { wheelRaf = 0; const t = wheelZ; wheelZ = null; rezoom(t, wheelAt); });
+    if (!live) live = startLive(e.clientX, e.clientY);
+    const step = Math.max(-0.25, Math.min(0.25, -e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0085)));
+    showLive(live, live.k * Math.exp(step), live.x0, live.y0);
+    clearTimeout(wheelT);
+    wheelT = setTimeout(() => { const st = live; live = null; if (st) endLive(st); }, 160);
   }, { passive: false });
 
   // double-click / double-tap: zoom in at that spot, or back to fit
-  const toggleAt = (x, y) => { if (z > 1.1) rezoom(1, { clientX: x, clientY: y }); else rezoom(2.5, { clientX: x, clientY: y }); };
+  const toggleAt = (x, y) => { if (z > 1.1) rezoom(1, { clientX: x, clientY: y }); else rezoom(2.2, { clientX: x, clientY: y }); };
   wrap.addEventListener('dblclick', (e) => {
     if (e.target.closest('.dv-hl-pop, .dv-hl, button')) return;
     toggleAt(e.clientX, e.clientY);
   });
 
   // Touch: one finger scrolls natively in every direction (with momentum); two fingers pinch.
-  // During the pinch the pages are only scaled on the GPU; the real re-layout happens once at the end.
   let pinch = null;
   let lastTap = null;
   const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
   const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1;
   wrap.addEventListener('touchstart', (e) => {
     if (e.touches.length === 2) {
+      // stop any fling first, so the page doesn't slide away under the fingers
+      const sl = wrap.scrollLeft, st = wrap.scrollTop;
+      wrap.style.overflow = 'hidden';
+      wrap.scrollLeft = sl; wrap.scrollTop = st;
       const m = mid(e.touches);
-      const o = pagesBox.getBoundingClientRect();
-      pinch = { d0: dist(e.touches), m0: m, o, k: 1, m, z0: z };
-      pagesBox.style.transformOrigin = '0 0';
-      pagesBox.style.willChange = 'transform';
+      pinch = { d0: dist(e.touches), live: startLive(m.x, m.y) };
       lastTap = null;
-    } else if (e.touches.length > 2) pinch = null;
+    } else if (e.touches.length > 2 && pinch) { endPinch(); }
   }, { passive: true });
   wrap.addEventListener('touchmove', (e) => {
     if (!pinch || e.touches.length !== 2) return;
     if (e.cancelable) e.preventDefault();
     const m = mid(e.touches);
-    const k = Math.max(0.5 / pinch.z0, Math.min(6 / pinch.z0, dist(e.touches) / pinch.d0));
-    pinch.k = k;
-    pinch.m = m;
-    // keep the point that was under the fingers under the fingers
-    const c0x = pinch.m0.x - pinch.o.left;
-    const c0y = pinch.m0.y - pinch.o.top;
-    const tx = m.x - pinch.o.left - k * c0x;
-    const ty = m.y - pinch.o.top - k * c0y;
-    pagesBox.style.transform = `translate(${tx}px, ${ty}px) scale(${k})`;
+    showLive(pinch.live, dist(e.touches) / pinch.d0, m.x, m.y);
   }, { passive: false });
   const endPinch = () => {
     if (!pinch) return;
     const p = pinch;
     pinch = null;
-    // the page under the fingers, measured while still scaled
-    const under = pages.find((q) => { const r = q.el.getBoundingClientRect(); return p.m.y >= r.top && p.m.y <= r.bottom; }) || pages[currentPage() - 1];
-    const pr = under.el.getBoundingClientRect();
-    const fx = (p.m.x - pr.left) / Math.max(1, pr.width);
-    const fy = (p.m.y - pr.top) / Math.max(1, pr.height);
-    pagesBox.style.transform = '';
-    pagesBox.style.willChange = '';
-    z = Math.max(0.5, Math.min(6, p.z0 * p.k));
-    if (Math.abs(z - 1) < 0.06) z = 1;
-    size();
-    const r = wrap.getBoundingClientRect();
-    wrap.scrollLeft = Math.max(0, under.el.offsetLeft + fx * under.el.offsetWidth - (p.m.x - r.left));
-    wrap.scrollTop = Math.max(0, under.el.offsetTop + fy * under.el.offsetHeight - (p.m.y - r.top));
-    wrap.classList.toggle('is-zoomed', z > 1.05);
-    for (const q of pages) if (q.near) render(q);
-    label();
+    wrap.style.overflow = '';
+    endLive(p.live);
   };
   wrap.addEventListener('touchend', (e) => {
     if (pinch && e.touches.length < 2) { endPinch(); return; }
@@ -358,6 +372,29 @@ async function viewPdf(box, blob, onLabel, startPage = 0) {
     lastTap = { t: now, x: t.clientX, y: t.clientY };
   }, { passive: false });
   wrap.addEventListener('touchcancel', () => { if (pinch) endPinch(); }, { passive: true });
+
+  /* ── remember the view of this document: zoom and the line at the top of the screen ── */
+  const VKEY = key ? 'sp-dv-' + key : '';
+  let saveT = 0;
+  const readTop = () => { const r = wrap.getBoundingClientRect(); return spotAt(r.left + 1, r.top + 2); };
+  let lastView = null;
+  const writeView = () => {
+    if (!VKEY || !lastView) return;
+    try {
+      localStorage.setItem(VKEY, JSON.stringify(lastView));
+      // keep only the 60 most recent documents
+      const ks = Object.keys(localStorage).filter((k) => k.startsWith('sp-dv-'));
+      if (ks.length > 60) ks.map((k) => [k, (JSON.parse(localStorage.getItem(k) || '{}').t || 0)]).sort((a, b) => a[1] - b[1]).slice(0, ks.length - 60).forEach(([k]) => localStorage.removeItem(k));
+    } catch {}
+  };
+  function saveView() {
+    if (!VKEY || !wrap.isConnected || !wrap.clientHeight) return;
+    const sp = readTop();
+    lastView = { z: +z.toFixed(3), n: sp.under.num, fx: +sp.fx.toFixed(4), fy: +sp.fy.toFixed(4), t: Date.now() };
+    clearTimeout(saveT);
+    saveT = setTimeout(writeView, 250);
+  }
+  wrap.addEventListener('scroll', () => { if (!live && !pinch) saveView(); }, { passive: true });
 
   // Mouse: drag to pan when zoomed in (or hold Space, or middle button)
   let isDragging = false;
@@ -464,11 +501,22 @@ async function viewPdf(box, blob, onLabel, startPage = 0) {
   document.addEventListener('selectionchange', onSelChange);
 
   let lastW = wrap.clientWidth;
-  const onResize = () => { if (Math.abs(wrap.clientWidth - lastW) < 2) return; lastW = wrap.clientWidth; const pg = currentPage(); size(); wrap.scrollTop = pages[pg - 1].el.offsetTop - 8; for (const p of pages) if (p.near) render(p); };
+  const onResize = () => { if (Math.abs(wrap.clientWidth - lastW) < 2) return; lastW = wrap.clientWidth; const r = wrap.getBoundingClientRect(); const sp = readTop(); size(); putSpot(sp, r.left + 1, r.top + 2); for (const p of pages) if (p.near) render(p); };
   addEventListener('resize', onResize);
 
   // open at a page (e.g. a search hit)
   if (startPage > 1 && pages[startPage - 1]) requestAnimationFrame(() => { wrap.scrollTop = pages[startPage - 1].el.offsetTop - 8; showPageNo(); });
+  else if (VKEY) {
+    let v = null;
+    try { v = JSON.parse(localStorage.getItem(VKEY) || 'null'); } catch {}
+    if (v && pages[v.n - 1]) requestAnimationFrame(() => {
+      if (v.z && Math.abs(v.z - 1) > 0.01) { z = Math.max(0.5, Math.min(6, v.z)); size(); wrap.classList.toggle('is-zoomed', z > 1.05); label(); }
+      const r = wrap.getBoundingClientRect();
+      putSpot({ under: pages[v.n - 1], fx: v.fx || 0, fy: v.fy || 0 }, r.left + 1, r.top + 2);
+      for (const p of pages) if (p.near) render(p);
+      showPageNo();
+    });
+  }
 
   return {
     source,
@@ -477,6 +525,8 @@ async function viewPdf(box, blob, onLabel, startPage = 0) {
     fit() { rezoom(1); },
     goto(n) { const p = pages[Math.max(1, Math.min(pages.length, n)) - 1]; wrap.scrollTop = p.el.offsetTop - 8; },
     destroy() {
+      clearTimeout(saveT); writeView();
+      clearTimeout(wheelT);
       hidePop();
       io.disconnect();
       ioFar.disconnect();

@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.6';
+const VERSION = '3.0.7';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1486,7 +1486,7 @@ async function openDocViewer(it, dk) {
   if (!blob) { host.innerHTML = '<div class="dv-empty">Could not load this file. Check your connection.</div>'; return; }
   try {
     const { viewDocument } = await import('./docview.js');
-    const ctl = await viewDocument(host, blob, { kind: dk, page: ui.openPage || 0, onLabel: (t) => { pct.textContent = t; } });
+    const ctl = await viewDocument(host, blob, { kind: dk, page: ui.openPage || 0, key: it.id, onLabel: (t) => { pct.textContent = t; } });
     ui.openPage = 0;
     if (ui.viewing !== it) { ctl.destroy(); return; }
     ui.zoom = ctl;
