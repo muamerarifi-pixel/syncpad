@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.12';
+const VERSION = '3.0.13';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -202,7 +202,7 @@ function wire() {
   // text zoom (note editor)
   el.btnZoomIn.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(1) : stepZoom(1)));
   el.btnZoomOut.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(-1) : stepZoom(-1)));
-  el.btnZoomReset.addEventListener('click', () => { if (canvasOpen()) { ui.canvas.zoomStep(0); return; } currentZoom = 1; try { localStorage.setItem('sp-zoom', '1'); } catch {} applyZoom(); });
+  el.btnZoomReset.addEventListener('click', () => { if (canvasOpen()) { ui.canvas.zoomStep(0); return; } currentZoom = 1; saveZoomPref(1); applyZoom(); });
   $('.zoom').addEventListener('mousedown', (e) => e.preventDefault());
   setupEditorZoomGestures();
 
@@ -2563,6 +2563,7 @@ const files_src = (id) => { try { return files.src(id); } catch { return null; }
 function openNote(id, { focus = true } = {}) {
   if (ui.tab !== 'notes') setTab('notes');
   if (ui.noteId && ui.noteId !== id) saveNote.flush();
+  if (ui.noteId !== id) { currentZoom = Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], zoomForNote(id))); applyZoomStyles(); }
   ui.noteId = id;
   ui.noteEdits = 0;
   ui.noteRedos = 0;
@@ -4154,6 +4155,27 @@ let currentZoom = null;
 let zoomRaf = 0;
 let zoomSaveTimer = null;
 
+/* each note remembers its own zoom (the last 300 notes you zoomed); other notes use your usual zoom */
+function noteZooms() { try { return JSON.parse(localStorage.getItem('sp-zoom-notes') || '{}') || {}; } catch { return {}; } }
+function saveZoomPref(z) {
+  const v = Math.round(z * 100) / 100;
+  try {
+    if (ui.noteId && !canvasOpen()) {
+      const m = noteZooms();
+      delete m[ui.noteId];
+      m[ui.noteId] = v;
+      const ks = Object.keys(m);
+      if (ks.length > 300) for (const k of ks.slice(0, ks.length - 300)) delete m[k];
+      localStorage.setItem('sp-zoom-notes', JSON.stringify(m));
+    } else localStorage.setItem('sp-zoom', String(v)); // no note open: your usual zoom
+  } catch {}
+}
+function zoomForNote(id) {
+  const z = noteZooms()[id];
+  if (z) return z;
+  try { return Number(localStorage.getItem('sp-zoom')) || 1; } catch { return 1; }
+}
+
 function getZoom() {
   if (currentZoom != null) return currentZoom;
   let z = 1;
@@ -4182,11 +4204,11 @@ function setContinuousZoom(z, persist = true) {
 
   if (persist) {
     clearTimeout(zoomSaveTimer);
-    try { localStorage.setItem('sp-zoom', String(Math.round(clamped * 100) / 100)); } catch {}
+    saveZoomPref(clamped);
   } else {
     clearTimeout(zoomSaveTimer);
     zoomSaveTimer = setTimeout(() => {
-      try { localStorage.setItem('sp-zoom', String(Math.round(currentZoom * 100) / 100)); } catch {}
+      saveZoomPref(currentZoom);
     }, 180);
   }
 
