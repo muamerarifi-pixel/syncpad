@@ -2398,7 +2398,7 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 /* 3.0.24: SyncPad keyboard — big capital keys, resizable, easy to hide */
 .kb-field { display: none; }
 @media (pointer: coarse) { .kb-field { display: flex; } }
-.skb { --kh: 54px; position: fixed; left: 0; right: 0; bottom: 0; z-index: 120; padding: 0 4px calc(6px + var(--safe-b, 0px)); background: var(--surface-2); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; touch-action: none; display: flex; flex-direction: column; gap: calc(var(--kh) * .12); box-shadow: 0 -8px 22px rgba(0,0,0,.08); }
+.skb { --kh: 54px; --lift: 0px; position: fixed; left: 0; right: 0; bottom: 0; z-index: 120; padding: 0 4px calc(6px + var(--safe-b, 0px) + var(--lift)); background: var(--surface-2); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; touch-action: none; display: flex; flex-direction: column; gap: calc(var(--kh) * .12); box-shadow: 0 -8px 22px rgba(0,0,0,.08); }
 .skb[hidden] { display: none; }
 .skb-bar { display: flex; align-items: center; justify-content: space-between; height: 40px; padding: 0 4px 0 8px; cursor: ns-resize; }
 .skb-size { display: inline-flex; align-items: center; gap: 10px; }
@@ -2414,10 +2414,13 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 .skb .k-fn { flex: 1.45 1 0; font-size: clamp(12px, calc(var(--kh) * .28), 17px); font-weight: 700; background: color-mix(in srgb, var(--surface) 55%, var(--surface-2)); }
 .skb .k-shift.on { background: var(--accent-soft); color: var(--accent-text, var(--accent)); }
 .skb .k-shift.lock { background: var(--accent); color: #fff; }
-.skb .k-space { flex: 4.2 1 0; font-size: clamp(12px, calc(var(--kh) * .26), 16px); color: var(--muted); }
+.skb .k-space { flex: 6.5 1 0; font-size: clamp(12px, calc(var(--kh) * .26), 16px); color: var(--muted); }
 .skb .k-enter { background: var(--accent); color: #fff; }
 .skb .k-lang { flex: 1 1 0; }
-.skb-bottom .k[data-ch] { flex: .9 1 0; }
+.skb-bottom .k[data-ch] { flex: .8 1 0; }
+.skb-bottom .k-fn { flex: 1.2 1 0; }
+.skb-tools { display: inline-flex; align-items: center; gap: 6px; }
+.skb-mini[aria-pressed="true"] { background: var(--accent-soft); }
 [data-theme="dark"] .skb .k { box-shadow: 0 1px 0 rgba(0,0,0,.5); }
 html.skb-on body { padding-bottom: var(--skb-h, 0px); }
 html.skb-on .qn, html.skb-on .tabbar { display: none !important; }

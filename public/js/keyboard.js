@@ -30,6 +30,31 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     if (!box.hidden) document.documentElement.style.setProperty('--skb-h', box.offsetHeight + 'px');
   };
   box.style.setProperty('--kh', kh + 'px');
+  /* how high the keyboard sits above the bottom edge */
+  let lift = Math.max(0, Math.min(200, Number(localStorage.getItem('sp-kb-lift')) || 0));
+  const setLift = (v) => {
+    lift = Math.max(0, Math.min(200, v));
+    box.style.setProperty('--lift', lift + 'px');
+    try { localStorage.setItem('sp-kb-lift', String(lift)); } catch {}
+    if (!box.hidden) document.documentElement.style.setProperty('--skb-h', box.offsetHeight + 'px');
+  };
+  box.style.setProperty('--lift', lift + 'px');
+  /* optional key sound (off by default; no vibration) */
+  let sound = localStorage.getItem('sp-kb-sound') === '1';
+  let ac = null;
+  function click() {
+    if (!sound) return;
+    try {
+      ac ||= new (window.AudioContext || window.webkitAudioContext)();
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'triangle'; o.frequency.value = 1800;
+      g.gain.setValueAtTime(0.0001, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.12, ac.currentTime + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.045);
+      o.connect(g).connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + 0.05);
+    } catch {}
+  }
   const reopen = document.createElement('button');
   reopen.className = 'skb-open';
   reopen.hidden = true;
@@ -57,7 +82,12 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
           <span class="skb-grip" aria-hidden="true"></span>
           <button class="skb-mini" data-k="bigger" aria-label="Bigger keys">A+</button>
         </span>
-        <button class="skb-hide" data-k="hide" aria-label="Hide keyboard">Hide <b>⌄</b></button>
+        <span class="skb-tools">
+          <button class="skb-mini" data-k="sound" aria-label="Key sound" aria-pressed="${sound}">${sound ? '🔊' : '🔇'}</button>
+          <button class="skb-mini" data-k="lift-down" aria-label="Move the keyboard down">▼</button>
+          <button class="skb-mini" data-k="lift-up" aria-label="Move the keyboard up">▲</button>
+          <button class="skb-hide" data-k="hide" aria-label="Hide keyboard">Hide <b>⌄</b></button>
+        </span>
       </div>
       <div class="skb-row">${keys(r[0])}</div>
       <div class="skb-row${r[1].length < r[0].length ? ' inset' : ''}">${keys(r[1])}</div>
@@ -68,7 +98,6 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
         <button class="k" data-ch=",">,</button>
         <button class="k k-space" data-k="space" aria-label="Space — slide to move the cursor">${lang === 'sq' ? 'Shqip' : 'English'}</button>
         <button class="k" data-ch=".">.</button>
-        <button class="k k-fn" data-k="hide" aria-label="Hide keyboard">⌄</button>
         <button class="k k-fn k-enter" data-k="enter" aria-label="New line">⏎</button>
       </div>`;
   }
@@ -131,9 +160,16 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
       if (e.target.closest('[data-bar]')) { drag = { y: e.clientY, h: kh }; box.setPointerCapture(e.pointerId); box.classList.add('resizing'); }
       return;
     }
-    if (b.classList.contains('skb-mini')) { setH(kh + (b.dataset.k === 'bigger' ? 6 : -6)); return; }
+    if (b.classList.contains('skb-mini')) {
+      const m = b.dataset.k;
+      if (m === 'sound') { sound = !sound; try { localStorage.setItem('sp-kb-sound', sound ? '1' : '0'); } catch {} click(); render(); return; }
+      if (m === 'lift-up') { setLift(lift + 16); return; }
+      if (m === 'lift-down') { setLift(lift - 16); return; }
+      setH(kh + (m === 'bigger' ? 6 : -6));
+      return;
+    }
     b.classList.add('down');
-    try { navigator.vibrate && navigator.vibrate(8); } catch {}
+    click();
     const k = b.dataset.k;
     if (b.dataset.ch) {
       type(b.dataset.ch);
