@@ -214,7 +214,7 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     target = t;
     reopen.hidden = true;
     if (!box.hidden) return;
-    page = 'abc';
+    page = t.dataset && t.dataset.skbIm === 'numeric' ? 'sym' : 'abc'; // number fields open on the numbers
     render();
     box.hidden = false;
     document.documentElement.style.setProperty('--skb-h', box.offsetHeight + 'px');
@@ -232,7 +232,25 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     onHide && onHide();
   }
   let enabled = false;
-  const mark = (on) => { for (const t of document.querySelectorAll('#editor-text, #composer-input')) { if (on) t.setAttribute('inputmode', 'none'); else if (!(t.id === 'editor-text' && t.classList.contains('sel-mode'))) t.removeAttribute('inputmode'); } };
+  /* every text field in the app gets the SyncPad keyboard, so the phone's keyboard has nowhere to pop up:
+     marked up front, again for anything added later, and at the very touch that focuses a field */
+  const FIELDS = 'textarea, input:not([type]), input[type=text], input[type=search], input[type=url], input[type=email], input[type=tel], [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
+  const fieldOf = (t) => (t && t.closest ? t.closest(FIELDS) : null);
+  const markOne = (f) => { if (f && !f.closest('.skb') && f.getAttribute('inputmode') !== 'none') { f.dataset.skbIm = f.getAttribute('inputmode') || ''; f.setAttribute('inputmode', 'none'); } };
+  const unmarkOne = (f) => { if (f.dataset.skbIm === undefined) return; const was = f.dataset.skbIm; delete f.dataset.skbIm; if (f.id === 'editor-text' && f.classList.contains('sel-mode')) return; if (was) f.setAttribute('inputmode', was); else f.removeAttribute('inputmode'); };
+  const mark = (on) => {
+    if (on) document.querySelectorAll(FIELDS).forEach(markOne);
+    else document.querySelectorAll('[data-skb-im]').forEach(unmarkOne);
+  };
+  new MutationObserver((ms) => {
+    if (!enabled) return;
+    for (const m of ms) {
+      if (m.type === 'attributes') { const f = fieldOf(m.target); if (f) markOne(f); continue; }
+      for (const n of m.addedNodes) if (n.nodeType === 1) { if (n.matches(FIELDS)) markOne(n); n.querySelectorAll && n.querySelectorAll(FIELDS).forEach(markOne); }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['contenteditable', 'inputmode'] });
+  document.addEventListener('pointerdown', (e) => { if (enabled) { const f = fieldOf(e.target); if (f) markOne(f); } }, true);
+  document.addEventListener('focusin', (e) => { if (enabled) { const f = fieldOf(e.target); if (f) markOne(f); } }, true);
   document.addEventListener('focusin', (e) => { if (enabled && isTarget(e.target)) show(e.target); else if (!box.contains(e.target)) hide(false); });
   document.addEventListener('focusout', () => setTimeout(() => { if (!document.activeElement || !isTarget(document.activeElement)) { hide(false); reopen.hidden = true; } }, 120));
   // tapping into the text again brings the keyboard back after it was hidden

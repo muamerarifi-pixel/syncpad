@@ -21,7 +21,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.26';
+const VERSION = '3.0.27';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -376,7 +376,11 @@ function wire() {
   el.editorText.addEventListener('paste', pasteIntoEditor);
   fingerSelect();
   // optional SyncPad keyboard (instead of the phone's) for notes and the write box
-  ui.kb = createKeyboard({ isTarget: (t) => !!t && (t.id === 'editor-text' || t.id === 'composer-input') && !(t.id === 'editor-text' && ui.selMode) });
+  ui.kb = createKeyboard({ isTarget: (t) => {
+    if (!t || !t.closest || t.closest('.skb')) return false;
+    if (ui.selMode && t.closest('#editor-text')) return false; // finger select: no keyboard at all
+    return t.isContentEditable || t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && /^(text|search|url|email|tel|)$/.test(t.getAttribute('type') || ''));
+  } });
   ui.kb.setEnabled(isTouch() && lsGet('sp-kb', 'phone') === 'own');
   const kbSeg = $('#set-kb');
   const showKbOpt = () => { for (const b of $$('[data-kb-opt]', kbSeg)) b.setAttribute('aria-pressed', String(b.dataset.kbOpt === lsGet('sp-kb', 'phone'))); };
