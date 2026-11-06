@@ -479,6 +479,8 @@ function keyPoints(allSentences, nWords) {
   const scored = allSentences.map((s, i) => {
     const ws = words(s.text);
     if (ws.length < 6 || ws.length > 45) return { i, s, v: -1 };
+    // a line that only introduces a quote or a list ("…said:") is not a point by itself
+    if (/[:：]\s*$/.test(s.text) || /^["“«'„]/.test(s.text.trim())) return { i, s, v: -1 };
     let v = 0;
     for (const w of ws) v += (freq.get(w) || 0) / top;
     v = v / Math.sqrt(ws.length);

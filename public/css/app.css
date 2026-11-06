@@ -2348,3 +2348,7 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 .rt blockquote.kp > b { display: block; font-size: .78em; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-text, var(--accent)); margin-bottom: 4px; }
 .rt blockquote.kp ul { margin: 0; padding-left: 1.2em; }
 .rt blockquote.kp li { margin: 0 0 6px; }
+
+/* 3.0.15: the lined paper's red margin is one thin line (it grew into a wide band when the note was zoomed out), none on phones */
+.editor[data-paper="lined"] .editor-text { box-shadow: inset calc(16px / var(--z, 1)) 0 0 calc(-14px / var(--z, 1)) color-mix(in srgb, #e03131 32%, transparent); }
+@media (max-width: 860px) { .editor[data-paper="lined"] .editor-text { box-shadow: none; } }
