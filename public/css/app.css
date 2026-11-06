@@ -2293,3 +2293,9 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 .chips.type-chips { padding: 8px 0 14px; }
 .feed-inner > .day:first-child { padding-top: 0; }
 .feed-inner > .tile-grid:first-child { margin-top: 0; }
+
+/* 3.0.6: the selection ring of the first row is never cut off, and it never touches the chips above */
+.feed-inner { padding-top: 4px; }
+@media (max-width: 860px) { .drop-chips { padding-bottom: 10px; } .feed-inner { padding-top: 6px; } }
+.tile.selected { box-shadow: 0 0 0 2px var(--accent), 0 4px 14px color-mix(in srgb, var(--accent) 18%, transparent); }
+.tile-media .tile-text { padding-top: 44px; }
