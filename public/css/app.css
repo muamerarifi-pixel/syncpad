@@ -2363,3 +2363,19 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
   .menu.as-sheet { max-height: calc(100dvh - 56px - env(safe-area-inset-top, 0px)); touch-action: pan-y; }
   .menu.as-sheet button { height: 46px; }
 }
+
+/* 3.0.20: every sheet's content scrolls inside the screen (short phones, landscape, small laptop windows) */
+.sheet[open] > .sheet-body { flex: 1 1 auto; min-height: 0; }
+@media (max-height: 560px) {
+  .history { min-height: 0; }
+  .history-preview { min-height: 120px; max-height: none; }
+  .history-list { max-height: 40vh; }
+}
+/* short phone screens (landscape): New note turns into a compact button beside the write box, so it never covers the list */
+@media (max-width: 860px) and (max-height: 500px) {
+  .qn { height: 54px; border-radius: 16px; }
+  .qn .qn-main span { display: none; }
+  .qn .qn-main { padding: 0 16px; }
+  .app[data-tab="drops"] .qn { bottom: calc(var(--tabbar) + var(--safe-b) + 8px); }
+  .app[data-tab="drops"] .composer { width: auto; margin-left: var(--gutter); margin-right: calc(var(--gutter) + 118px); }
+}
