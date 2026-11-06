@@ -2226,3 +2226,65 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 .menu.rm-menu .rm-pick input { flex: 1 1 100%; }
 .menu.rm-menu .rm-pick button.btn-primary { background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 80%, #fff), var(--accent)); color: #fff; padding: 0 22px; border: 0; }
 .menu.rm-menu .rm-pick button.btn-primary:hover { background: var(--accent-hover); }
+
+/* ───────── 3.0.2: layout polish — one gutter, aligned edges, even spacing, symmetric bars ───────── */
+:root { --gutter: 24px; --qn-w: 192px; }
+@media (max-width: 860px) { :root { --gutter: 14px; } }
+.app.note-open .notes-pane { --gutter: 14px; }
+
+/* top bar: search sits in the true centre on wide windows; right-hand controls share one height */
+@media (min-width: 1200px) {
+  .topbar .search { position: absolute; left: 50%; transform: translateX(-50%); width: clamp(320px, calc(100vw - 780px), 560px); max-width: none; margin: 0; }
+  .topbar .top-actions { margin-left: auto; }
+}
+.top-actions { gap: 8px; }
+.top-actions > .btn, .top-actions > .icon-btn { height: 38px; }
+.top-actions > .icon-btn { width: 38px; border-radius: 11px; }
+.top-actions > .status-chip { width: 38px; height: 38px; border-radius: 50%; }
+.tab:focus-visible { outline: none; }
+.tab:focus-visible:not([aria-selected="true"]) { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* notes: header, folder chips and cards share the same left and right edge */
+.notes-head { padding: 18px var(--gutter) 10px; min-height: 64px; }
+.notes-head h2, .dh-title h2 { font-size: 20px; font-weight: 700; letter-spacing: -.015em; }
+.notes-head .row-btns { gap: 8px; }
+.nf-chips, #tag-chips { padding: 0 var(--gutter) 14px; }
+.note-list.view-grid { padding: 2px var(--gutter) 140px !important; gap: 14px; }
+.note-list.view-list { padding: 2px var(--gutter) 140px !important; }
+.note-list.view-grid { --card: 180px; }
+.note-list.view-grid.size-s { --card: 130px; }
+.note-list.view-grid.size-l { --card: 240px; }
+.app:not(.note-open) .notes-pane:has(.note-list.view-list) :is(.notes-head, .nf-chips, #tag-chips) { width: 100%; max-width: 920px; margin-left: auto; margin-right: auto; }
+@media (max-width: 860px) { .note-list.view-grid { gap: 10px; --card: 150px; } .note-list.view-grid.size-s { --card: 110px; } .note-list.view-grid.size-l { --card: 200px; } }
+
+/* card pictures: a full-width banner of one fixed height, never a stray half-width box */
+.note-list.view-grid .note-item .ni-thumb {
+  width: auto !important; max-width: none !important; align-self: stretch !important; aspect-ratio: auto !important;
+  height: 76px !important; max-height: none !important; margin: 0 0 8px !important; border-radius: 9px !important;
+}
+.note-list.view-grid.size-s .note-item .ni-thumb { height: 52px !important; border-radius: 7px !important; margin-bottom: 6px !important; }
+.note-list.view-grid.size-l .note-item .ni-thumb { height: 100px !important; border-radius: 10px !important; margin-bottom: 10px !important; }
+.note-list.view-grid .note-item.has-thumb { padding-right: var(--pad) !important; }
+.note-list.view-grid .note-item .t { line-height: 1.32; }
+.note-list.view-grid .note-item .d { padding-top: 6px; }
+
+/* drops: header, chips, list and the write box line up on one column */
+.drops-head { padding: 18px 20px 6px; min-height: 64px; gap: 6px; }
+.drops-head .seg { margin-left: 4px; }
+.feed-inner > .day:first-child { padding-left: 2px; }
+@media (max-width: 860px) {
+  .drops-head, .drop-chips { padding-left: var(--gutter); padding-right: var(--gutter); }
+  .feed-inner { padding-left: var(--gutter); padding-right: var(--gutter); }
+  .composer { width: calc(100% - 2 * var(--gutter)); }
+}
+
+/* computer: the write box spans the list column, and New note sits on the same line as it */
+@media (min-width: 861px) {
+  .qn { height: 52px; bottom: calc(16px + var(--safe-b)); right: 20px; border-radius: 18px; }
+  .app[data-tab="drops"] .qn { bottom: calc(84px + var(--safe-b)); }
+  .composer { width: calc(100% - 40px); max-width: 960px; min-height: 52px; margin: 0 auto 16px; align-items: center; }
+}
+@media (min-width: 1280px) {
+  .app[data-tab="drops"] .qn { bottom: calc(16px + var(--safe-b)); }
+  .composer { max-width: min(960px, calc(100% - 2 * (var(--qn-w) + 36px))); }
+}
