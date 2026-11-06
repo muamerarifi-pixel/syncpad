@@ -2379,3 +2379,11 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
   .app[data-tab="drops"] .qn { bottom: calc(var(--tabbar) + var(--safe-b) + 8px); }
   .app[data-tab="drops"] .composer { width: auto; margin-left: var(--gutter); margin-right: calc(var(--gutter) + 118px); }
 }
+
+/* 3.0.21: in-app clipboard buttons in the note toolbar */
+.clip-grp { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 12px; background: var(--surface-2); flex: none; }
+.clip-btn { display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.clip-btn .ic { width: 17px; height: 17px; }
+.clip-btn:hover { background: var(--surface); }
+.clip-btn:active { background: var(--accent-soft); color: var(--accent-text, var(--accent)); }
+@media (max-width: 420px) { .clip-btn { padding: 0 8px; } }

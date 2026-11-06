@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.20';
+const VERSION = '3.0.21';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -452,9 +452,13 @@ function wire() {
     }
   });
   el.fmtBar.addEventListener('click', (e) => {
+    const c = e.target.closest('[data-clip]');
+    if (c) { clipAction(c.dataset.clip); return; }
     const b = e.target.closest('[data-fmt]');
     if (b) format(b.dataset.fmt, b);
   });
+  // the clipboard buttons must not take the selection or close the keyboard
+  el.fmtBar.addEventListener('pointerdown', (e) => { if (e.target.closest('[data-clip]')) e.preventDefault(); });
 
   // dialogs
   for (const d of $$('dialog')) {
@@ -5852,3 +5856,77 @@ document.addEventListener('click', (e) => {
   e.stopPropagation();
   openUrl(a.href);
 }, true);
+
+
+/* ───────── in-app Select all / Cut / Copy / Paste for notes (quicker than the phone's own pop-up) ───────── */
+function editorSelection() {
+  const sel = getSelection();
+  if (!sel || !sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  return el.editorText.contains(r.commonAncestorContainer) ? { sel, r } : null;
+}
+async function writeClip(html, text) {
+  try {
+    if (window.ClipboardItem && navigator.clipboard.write) {
+      await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([text], { type: 'text/plain' }) })]);
+      return true;
+    }
+  } catch {}
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  try { return document.execCommand('copy'); } catch { return false; }
+}
+async function clipAction(kind) {
+  const ed = el.editorText;
+  if (!ed) return;
+  if (kind === 'all') {
+    ed.focus({ preventScroll: true });
+    const r = document.createRange();
+    r.selectNodeContents(ed);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(r);
+    return;
+  }
+  if (kind === 'copy' || kind === 'cut') {
+    let cur = editorSelection();
+    const whole = !cur || cur.r.collapsed;
+    if (whole && kind === 'cut') { toast('Select some text first (or tap All).'); return; }
+    let html, text;
+    if (whole) { html = ed.innerHTML; text = ed.innerText; }
+    else { const box = document.createElement('div'); box.append(cur.r.cloneContents()); html = box.innerHTML; text = cur.sel.toString(); }
+    const ok = await writeClip(html, text);
+    if (!ok) { toast('Your browser blocked copying. Use the phone’s Copy instead.'); return; }
+    if (kind === 'cut') {
+      cur = editorSelection();
+      if (cur && !cur.r.collapsed) { ed.focus({ preventScroll: true }); document.execCommand('delete'); }
+      toast('Cut', { duration: 1000 });
+    } else toast(whole ? 'Copied the whole note' : 'Copied', { duration: 1000 });
+    return;
+  }
+  if (kind === 'paste') {
+    let html = '';
+    let text = '';
+    try {
+      if (navigator.clipboard.read) {
+        for (const item of await navigator.clipboard.read()) {
+          if (!html && item.types.includes('text/html')) html = await (await item.getType('text/html')).text();
+          if (!text && item.types.includes('text/plain')) text = await (await item.getType('text/plain')).text();
+        }
+      } else text = await navigator.clipboard.readText();
+    } catch {
+      try { text = await navigator.clipboard.readText(); } catch { toast('Allow SyncPad to see the clipboard to paste here (or use the phone’s Paste).'); return; }
+    }
+    if (!html && !text) { toast('The clipboard is empty.'); return; }
+    if (!editorSelection()) {
+      // no cursor in the note yet: paste at the end
+      ed.focus({ preventScroll: true });
+      const r = document.createRange();
+      r.selectNodeContents(ed);
+      r.collapse(false);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+    pasteIntoEditor({ preventDefault() {}, clipboardData: { getData: (t) => (t === 'text/html' ? html : t === 'text/plain' ? text : ''), files: [], items: [] } });
+  }
+}
