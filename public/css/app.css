@@ -2387,3 +2387,10 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 .clip-btn:hover { background: var(--surface); }
 .clip-btn:active { background: var(--accent-soft); color: var(--accent-text, var(--accent)); }
 @media (max-width: 420px) { .clip-btn { padding: 0 8px; } }
+
+/* 3.0.22: finger select */
+.clip-sel { display: none; }
+@media (pointer: coarse) { .clip-sel { display: inline-flex; } }
+.clip-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.editor-text.sel-mode { touch-action: none; -webkit-user-select: text; user-select: text; caret-color: transparent; }
+.editor-text.sel-mode ::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }

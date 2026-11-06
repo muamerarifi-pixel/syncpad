@@ -31,7 +31,8 @@
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></symbol>
       <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v13"/><path d="m7 8 5-5 5 5"/><path d="M20 14v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-5"/></symbol>
-      <symbol id="i-selall" viewBox="0 0 24 24"><path d="M5 3h2M11 3h2M17 3h2M3 5v2M21 5v2M3 11v2M21 11v2M3 17v2M21 17v2M5 21h2M11 21h2M17 21h2M8 9h8M8 12h8M8 15h5"/></symbol>
+      <symbol id="i-ibeam" viewBox="0 0 24 24"><path d="M9 4h2a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H9M15 4h-2a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h2M10 12h4"/></symbol>
+<symbol id="i-selall" viewBox="0 0 24 24"><path d="M5 3h2M11 3h2M17 3h2M3 5v2M21 5v2M3 11v2M21 11v2M3 17v2M21 17v2M5 21h2M11 21h2M17 21h2M8 9h8M8 12h8M8 15h5"/></symbol>
 <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 15.8 19 4M15.8 15.8 5 4"/></symbol>
 <symbol id="i-paste" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2.5"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1M9 11h6M9 15h4"/></symbol>
 <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
@@ -232,6 +233,7 @@
               <button class="icon-btn sm" data-fmt="redo" title="Redo (Ctrl+Y)"><svg class="ic"><use href="#i-redo"/></svg></button>
               <span class="fmt-sep"></span>
               <div class="clip-grp" role="group" aria-label="Clipboard">
+                <button class="clip-btn clip-sel" data-clip="sel" aria-pressed="false" title="Finger select: drag over text to select it, two fingers scroll"><svg class="ic"><use href="#i-ibeam"/></svg><span>Select</span></button>
                 <button class="clip-btn" data-clip="all" title="Select all (Ctrl+A)"><svg class="ic"><use href="#i-selall"/></svg><span>All</span></button>
                 <button class="clip-btn" data-clip="cut" title="Cut (Ctrl+X)"><svg class="ic"><use href="#i-cut"/></svg><span>Cut</span></button>
                 <button class="clip-btn" data-clip="copy" title="Copy (Ctrl+C) — with nothing selected, copies the whole note"><svg class="ic"><use href="#i-copy"/></svg><span>Copy</span></button>

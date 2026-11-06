@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.21';
+const VERSION = '3.0.22';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -373,6 +373,7 @@ function wire() {
     if (e.inputType === 'insertFromPaste') linkifyAfterPaste(); else if (e.inputType === 'insertParagraph' || (e.inputType === 'insertText' && /\s/.test(e.data || ''))) autoLink(e.inputType === 'insertParagraph');
   });
   el.editorText.addEventListener('paste', pasteIntoEditor);
+  fingerSelect();
   el.editorText.addEventListener('blur', () => saveNote.flush());
   el.editorText.addEventListener('keydown', onEditorKey);
   el.editorText.addEventListener('click', onEditorClick);
@@ -2568,6 +2569,7 @@ function noteMedia(n) {
 const files_src = (id) => { try { return files.src(id); } catch { return null; } };
 
 function openNote(id, { focus = true } = {}) {
+  if (ui.selMode && ui.noteId !== id) setSelectMode(false);
   if (ui.tab !== 'notes') setTab('notes');
   if (ui.noteId && ui.noteId !== id) saveNote.flush();
   if (ui.noteId !== id) { currentZoom = Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], zoomForNote(id))); applyZoomStyles(); }
@@ -5878,6 +5880,7 @@ async function writeClip(html, text) {
 async function clipAction(kind) {
   const ed = el.editorText;
   if (!ed) return;
+  if (kind === 'sel') { setSelectMode(!ui.selMode); return; }
   if (kind === 'all') {
     ed.focus({ preventScroll: true });
     const r = document.createRange();
@@ -5929,4 +5932,94 @@ async function clipAction(kind) {
     }
     pasteIntoEditor({ preventDefault() {}, clipboardData: { getData: (t) => (t === 'text/html' ? html : t === 'text/plain' ? text : ''), files: [], items: [] } });
   }
+}
+
+
+/* ───────── finger select: drag over text to select it at once (no long-press, no wobbly handles);
+             it snaps to whole words, scrolls by itself at the edges, two fingers scroll the note ───────── */
+function setSelectMode(on) {
+  ui.selMode = !!on;
+  const b = el.fmtBar && el.fmtBar.querySelector('[data-clip="sel"]');
+  if (b) b.setAttribute('aria-pressed', String(ui.selMode));
+  el.editorText.classList.toggle('sel-mode', ui.selMode);
+  if (ui.selMode) { el.editorText.setAttribute('inputmode', 'none'); document.activeElement && document.activeElement.blur && document.activeElement.blur(); toast('Drag your finger over the text to select it. Two fingers scroll. Tap Select again to go back to typing.', { duration: 3500 }); }
+  else el.editorText.removeAttribute('inputmode');
+}
+function caretAt(x, y) {
+  if (document.caretPositionFromPoint) { const c = document.caretPositionFromPoint(x, y); if (c && el.editorText.contains(c.offsetNode)) return { node: c.offsetNode, off: c.offset }; }
+  if (document.caretRangeFromPoint) { const r = document.caretRangeFromPoint(x, y); if (r && el.editorText.contains(r.startContainer)) return { node: r.startContainer, off: r.startOffset }; }
+  return null;
+}
+function snapWord(c, toEnd) {
+  if (!c || c.node.nodeType !== 3) return c;
+  const t = c.node.data;
+  let i = c.off;
+  const w = /[\p{L}\p{N}_'’-]/u;
+  if (toEnd) { while (i < t.length && w.test(t[i])) i++; }
+  else { while (i > 0 && w.test(t[i - 1])) i--; }
+  return { node: c.node, off: i };
+}
+function cmpPos(a, b) {
+  if (a.node === b.node) return a.off - b.off;
+  return a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+}
+function fingerSelect() {
+  const ed = el.editorText;
+  if (!ed) return;
+  let g = null;
+  let raf = 0;
+  const apply = () => {
+    if (!g || !g.cur) return;
+    const fwd = cmpPos(g.anchor, g.cur) <= 0;
+    const a = snapWord(g.anchor, !fwd);
+    const f = snapWord(g.cur, fwd);
+    try { getSelection().setBaseAndExtent(a.node, a.off, f.node, f.off); } catch {}
+  };
+  const edgeScroll = () => {
+    raf = 0;
+    if (!g || g.two) return;
+    const r = ed.getBoundingClientRect();
+    const zone = 56;
+    let v = 0;
+    if (g.y < r.top + zone) v = -Math.ceil((r.top + zone - g.y) / 4);
+    else if (g.y > r.bottom - zone) v = Math.ceil((g.y - (r.bottom - zone)) / 4);
+    if (v) { ed.scrollTop += v; const c = caretAt(g.x, Math.max(r.top + 2, Math.min(r.bottom - 2, g.y))); if (c) { g.cur = c; apply(); } raf = requestAnimationFrame(edgeScroll); }
+  };
+  ed.addEventListener('touchstart', (e) => {
+    if (!ui.selMode) return;
+    if (e.touches.length >= 2) { g = { two: true, y0: (e.touches[0].clientY + e.touches[1].clientY) / 2, st: ed.scrollTop }; e.preventDefault(); return; }
+    const t = e.touches[0];
+    const c = caretAt(t.clientX, t.clientY);
+    if (!c) return;
+    e.preventDefault();
+    g = { anchor: c, cur: c, x: t.clientX, y: t.clientY, moved: false };
+    try { getSelection().collapse(c.node, c.off); } catch {}
+  }, { passive: false });
+  ed.addEventListener('touchmove', (e) => {
+    if (!ui.selMode || !g) return;
+    e.preventDefault();
+    if (g.two) {
+      if (e.touches.length < 2) return;
+      ed.scrollTop = g.st - ((e.touches[0].clientY + e.touches[1].clientY) / 2 - g.y0);
+      return;
+    }
+    const t = e.touches[0];
+    g.x = t.clientX; g.y = t.clientY; g.moved = true;
+    const c = caretAt(t.clientX, t.clientY);
+    if (c) { g.cur = c; apply(); }
+    if (!raf) raf = requestAnimationFrame(edgeScroll);
+  }, { passive: false });
+  const end = () => {
+    if (!g) return;
+    const was = g;
+    g = null;
+    cancelAnimationFrame(raf); raf = 0;
+    if (was.two || was.moved) return;
+    // a tap selects the word under the finger
+    const a = snapWord(was.anchor, false);
+    const f = snapWord(was.anchor, true);
+    try { getSelection().setBaseAndExtent(a.node, a.off, f.node, f.off); } catch {}
+  };
+  ed.addEventListener('touchend', end, { passive: true });
+  ed.addEventListener('touchcancel', end, { passive: true });
 }
