@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.0';
+const VERSION = '3.0.1';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1077,7 +1077,11 @@ function cardNode(it) {
 function thumbHTML(it) {
   if (it.kind === 'clip') {
     const url = singleUrl(it.data.text || '');
-    if (url && it.data.link && it.data.link.thumb) return `<img src="${esc(it.data.link.thumb)}" alt="" draggable="false" decoding="async">`;
+    if (url && it.data.link && it.data.link.thumb) {
+      const isFav = it.data.link.isFavicon || it.data.link.thumb.includes('s2/favicons') || it.data.link.thumb.includes('/favicon.ico');
+      if (isFav) return `<span class="ti ti-link-fav"><img src="${esc(it.data.link.thumb)}" alt="" class="fav-icon" draggable="false"></span>`;
+      return `<img src="${esc(it.data.link.thumb)}" alt="" draggable="false" decoding="async" class="link-media-thumb">`;
+    }
     return `<span class="ti" data-k="${url ? 'link' : 'text'}"><svg class="ic"><use href="#i-${url ? 'link' : 'note'}"/></svg></span>`;
   }
   const d = it.data;
@@ -1884,7 +1888,7 @@ async function linkPreview(id, url) {
     const j = await linkPreviewData(url);
     const cur = store.items.get(id);
     if (!cur || !j || !(j.title || j.desc || j.thumb)) return;
-    cur.data = { ...cur.data, link: { title: j.title, site: j.site, desc: j.desc, ...(j.thumb ? { thumb: j.thumb } : {}) } };
+    cur.data = { ...cur.data, link: { title: j.title, site: j.site, desc: j.desc, isFavicon: !!j.isFavicon, ...(j.thumb ? { thumb: j.thumb } : {}) } };
     await store.save(cur);
     sync.schedule();
   } catch {}
@@ -1900,9 +1904,15 @@ function linkPreviewData(url) {
         const r = await fetch(`/api/link?s=${store.get('space')}&img=1&url=${encodeURIComponent(url)}`);
         const j = await r.json();
         if (j && !j.error) {
-          let thumb = j.image ? await shrinkImage(j.image, 160) : '';
-          if (!thumb && host) thumb = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`;
-          return { title: j.title || host, site: j.site || host, desc: j.desc || '', thumb };
+          let isFavicon = !!j.isFavicon;
+          let thumb = '';
+          if (j.image) thumb = await shrinkImage(j.image, 240);
+          else if (j.imageUrl) thumb = j.imageUrl;
+          if (!thumb && host) {
+            thumb = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`;
+            isFavicon = true;
+          }
+          return { title: j.title || host, site: j.site || host, desc: j.desc || '', thumb, isFavicon };
         }
       } catch {}
       if (host) {
@@ -1910,7 +1920,8 @@ function linkPreviewData(url) {
           title: host,
           site: host,
           desc: '',
-          thumb: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`
+          thumb: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`,
+          isFavicon: true
         };
       }
       return null;
@@ -1918,6 +1929,7 @@ function linkPreviewData(url) {
   }
   return previewCache.get(url);
 }
+
 function shrinkImage(src, max) {
   return new Promise((resolve) => {
     const im = new Image();
@@ -1998,6 +2010,38 @@ function linkifyAfterPaste() {
   onEditorInput();
   if (made.length <= 3) for (const a of made) addLinkCard(a);
 }
+function applyLinkTitleToNote(title, url) {
+  if (!title || !ui.noteId) return;
+  const n = openNoteItem();
+  if (!n) return;
+  const curTitle = noteTitle(noteText(n));
+  let host = '';
+  try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+  const isUntitled = !curTitle ||
+    curTitle === 'Untitled' ||
+    curTitle === url ||
+    curTitle === host ||
+    curTitle.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') === url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') ||
+    /^https?:\/\//i.test(curTitle) ||
+    /^www\./i.test(curTitle);
+
+  if (!isUntitled) return;
+
+  const existingH = el.editorText.querySelector('h1, h2');
+  if (existingH && (!existingH.textContent.trim() || existingH.textContent.trim() === 'Untitled' || /^https?:\/\//i.test(existingH.textContent.trim()))) {
+    existingH.textContent = title;
+  } else if (!existingH) {
+    const h = document.createElement('h1');
+    h.textContent = title;
+    const firstChild = el.editorText.firstElementChild;
+    if (firstChild) el.editorText.insertBefore(h, firstChild);
+    else el.editorText.appendChild(h);
+  }
+  onEditorInput();
+  saveNote.flush();
+  renderNotesList();
+}
+
 async function addLinkCard(a) {
   if (!navigator.onLine || !a.isConnected) return;
   const url = a.href;
@@ -2006,21 +2050,36 @@ async function addLinkCard(a) {
   const p = await linkPreviewData(url);
   if (!p || !(p.title || p.thumb) || ui.noteId !== noteId || !a.isConnected) return;
   if ([...el.editorText.querySelectorAll('a.link-card')].some((c) => c.href === url)) return;
+
+  // Apply title of YouTube video / X / Instagram / Facebook / any link to note
+  if (p && p.title) {
+    applyLinkTitleToNote(p.title, url);
+  }
+
   const blk = topBlock(a) || a;
   if (!blk) return;
   let host = '';
   try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
   const card = document.createElement('a');
-  card.className = 'link-card';
+  card.className = `link-card${p.isFavicon ? ' has-fav' : ''}`;
   card.href = url;
   card.target = '_blank';
   card.rel = 'noopener noreferrer';
   card.contentEditable = 'false';
-  card.innerHTML = `${p.thumb ? `<img class="lc-img" src="${esc(p.thumb)}" alt="" loading="lazy">` : ''}<span class="lc-t">${esc(p.title || host)}</span><span class="lc-d">${esc(p.site || host)}</span>`;
+  let thumbHtml = '';
+  if (p.thumb) {
+    if (p.isFavicon) {
+      thumbHtml = `<span class="lc-fav-wrap"><img class="lc-fav" src="${esc(p.thumb)}" alt="" loading="lazy"></span>`;
+    } else {
+      thumbHtml = `<img class="lc-img" src="${esc(p.thumb)}" alt="" loading="lazy">`;
+    }
+  }
+  card.innerHTML = `${thumbHtml}<span class="lc-t">${esc(p.title || host)}</span><span class="lc-d">${esc(p.site || host)}</span>`;
   blk.after(card);
   if (!card.nextSibling) { const q = document.createElement('p'); q.innerHTML = '<br>'; card.after(q); }
   onEditorInput();
 }
+
 function showLinkBubble(a) {
   let b = ui.linkBubble;
   if (!b) {
@@ -2216,11 +2275,12 @@ function setupNoteLongPress() {
 
 /* swipe between Drops and Notes: finger on phones, two-finger trackpad swipe on computers */
 function tabSwipeBlocked(target, dir) {
-  if (ui.presenting || ui.selecting || ui.nselecting || document.documentElement.classList.contains('rd-dragging') || el.app.classList.contains('editing') || $('dialog[open]') || !el.menu.hidden) return true;
+  if (ui.presenting || ui.selecting || ui.nselecting || document.documentElement.classList.contains('rd-dragging') || $('dialog[open]') || !el.menu.hidden) return true;
   if (el.lock && !el.lock.hidden) return true;
+  if (isMobileLayout() && el.app.classList.contains('editing')) return true;
   if (!target || !target.closest) return true;
-  if (target.closest('input, textarea, select, [contenteditable="true"], .editor-pane, .cv-scroll, .composer, .menu, .toasts, .paste-chip, .img-bar')) return true;
-  // let anything that scrolls sideways (chip rows, wide tables…) keep its own swipe
+  if (target.closest('.cv-scroll, .menu, .toasts, .img-bar')) return true;
+  // let anything that scrolls sideways (chip rows, wide tables, code blocks…) keep its own swipe
   for (let n = target; n && n !== document.body; n = n.parentElement) {
     if (n.scrollWidth > n.clientWidth + 8) {
       const ox = getComputedStyle(n).overflowX;
@@ -2279,46 +2339,43 @@ function setupTabSwipe() {
   };
   views.addEventListener('touchend', end, { passive: true });
   views.addEventListener('touchcancel', end, { passive: true });
-  // trackpad: two fingers sideways — the page follows the fingers, then switches
+
+  // trackpad / desktop swipe: instant tab switch on horizontal flick/gesture
+  let lastTabSwitch = 0;
   let g = null;
-  const settle = () => {
-    if (!g) return;
-    const v = g.view;
-    v.style.transition = 'transform .16s ease, opacity .16s ease';
-    v.style.transform = '';
-    v.style.opacity = '';
-    setTimeout(() => { v.style.transition = ''; }, 170);
-    g = null;
-  };
+  const settle = () => { g = null; };
   document.addEventListener('wheel', (e) => {
     if (e.ctrlKey) return;
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerHeight : 1;
     const dx = e.deltaX * unit;
     const dy = e.deltaY * unit;
     const now = performance.now();
-    if (g && now - g.last > 220) settle();
+    // Ignore residual inertial momentum from the swipe that just triggered a switch
+    if (now - lastTabSwitch < 350) return;
+    if (g && now - g.last > 200) settle();
     if (!g) {
-      if (!dx || Math.abs(dx) < Math.abs(dy)) return;
+      if (!dx || Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.1) return;
       if (tabSwipeBlocked(e.target, dx > 0 ? 1 : -1)) return;
-      g = { x: 0, y: 0, last: now, done: false, view: ui.tab === 'notes' ? el.viewNotes : el.viewDrops };
+      g = { x: 0, y: 0, last: now, done: false };
     }
     g.x += dx;
     g.y += dy;
     g.last = now;
-    if (Math.abs(g.y) > Math.abs(g.x) * 1.4 && Math.abs(g.y) > 30) { settle(); return; } // it's a scroll after all
-    e.preventDefault(); // no browser back/forward
-    clearTimeout(g.timer);
-    g.timer = setTimeout(settle, 230);
-    if (g.done) return; // the rest of this swipe (momentum) is ignored
+    if (Math.abs(g.y) > Math.abs(g.x) * 1.3 && Math.abs(g.y) > 25) { settle(); return; }
+    if (g.done) return;
     const next = g.x > 0 ? 'notes' : 'drops';
-    if (next === ui.tab) { g.view.style.transform = `translateX(${-Math.sign(g.x) * Math.min(18, Math.abs(g.x) * 0.15)}px)`; return; }
-    g.view.style.transform = `translateX(${-Math.sign(g.x) * Math.min(70, Math.abs(g.x) * 0.45)}px)`;
-    g.view.style.opacity = String(Math.max(0.6, 1 - Math.abs(g.x) / 400));
-    if (Math.abs(g.x) > 60) {
+    if (next !== ui.tab && Math.abs(g.x) >= 20) {
       g.done = true;
-      g.view.style.transform = '';
-      g.view.style.opacity = '';
-      swipeToTab(next, next === 'notes' ? -1 : 1);
+      lastTabSwitch = now;
+      e.preventDefault();
+      // If an input/editor had focus, blur it smoothly so keyboard focus moves with tab
+      if (document.activeElement && (document.activeElement === el.editorText || document.activeElement === el.composerInput)) {
+        try { document.activeElement.blur(); } catch {}
+      }
+      setTab(next);
+      clearTimeout(g.timer);
+      g.timer = setTimeout(settle, 300);
+      return;
     }
   }, { passive: false });
 }
@@ -2493,7 +2550,8 @@ function noteMedia(n) {
   if (!thumb) {
     const linkImg = html.match(/<img\b[^>]*class=["'][^"']*lc-img[^"']*["'][^>]*src=["']([^"']+)["']/i) ||
                     html.match(/<img\b[^>]*src=["']([^"']+)["'][^>]*class=["'][^"']*lc-img[^"']*["']/i);
-    if (linkImg && linkImg[1]) thumb = linkImg[1];
+    // Don't treat tiny favicons as large note banner thumbnails
+    if (linkImg && linkImg[1] && !linkImg[1].includes('s2/favicons') && !linkImg[1].includes('/favicon.ico')) thumb = linkImg[1];
   }
   return { imgs: imgs.length, files, thumb };
 }
@@ -2539,7 +2597,11 @@ async function createNote(text) {
 }
 
 async function saveClipAsNote(it) {
-  const n = await createNote(it.data.text || '');
+  let text = it.data.text || '';
+  if (it.data.link && it.data.link.title) {
+    text = `# ${it.data.link.title}\n\n${text}`;
+  }
+  const n = await createNote(text);
   setTab('notes');
   openNote(n.id);
   toast('Saved as a note');
@@ -3409,8 +3471,11 @@ function onEditorClick(e) {
     return;
   }
   const a = e.target.closest('a[href]');
-  if (a && (e.ctrlKey || e.metaKey || a.classList.contains('link-card'))) { e.preventDefault(); window.open(a.href, '_blank', 'noopener'); }
-  else if (a) showLinkBubble(a);
+  if (a) {
+    e.preventDefault();
+    window.open(a.href, '_blank', 'noopener');
+    return;
+  }
 }
 
 async function attachToNote(list, point, at) {
@@ -3465,6 +3530,16 @@ function pasteIntoEditor(e) {
         r.collapse(true);
         sel.removeAllRanges();
         sel.addRange(r);
+      } else {
+        const p = document.createElement('p');
+        const a = document.createElement('a');
+        a.href = isUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = trimmed;
+        p.appendChild(a);
+        p.appendChild(document.createTextNode('\u00A0'));
+        el.editorText.appendChild(p);
       }
     }
     onEditorInput();
@@ -4777,6 +4852,7 @@ function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   const had = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('/sw.js').then((reg) => {
+    reg.update().catch(() => {});
     // the app now opens from the device, so look for a newer version whenever it comes back to the front
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && navigator.onLine) reg.update().catch(() => {}); });
   }).catch(() => {});
