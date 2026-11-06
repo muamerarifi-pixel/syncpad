@@ -2329,3 +2329,16 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 #yt-pop .ic { width: 16px; height: 16px; }
 @media (pointer: coarse) { .yt-float.big #yt-pop { display: inline-flex; } }
 @media (max-width: 640px) { .yt-note > span { display: none; } .yt-bar { gap: 4px; } }
+
+/* 3.0.11: smooth pinch on the lists; drops grid sizes */
+.list-pinching .note-list, .list-pinching .feed-inner { will-change: transform; }
+.notes-pane.list-pinching :is(.notes-head, .nf-chips, #tag-chips) { position: relative; z-index: 2; background: var(--bg); }
+.notes-pane.list-pinching { overflow: hidden; }
+.feed[data-dsize="s"] .tile-grid { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; }
+.feed[data-dsize="l"] .tile-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.feed[data-dsize="s"] .tile-name { font-size: 12px; }
+.feed[data-dsize="s"] .tile-text { font-size: 12px; }
+@media (max-width: 860px) {
+  .feed[data-dsize="s"] .tile-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; }
+  .feed[data-dsize="l"] .tile-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+}

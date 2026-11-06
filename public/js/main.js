@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.10';
+const VERSION = '3.0.11';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -418,6 +418,8 @@ function wire() {
   el.btnPresent.addEventListener('click', startPresent);
   applyNotesList();
   setupNoteListPinch();
+  setupDropsPinch();
+  applyDropSize();
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && ui.presenting && ui.presentFs) stopPresent(); });
   document.addEventListener('selectionchange', () => {
     if (ui.selRaf) return;
@@ -2774,12 +2776,97 @@ async function saveCanvas(n) {
   renderFoot();
 }
 
-/* ───── pinch to zoom in notes list: cycle grid and list sizes ───── */
+/* ───── pinch the notes list or the drops list: the items grow and shrink smoothly under your fingers,
+        and when you let go the list settles on the nearest size (the item you were touching stays put) ───── */
+function smoothListPinch({ area, content, scroller, modes, getIndex, apply, itemSel }) {
+  let g = null;
+  let wheelT = 0;
+  const STEP = 1.28; // how far to pinch for one size step
+  const begin = (x, y) => {
+    const el = content();
+    if (!el || !el.offsetParent) return null;
+    const r = el.getBoundingClientRect();
+    el.style.transition = 'none';
+    el.style.transformOrigin = `${x - r.left}px ${y - r.top}px`;
+    el.style.willChange = 'transform';
+    area.classList.add('list-pinching');
+    const hit = document.elementsFromPoint(x, y).find((n) => n.matches && n.matches(itemSel));
+    return { el, k: 1, idx: getIndex(), x, y, id: hit ? hit.dataset.id : '', top: hit ? hit.getBoundingClientRect().top : 0 };
+  };
+  const show = (k) => {
+    g.k = Math.max(0.4, Math.min(2.6, k));
+    const last = modes.length - 1;
+    let kk = g.k;
+    // at the smallest / biggest size it only gives a little, like a rubber band
+    if (g.idx >= last && kk > 1) kk = 1 + Math.min(0.08, (kk - 1) * 0.25);
+    if (g.idx <= 0 && kk < 1) kk = 1 - Math.min(0.08, (1 - kk) * 0.25);
+    g.el.style.transform = `scale(${kk})`;
+  };
+  const finish = () => {
+    const st = g;
+    g = null;
+    if (!st) return;
+    const d = Math.round(Math.log(st.k) / Math.log(STEP));
+    const next = Math.max(0, Math.min(modes.length - 1, st.idx + d));
+    const done = (el) => setTimeout(() => { el.style.transition = ''; el.style.transform = ''; el.style.opacity = ''; el.style.willChange = ''; el.style.transformOrigin = ''; area.classList.remove('list-pinching'); }, 240);
+    if (next === st.idx) {
+      st.el.style.transition = 'transform .2s cubic-bezier(.2,.8,.2,1)';
+      st.el.style.transform = '';
+      done(st.el);
+      return;
+    }
+    apply(next);
+    const el = content();
+    // the new size starts close to where the fingers left it and settles in
+    el.style.transition = 'none';
+    el.style.transformOrigin = st.el.style.transformOrigin;
+    el.style.transform = `scale(${next > st.idx ? 0.94 : 1.06})`;
+    el.style.opacity = '.55';
+    if (st.id) {
+      const it = el.querySelector(`[data-id="${CSS.escape(st.id)}"]`);
+      const sc = scroller();
+      if (it && sc) sc.scrollTop += it.getBoundingClientRect().top - st.top;
+    }
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      el.style.transition = 'transform .22s cubic-bezier(.2,.8,.2,1), opacity .18s ease';
+      el.style.transform = '';
+      el.style.opacity = '';
+    }));
+    done(el);
+    toast(modes[next], { duration: 1100 });
+  };
+  // fingers (phones / tablets)
+  let d0 = 0;
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) || 1;
+  area.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 2) return;
+    if (g) finish();
+    const [a, b] = e.touches;
+    g = begin((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+    d0 = dist(e.touches);
+  }, { passive: true });
+  area.addEventListener('touchmove', (e) => {
+    if (!g || e.touches.length !== 2) return;
+    if (e.cancelable) e.preventDefault();
+    show(dist(e.touches) / d0);
+  }, { passive: false });
+  const up = (e) => { if (g && e.touches.length < 2 && !g.wheel) finish(); };
+  area.addEventListener('touchend', up, { passive: true });
+  area.addEventListener('touchcancel', up, { passive: true });
+  // trackpad pinch / Ctrl+wheel (computers): same live preview, settles 180 ms after the fingers stop
+  area.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    if (!g) { g = begin(e.clientX, e.clientY); if (!g) return; g.wheel = true; }
+    show(g.k * Math.exp(Math.max(-0.2, Math.min(0.2, -e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.01)))));
+    clearTimeout(wheelT);
+    wheelT = setTimeout(finish, 180);
+  }, { passive: false });
+}
+
 function setupNoteListPinch() {
   const L = el.noteList;
   if (!L) return;
-  const container = el.notesPane || L.closest('.notes-pane') || L;
-
   const MODES = [
     { view: 'list', size: 's', label: 'List · Small' },
     { view: 'list', size: 'm', label: 'List · Medium' },
@@ -2788,75 +2875,48 @@ function setupNoteListPinch() {
     { view: 'grid', size: 'm', label: 'Grid · Medium' },
     { view: 'grid', size: 'l', label: 'Grid · Large' }
   ];
+  smoothListPinch({
+    area: el.notesPane || L.closest('.notes-pane') || L,
+    content: () => L,
+    scroller: () => L,
+    itemSel: '.note-item',
+    modes: MODES.map((m) => m.label),
+    getIndex: () => {
+      const v = lsGet('sp-nview', 'list');
+      const z = lsGet('sp-nsize', 'm');
+      const i = MODES.findIndex((m) => m.view === v && m.size === z);
+      return i >= 0 ? i : (v === 'grid' ? 4 : 1);
+    },
+    apply: (i) => { lsSet('sp-nview', MODES[i].view); lsSet('sp-nsize', MODES[i].size); renderNotesList(); }
+  });
+}
 
-  const getCurrentIndex = () => {
-    const curV = lsGet('sp-nview', 'list');
-    const curS = lsGet('sp-nsize', 'm');
-    const idx = MODES.findIndex((m) => m.view === curV && m.size === curS);
-    return idx >= 0 ? idx : (curV === 'grid' ? 4 : 1);
-  };
-
-  const step = (dir) => {
-    const cur = getCurrentIndex();
-    const next = Math.max(0, Math.min(MODES.length - 1, cur + dir));
-    if (next === cur) return false;
-    const target = MODES[next];
-    lsSet('sp-nview', target.view);
-    lsSet('sp-nsize', target.size);
-    renderNotesList();
-    toast(target.label, { duration: 1200 });
-    return true;
-  };
-
-  // Touch pinch (phones / tablets)
-  let startDist = 0;
-
-  container.addEventListener('touchstart', (e) => {
-    if (e.touches.length === 2) {
-      startDist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-    }
-  }, { passive: true });
-
-  container.addEventListener('touchmove', (e) => {
-    if (e.touches.length === 2 && startDist > 10) {
-      if (e.cancelable) e.preventDefault();
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      const ratio = dist / startDist;
-      if (ratio > 1.25) {
-        if (step(1)) startDist = dist;
-      } else if (ratio < 0.8) {
-        if (step(-1)) startDist = dist;
-      }
-    }
-  }, { passive: false });
-
-  container.addEventListener('touchend', (e) => {
-    if (e.touches.length < 2) startDist = 0;
-  }, { passive: true });
-
-  // Touchpad pinch / Ctrl+wheel (desktop)
-  let wheelAccum = 0;
-  let wheelTimer = null;
-  container.addEventListener('wheel', (e) => {
-    if (!e.ctrlKey) return;
-    e.preventDefault();
-    wheelAccum += e.deltaY;
-    clearTimeout(wheelTimer);
-    wheelTimer = setTimeout(() => { wheelAccum = 0; }, 200);
-    if (wheelAccum < -35) {
-      step(1);
-      wheelAccum = 0;
-    } else if (wheelAccum > 35) {
-      step(-1);
-      wheelAccum = 0;
-    }
-  }, { passive: false });
+function setupDropsPinch() {
+  const MODES = [
+    { layout: 'list', size: 'm', label: 'List' },
+    { layout: 'grid', size: 's', label: 'Grid · Small' },
+    { layout: 'grid', size: 'm', label: 'Grid · Medium' },
+    { layout: 'grid', size: 'l', label: 'Grid · Large' }
+  ];
+  const feed = $('#feed');
+  if (!feed) return;
+  smoothListPinch({
+    area: feed,
+    content: () => el.feedInner || $('#feed-inner'),
+    scroller: () => feed,
+    itemSel: 'article[data-id]',
+    modes: MODES.map((m) => m.label),
+    getIndex: () => {
+      if (ui.layout !== 'grid') return 0;
+      const z = lsGet('sp-dsize', 'm');
+      return z === 's' ? 1 : z === 'l' ? 3 : 2;
+    },
+    apply: (i) => { lsSet('sp-dsize', MODES[i].size); applyDropSize(); if (ui.layout !== MODES[i].layout) setLayout(MODES[i].layout); else renderDrops(); }
+  });
+}
+function applyDropSize() {
+  const feed = $('#feed');
+  if (feed) feed.dataset.dsize = lsGet('sp-dsize', 'm');
 }
 
 /* ───── privacy: hide the notes list, present one note full screen ───── */
