@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.11';
+const VERSION = '3.0.12';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -306,6 +306,8 @@ function wire() {
   el.noteList.addEventListener('contextmenu', onNoteListContext);
   if (window.ResizeObserver) { let w = 0; new ResizeObserver(() => { const nw = el.noteList.offsetWidth; if (nw !== w) { w = nw; layoutNoteGrid(); } }).observe(el.noteList); }
   document.fonts?.ready.then(() => layoutNoteGrid());
+  // pictures arriving later change a card's height: re-pack the grid
+  el.noteList.addEventListener('load', (e) => { if (e.target.tagName === 'IMG') { clearTimeout(ui.gridT); ui.gridT = setTimeout(layoutNoteGrid, 60); } }, true);
   el.feed.addEventListener('scroll', () => {
     ui.atBottom = el.feed.scrollHeight - el.feed.scrollTop - el.feed.clientHeight < 60;
   }, { passive: true });
@@ -2532,7 +2534,7 @@ function layoutNoteGrid() {
   const items = [...L.querySelectorAll(':scope > .note-item')];
   for (const b of items) b.style.gridRowEnd = '';
   const gap = parseFloat(getComputedStyle(L).columnGap) || 8;
-  const hs = items.map((b) => b.getBoundingClientRect().height);
+  const hs = items.map((b) => b.offsetHeight); // layout height: a pinch's scale never skews it
   items.forEach((b, i) => { b.style.gridRowEnd = `span ${Math.max(1, Math.ceil((hs[i] + gap) / 2))}`; });
 }
 
@@ -2815,6 +2817,7 @@ function smoothListPinch({ area, content, scroller, modes, getIndex, apply, item
       done(st.el);
       return;
     }
+    st.el.style.transform = ''; // measure the new layout at its real size
     apply(next);
     const el = content();
     // the new size starts close to where the fingers left it and settles in
