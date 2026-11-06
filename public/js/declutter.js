@@ -552,8 +552,8 @@ export function readable(html) {
       bq.innerHTML = `<b>${KP_TITLE}</b><ul>${kp.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
       // the note's title (its first short line) stays first; the box goes right under it
       const first = [...root.children].find((x) => x.textContent.trim());
-      const isTitle = first && (/^H[1-3]$/.test(first.tagName) || (first.textContent.trim().length <= 120 && !first.matches('ul, ol, table, blockquote')));
-      if (isTitle) first.after(bq, document.createElement('hr'));
+      // always after the first line, so the note keeps its own title in the list
+      if (first) first.after(bq, document.createElement('hr'));
       else root.prepend(bq, document.createElement('hr'));
       changed = true;
     }
