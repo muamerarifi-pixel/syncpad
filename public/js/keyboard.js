@@ -4,9 +4,12 @@
    hold ⌫ to delete fast, ⇧ once = one capital, twice = CAPS. */
 
 const LAYOUTS = {
-  en: [['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'], ['⇧', 'z', 'x', 'c', 'v', 'b', 'n', 'm', '⌫']],
-  sq: [['q', 'w', 'e', 'r', 't', 'z', 'u', 'i', 'o', 'p', 'ç'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'ë'], ['⇧', 'y', 'x', 'c', 'v', 'b', 'n', 'm', '⌫']]
+  en: [['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'], ['⇧', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '⌫']],
+  sq: [['q', 'w', 'e', 'r', 't', 'z', 'u', 'i', 'o', 'p', 'ç'], ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'ë'], ['⇧', 'y', 'x', 'c', 'v', 'b', 'n', 'm', ',', '⌫']]
 };
+const SPK = '<path d="M4 9.5h3.2L11.5 6v12l-4.3-3.5H4z"/>';
+const SPK_ON = `<svg class="ic" viewBox="0 0 24 24">${SPK}<path d="M15 9.2a4 4 0 0 1 0 5.6M17.6 6.8a7.5 7.5 0 0 1 0 10.4"/></svg>`;
+const SPK_OFF = `<svg class="ic" viewBox="0 0 24 24">${SPK}<path d="m15.5 10 4 4m0-4-4 4"/></svg>`;
 const SYMBOLS = [['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'], ['@', '#', '€', '&', '-', '+', '(', ')', '/', '"'], ['=\\<', '*', "'", ':', ';', '!', '?', '%', '⌫']];
 const SYMBOLS2 = [['~', '`', '|', '•', '√', 'π', '÷', '×', '§', '°'], ['$', '£', '¥', '^', '_', '[', ']', '{', '}', '<'], ['123', '>', '\\', '©', '®', '™', '✓', '…', '⌫']];
 
@@ -83,7 +86,7 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
           <button class="skb-mini" data-k="bigger" aria-label="Bigger keys">A+</button>
         </span>
         <span class="skb-tools">
-          <button class="skb-mini" data-k="sound" aria-label="Key sound" aria-pressed="${sound}">${sound ? '🔊' : '🔇'}</button>
+          <button class="skb-mini" data-k="sound" aria-label="Key sound" aria-pressed="${sound}">${sound ? SPK_ON : SPK_OFF}</button>
           <button class="skb-mini" data-k="lift-down" aria-label="Move the keyboard down">▼</button>
           <button class="skb-mini" data-k="lift-up" aria-label="Move the keyboard up">▲</button>
           <button class="skb-hide" data-k="hide" aria-label="Hide keyboard">Hide <b>⌄</b></button>
@@ -95,7 +98,6 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
       <div class="skb-row skb-bottom">
         <button class="k k-fn" data-k="${page === 'abc' ? 'sym' : 'abc'}">${page === 'abc' ? '?123' : 'ABC'}</button>
         <button class="k k-fn k-lang" data-k="lang" aria-label="Language">${lang === 'sq' ? 'SQ' : 'EN'}</button>
-        <button class="k" data-ch=",">,</button>
         <button class="k k-space" data-k="space" aria-label="Space — slide to move the cursor">${lang === 'sq' ? 'Shqip' : 'English'}</button>
         <button class="k" data-ch=".">.</button>
         <button class="k k-fn k-enter" data-k="enter" aria-label="New line">⏎</button>
