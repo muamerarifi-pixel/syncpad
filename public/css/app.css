@@ -2394,3 +2394,23 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 .clip-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
 .editor-text.sel-mode { touch-action: none; -webkit-user-select: text; user-select: text; caret-color: transparent; }
 .editor-text.sel-mode ::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* 3.0.23: SyncPad keyboard */
+.kb-field { display: none; }
+@media (pointer: coarse) { .kb-field { display: flex; } }
+.skb { position: fixed; left: 0; right: 0; bottom: 0; z-index: 120; padding: 6px 4px calc(6px + var(--safe-b, 0px)); background: var(--surface-2); border-top: 1px solid var(--border); user-select: none; -webkit-user-select: none; touch-action: none; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 -6px 18px rgba(0,0,0,.06); }
+.skb[hidden] { display: none; }
+.skb-row { display: flex; gap: 5px; justify-content: center; }
+.skb-row.inset { padding: 0 4.5%; }
+.skb .k { flex: 1 1 0; min-width: 0; height: 44px; border: 0; border-radius: 9px; background: var(--surface); color: var(--text); font: inherit; font-size: 19px; font-weight: 500; box-shadow: 0 1px 0 rgba(0,0,0,.12); padding: 0; display: grid; place-items: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.skb .k.down { background: var(--accent-soft); transform: translateY(1px); }
+.skb .k-fn { flex: 1.45 1 0; font-size: 15px; font-weight: 600; background: color-mix(in srgb, var(--surface) 55%, var(--surface-2)); }
+.skb .k-shift.on { background: var(--accent-soft); color: var(--accent-text, var(--accent)); }
+.skb .k-shift.lock { background: var(--accent); color: #fff; }
+.skb .k-space { flex: 4.2 1 0; font-size: 13px; color: var(--muted); }
+.skb .k-enter { background: var(--accent); color: #fff; }
+.skb .k-lang { flex: 1 1 0; font-size: 13px; }
+.skb-bottom .k[data-ch] { flex: .9 1 0; }
+[data-theme="dark"] .skb .k { box-shadow: 0 1px 0 rgba(0,0,0,.5); }
+html.skb-on body { padding-bottom: var(--skb-h, 0px); }
+html.skb-on .qn, html.skb-on .tabbar { display: none !important; }

@@ -19,8 +19,9 @@ import { cycleCase, CASE_LABEL } from './textcase.js';
 import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VERSION } from './search.js';
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
+import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.22';
+const VERSION = '3.0.23';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -374,6 +375,20 @@ function wire() {
   });
   el.editorText.addEventListener('paste', pasteIntoEditor);
   fingerSelect();
+  // optional SyncPad keyboard (instead of the phone's) for notes and the write box
+  ui.kb = createKeyboard({ isTarget: (t) => !!t && (t.id === 'editor-text' || t.id === 'composer-input') && !(t.id === 'editor-text' && ui.selMode) });
+  ui.kb.setEnabled(isTouch() && lsGet('sp-kb', 'phone') === 'own');
+  const kbSeg = $('#set-kb');
+  const showKbOpt = () => { for (const b of $$('[data-kb-opt]', kbSeg)) b.setAttribute('aria-pressed', String(b.dataset.kbOpt === lsGet('sp-kb', 'phone'))); };
+  showKbOpt();
+  kbSeg.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-kb-opt]');
+    if (!b) return;
+    lsSet('sp-kb', b.dataset.kbOpt);
+    showKbOpt();
+    ui.kb.setEnabled(isTouch() && b.dataset.kbOpt === 'own');
+    toast(b.dataset.kbOpt === 'own' ? 'SyncPad keyboard on — tap into a note to use it.' : "Back to the phone's keyboard.");
+  });
   el.editorText.addEventListener('blur', () => saveNote.flush());
   el.editorText.addEventListener('keydown', onEditorKey);
   el.editorText.addEventListener('click', onEditorClick);
@@ -5943,7 +5958,7 @@ function setSelectMode(on) {
   if (b) b.setAttribute('aria-pressed', String(ui.selMode));
   el.editorText.classList.toggle('sel-mode', ui.selMode);
   if (ui.selMode) { el.editorText.setAttribute('inputmode', 'none'); document.activeElement && document.activeElement.blur && document.activeElement.blur(); toast('Drag your finger over the text to select it. Two fingers scroll. Tap Select again to go back to typing.', { duration: 3500 }); }
-  else el.editorText.removeAttribute('inputmode');
+  else { el.editorText.removeAttribute('inputmode'); ui.kb && ui.kb.refreshTargets(); }
 }
 function caretAt(x, y) {
   if (document.caretPositionFromPoint) { const c = document.caretPositionFromPoint(x, y); if (c && el.editorText.contains(c.offsetNode)) return { node: c.offsetNode, off: c.offset }; }
