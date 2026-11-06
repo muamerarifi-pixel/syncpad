@@ -2352,3 +2352,7 @@ html .editor[data-paper]:not([data-paper=""]) .cv-scroll { background: color-mix
 /* 3.0.15: the lined paper's red margin is one thin line (it grew into a wide band when the note was zoomed out), none on phones */
 .editor[data-paper="lined"] .editor-text { box-shadow: inset calc(16px / var(--z, 1)) 0 0 calc(-14px / var(--z, 1)) color-mix(in srgb, #e03131 32%, transparent); }
 @media (max-width: 860px) { .editor[data-paper="lined"] .editor-text { box-shadow: none; } }
+
+/* 3.0.18: zoom label offers a reset when the note is not at 100% */
+#btn-zoom-reset.zoomed { color: var(--accent-text, var(--accent)); font-weight: 700; }
+#btn-zoom-reset.zoomed::after { content: "↺"; margin-left: 3px; font-size: .95em; opacity: .85; }

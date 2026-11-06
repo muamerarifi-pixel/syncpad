@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.17';
+const VERSION = '3.0.18';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -205,7 +205,7 @@ function wire() {
   // text zoom (note editor)
   el.btnZoomIn.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(1) : stepZoom(1)));
   el.btnZoomOut.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(-1) : stepZoom(-1)));
-  el.btnZoomReset.addEventListener('click', () => { if (canvasOpen()) { ui.canvas.zoomStep(0); return; } currentZoom = 1; saveZoomPref(1); applyZoom(); });
+  el.btnZoomReset.addEventListener('click', () => { if (canvasOpen()) { ui.canvas.zoomStep(0); return; } const was = currentZoom; currentZoom = 1; saveZoomPref(1); applyZoom(); if (Math.abs((was || 1) - 1) > 0.01) toast('Zoom reset to 100%', { duration: 1200 }); });
   $('.zoom').addEventListener('mousedown', (e) => e.preventDefault());
   setupEditorZoomGestures();
 
@@ -3206,6 +3206,7 @@ function noteMenu(anchor) {
       ? { icon: 'note', label: 'Turn into normal note', run: turnIntoPage }
       : { icon: 'canvas', label: 'Turn into canvas', run: turnIntoCanvas },
     ...(n.data.canvas ? [] : [{ icon: 'sparkle', label: 'De-clutter text', run: declutterNote }]),
+    ...(!n.data.canvas && Math.abs((currentZoom || 1) - 1) > 0.01 ? [{ icon: 'fit', label: `Reset zoom to 100% (now ${Math.round(currentZoom * 100)}%)`, run: () => el.btnZoomReset.click() }] : []),
     { icon: 'download', label: 'Download (keeps colours)', run: downloadNote }
   ];
   if (store.items.has(n.id)) m.splice(2, 0, { icon: 'history', label: 'Version history', run: openHistory });
@@ -4193,7 +4194,14 @@ function applyZoomStyles() {
   document.documentElement.style.setProperty('--note-zoom', String(z));
   if (canvasOpen()) return;
   const label = Math.round(z * 100) + '%';
-  if (el.btnZoomReset && el.btnZoomReset.textContent !== label) el.btnZoomReset.textContent = label;
+  if (el.btnZoomReset) {
+    if (el.btnZoomReset.textContent !== label) el.btnZoomReset.textContent = label;
+    // not at 100%: the label shows a small reset mark, one tap brings it back
+    const off = Math.abs(z - 1) > 0.01;
+    el.btnZoomReset.classList.toggle('zoomed', off);
+    el.btnZoomReset.title = off ? 'Reset to 100%' : 'Zoom';
+    el.btnZoomReset.setAttribute('aria-label', off ? `Zoom ${label} — tap to reset to 100%` : 'Zoom 100%');
+  }
   if (ui.presenting) {
     const pz = document.querySelector('.present-bar .zv');
     if (pz && pz.textContent !== label) pz.textContent = label;
