@@ -54,8 +54,8 @@ await P.waitForSelector('#lock-msg >> text=Wrong PIN');
 for (const d of '1234') await P.click(`.key[data-k="${d}"]`);
 await P.waitForSelector('#lock', { state: 'hidden', timeout: 5000 });
 if ((await P.evaluate(() => getComputedStyle(document.querySelector('#app')).visibility)) !== 'visible') throw new Error('not visible after unlock');
-const z2 = await P.evaluate(() => localStorage.getItem('sp-zoom'));
-if (z2 !== '1.3') throw new Error('zoom not remembered');
+const z2 = await P.evaluate(() => Object.values(JSON.parse(localStorage.getItem('sp-zoom-notes') || '{}')));
+if (!z2.includes(1.3)) throw new Error('zoom not remembered'); // each note keeps its own zoom
 step('reload asks for PIN; wrong PIN rejected; right PIN unlocks; zoom remembered');
 
 // lock now + hardware keyboard
