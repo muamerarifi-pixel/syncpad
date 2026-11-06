@@ -14,7 +14,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '3.0.34';
+const VERSION = '3.0.35';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -205,6 +205,7 @@ export class SyncRoom extends DurableObject {
     s.exec('CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, name TEXT, seen INTEGER)');
     try { s.exec('ALTER TABLE devices ADD COLUMN secret TEXT'); } catch {}
     try { s.exec('ALTER TABLE devices ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0'); } catch {}
+    try { s.exec('ALTER TABLE devices ADD COLUMN main INTEGER NOT NULL DEFAULT 0'); } catch {}
     s.exec('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)');
     s.exec('CREATE TABLE IF NOT EXISTS subs (device TEXT PRIMARY KEY, endpoint TEXT NOT NULL, created INTEGER NOT NULL)');
     s.exec(`CREATE TABLE IF NOT EXISTS history (
@@ -294,6 +295,7 @@ export class SyncRoom extends DurableObject {
         // set / check / remove this space's number password (only a device of the space can)
         const g = globalStub(this.env);
         if (method === 'GET') return json(await g.loginStatus(m[1]));
+        if (!this.mayManage(dev)) return json({ error: 'main' }, 403);
         if (method === 'DELETE') return json(await g.clearLogin(m[1]));
         if (method === 'POST') {
           const body = await request.json().catch(() => ({}));
@@ -302,6 +304,20 @@ export class SyncRoom extends DurableObject {
           return json(await g.setLogin(m[1], pin));
         }
         break;
+      }
+      case 'main': {
+        // make this device a main device (needs the number password), or stop being one
+        if (!dev) return json({ error: 'device required' }, 403);
+        if (method === 'DELETE') { this.sql.exec('UPDATE devices SET main = 0 WHERE id = ?', dev); this.broadcastPresence(); return json({ ok: true }); }
+        if (method !== 'POST') break;
+        const body = await request.json().catch(() => ({}));
+        const ip = request.headers.get('cf-connecting-ip') || 'local';
+        const r = await globalStub(this.env).login(String(body.pin || ''), ip);
+        if (r.error === 'slow') return json(r, 429);
+        if (r.space !== m[1]) return json({ error: 'invalid' }, 401);
+        this.sql.exec('UPDATE devices SET main = 1 WHERE id = ?', dev);
+        this.broadcastPresence();
+        return json({ ok: true });
       }
       case 'latest':
         return json(this.latest(Number(url.searchParams.get('since')) || 0, clean(url.searchParams.get('d'), 64)));
@@ -382,9 +398,9 @@ export class SyncRoom extends DurableObject {
       if (a && a.device) online.add(a.device);
     }
     const devices = this.sql
-      .exec('SELECT id, name, seen FROM devices WHERE revoked = 0 ORDER BY seen DESC LIMIT 50')
+      .exec('SELECT id, name, seen, main FROM devices WHERE revoked = 0 ORDER BY seen DESC LIMIT 50')
       .toArray()
-      .map((d) => ({ ...d, online: online.has(d.id) }));
+      .map((d) => ({ ...d, main: !!d.main, online: online.has(d.id) }));
     return { online: online.size, devices };
   }
 
@@ -406,8 +422,14 @@ export class SyncRoom extends DurableObject {
 
   /* ───────────────────────── space: removing a device ───────────────────────── */
 
+  /** main devices: once any exist, only they may remove devices or change the number password */
+  hasMain() { return this.sql.exec('SELECT COUNT(*) AS n FROM devices WHERE main = 1 AND revoked = 0').one().n > 0; }
+  isMain(dev) { return !!dev && !!(this.sql.exec('SELECT main FROM devices WHERE id = ? AND revoked = 0', dev).toArray()[0] || {}).main; }
+  mayManage(dev) { return !this.hasMain() || this.isMain(dev); }
+
   async rotate(body, requester) {
     if (!requester) return json({ error: 'This device needs to reconnect first.' }, 403);
+    if (!this.mayManage(requester)) return json({ error: 'main' }, 403);
     const token = String(body.token || '');
     if (!KEY_RE.test(token)) return json({ error: 'bad token' }, 400);
     const remove = (Array.isArray(body.remove) ? body.remove : []).map((x) => clean(x, 64)).filter((x) => x && x !== requester).slice(0, 50);

@@ -2454,3 +2454,12 @@ html.skb-on .qn, html.skb-on .tabbar { display: none !important; }
 /* 3.0.33: cleaner drops header (upload via +, sync is automatic, hold to select, pinch to change layout) */
 .drops-head #btn-upload, .drops-head #btn-refresh, .drops-head #btn-dsort,
 .drops-head #btn-select, .drops-head #view-toggle { display: none !important; }
+
+/* 3.0.35: main devices */
+.dev-note { font-size: 12.5px; line-height: 1.45; color: var(--muted); padding: 12px 14px 4px; }
+.dev-note b { color: var(--text); font-weight: 650; }
+.dev-name .me.main { color: #fff; background: var(--accent); }
+.dev-remove.soft { color: var(--accent-text); white-space: nowrap; }
+.dev-remove.soft:hover { background: var(--accent-soft); }
+.dev-all { width: 100%; margin-top: 8px; justify-content: center; }
+.dev-all.danger-text { color: var(--danger); }

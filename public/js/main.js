@@ -21,7 +21,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.34';
+const VERSION = '3.0.35';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -198,6 +198,12 @@ function wire() {
   el.btnRestoreVersion.addEventListener('click', restoreVersion);
   el.btnNotif.addEventListener('click', toggleNotif);
   el.settingsDevices.addEventListener('click', (e) => {
+    if (e.target.closest('[data-mkmain]')) return makeMain();
+    if (e.target.closest('[data-unmain]')) return unMain();
+    if (e.target.closest('[data-remove-all]')) {
+      const all = sync.devices.filter((d) => d.id !== me() && !d.main);
+      return removeDevice(all.map((d) => d.id), `${all.length} devices`);
+    }
     const b = e.target.closest('[data-remove]');
     if (b) removeDevice(b.dataset.remove, b.dataset.name);
   });
@@ -1859,14 +1865,22 @@ async function selAction(act, b) {
   }
 }
 
-function promptDialog(title, placeholder, value) {
+function promptDialog(title, placeholder, value, opts = {}) {
   return new Promise((resolve) => {
+    el.promptInput.type = opts.secret ? 'password' : 'text';
+    const pi = el.promptInput, ownKb = pi.getAttribute('inputmode') === 'none' && pi.dataset.skbIm !== undefined;
+    const imWas = ownKb ? pi.dataset.skbIm : pi.getAttribute('inputmode');
+    if (opts.secret) { if (ownKb) pi.dataset.skbIm = 'numeric'; else pi.setAttribute('inputmode', 'numeric'); }
     el.promptTitle.textContent = title;
     el.promptInput.placeholder = placeholder;
     el.promptInput.value = value || '';
     let result = null;
     el.promptForm.onsubmit = (e) => { e.preventDefault(); result = el.promptInput.value.trim() || null; el.dlgPrompt.close(); };
-    el.dlgPrompt.addEventListener('close', () => resolve(result), { once: true });
+    el.dlgPrompt.addEventListener('close', () => {
+      pi.type = 'text';
+      if (opts.secret) { if (ownKb) pi.dataset.skbIm = imWas || ''; else if (imWas) pi.setAttribute('inputmode', imWas); else pi.removeAttribute('inputmode'); }
+      resolve(result);
+    }, { once: true });
     openDialog(el.dlgPrompt);
     setTimeout(() => { el.promptInput.focus(); el.promptInput.select(); }, 30);
   });
@@ -4025,21 +4039,53 @@ function renderSettingsDevices(list) {
   const mine = me();
   const devices = [...(list || [])];
   if (!devices.some((d) => d.id === mine)) devices.unshift({ id: mine, name: store.get('deviceName'), seen: Date.now(), online: sync.wsOpen });
-  devices.sort((a, b) => (b.id === mine) - (a.id === mine) || (b.online ? 1 : 0) - (a.online ? 1 : 0) || b.seen - a.seen);
+  devices.sort((a, b) => (b.id === mine) - (a.id === mine) || (b.main ? 1 : 0) - (a.main ? 1 : 0) || (b.online ? 1 : 0) - (a.online ? 1 : 0) || b.seen - a.seen);
+  const anyMain = devices.some((d) => d.main);
+  const meMain = !!(devices.find((d) => d.id === mine) || {}).main;
+  const canManage = !anyMain || meMain;
   el.devCount.textContent = devices.length > 1 ? String(devices.length) : '';
-  el.settingsDevices.innerHTML = devices
+  const others = devices.filter((d) => d.id !== mine && !d.main);
+  const head = anyMain
+    ? (meMain
+      ? '<div class="dev-note">This is a <b>main device</b>: only main devices can remove devices or change the number password.</div>'
+      : '<div class="dev-note">Only your <b>main devices</b> can remove devices or change the number password.</div>')
+    : '<div class="dev-note">Tip: make your phone and laptop <b>main devices</b>, so a computer you forget to sign out of (like at an internet café) can never remove them, and you can remove it from your phone.</div>';
+  el.settingsDevices.innerHTML = head + devices
     .map((d) => {
       const isMe = d.id === mine;
       const on = d.online || (isMe && sync.wsOpen);
       const name = (isMe ? store.get('deviceName') : d.name) || 'Device';
+      const tags = (isMe ? '<span class="me">This device</span>' : '') + (d.main ? '<span class="me main">Main</span>' : '');
+      const act = isMe
+        ? (d.main ? '<button class="dev-remove soft" data-unmain="1">Not main</button>' : '<button class="dev-remove soft" data-mkmain="1">Make main</button>')
+        : (canManage ? `<button class="dev-remove" data-remove="${esc(d.id)}" data-name="${esc(name)}">Remove</button>` : '');
       return `<div class="dev-row${on ? ' on' : ''}">
         <span class="dev-ic"><svg class="ic"><use href="#i-${devIcon(name)}"/></svg><span class="dot"></span></span>
-        <div class="dev-main"><div class="dev-name">${esc(name)}${isMe ? '<span class="me">This device</span>' : ''}</div>
+        <div class="dev-main"><div class="dev-name">${esc(name)}${tags}</div>
         <div class="dev-when">${on ? 'Online now' : `Last seen ${esc(ago(d.seen))}`}</div></div>
-        ${isMe ? '' : `<button class="dev-remove" data-remove="${esc(d.id)}" data-name="${esc(name)}">Remove</button>`}
+        ${act}
       </div>`;
     })
-    .join('') + (devices.length <= 1 ? '<div class="dev-empty">No other devices yet. Tap “Add a device” to connect your phone or computer.</div>' : '');
+    .join('') +
+    (canManage && others.length > 1 ? `<button class="btn btn-soft btn-sm dev-all danger-text" data-remove-all="1">Remove all ${anyMain ? 'devices except main ones' : 'other devices'} (${others.length})</button>` : '') +
+    (devices.length <= 1 ? '<div class="dev-empty">No other devices yet. Tap “Add a device” to connect your phone or computer.</div>' : '');
+}
+async function makeMain() {
+  const pin = await promptDialog('Make this a main device', 'Type your number password', '', { secret: true });
+  if (!pin) return;
+  if (!navigator.onLine) { toast('Go online first.'); return; }
+  const r = await fetch(`/api/s/${store.get('space')}/main`, { method: 'POST', headers: sync.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ pin: pin.replace(/\s/g, '') }) }).catch(() => null);
+  const j = r ? await r.json().catch(() => ({})) : {};
+  if (r && r.status === 429) { toast(`Too many wrong tries. Wait ${Math.max(1, Math.ceil((j.retry || 900000) / 60000))} minutes.`); return; }
+  if (!r || !r.ok) { toast(r && r.status === 401 ? 'That password is not right. (Set one first under Add a device.)' : 'Could not do that. Try again.'); return; }
+  toast('This is now a main device.');
+  loadDevices();
+}
+async function unMain() {
+  const ok = await confirmDialog('Stop being a main device?', 'If no main devices are left, any signed-in device can remove the others again.', 'Stop');
+  if (!ok) return;
+  await fetch(`/api/s/${store.get('space')}/main`, { method: 'DELETE', headers: sync.headers() }).catch(() => null);
+  loadDevices();
 }
 function renderThemeSeg() {
   let t = 'system';
@@ -4573,6 +4619,8 @@ function linkCode() {
 /* ═════════════════════════ removing devices ═════════════════════════ */
 
 async function removeDevice(id, name) {
+  const ids = Array.isArray(id) ? id : [id];
+  if (!ids.length) return;
   const ok = await confirmDialog(
     `Remove “${name}”?`,
     'It will be signed out of SyncPad, and its copy of your notes and files will be erased the next time it goes online. Your other devices switch to a new private link automatically — nothing to do on them.',
@@ -4582,15 +4630,16 @@ async function removeDevice(id, name) {
   if (!ok) return;
   if (!navigator.onLine) { toast('Go online to remove a device.'); return; }
   const token = rid(24);
-  let r = await fetch(`/api/s/${store.get('space')}/rotate`, { method: 'POST', headers: sync.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ remove: [id], token }) }).catch(() => null);
+  let r = await fetch(`/api/s/${store.get('space')}/rotate`, { method: 'POST', headers: sync.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ remove: ids, token }) }).catch(() => null);
   if (r && r.status === 409) {
     const j = await r.json().catch(() => ({}));
     if (j.token) await sync.setToken(j.token);
-    r = await fetch(`/api/s/${store.get('space')}/rotate`, { method: 'POST', headers: sync.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ remove: [id], token }) }).catch(() => null);
+    r = await fetch(`/api/s/${store.get('space')}/rotate`, { method: 'POST', headers: sync.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ remove: ids, token }) }).catch(() => null);
   }
+  if (r && r.status === 403) { toast('Only a main device can remove devices.'); loadDevices(); return; }
   if (!r || !r.ok) { toast('Could not remove the device. Try again in a moment.'); return; }
   await sync.setToken(token);
-  sync.devices = sync.devices.filter((d) => d.id !== id);
+  sync.devices = sync.devices.filter((d) => !ids.includes(d.id));
   renderSettingsDevices(sync.devices);
   toast(`“${name}” was removed. Your devices now use a new private link.`, { duration: 6000 });
 }
@@ -6096,6 +6145,7 @@ function setupPinLogin() {
       const r = await fetch(base(), { method: 'POST', headers: sync.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ pin }) });
       const j = await r.json().catch(() => ({}));
       if (j.error === 'taken') throw new Error('Pick a different password.');
+      if (j.error === 'main') throw new Error('Only a main device can change the password.');
       if (!r.ok || !j.ok) throw new Error('Could not save it. Try again.');
       np.value = '';
       say(sm, 'Saved. Write it down somewhere safe — it opens all your notes and files.', 'ok');
@@ -6104,7 +6154,8 @@ function setupPinLogin() {
   });
   rm.addEventListener('click', async () => {
     if (!(await confirmDialog('Remove the password?', 'You will only be able to add a computer with a 6-digit code from a device that is already connected.', 'Remove'))) return;
-    await fetch(base(), { method: 'DELETE', headers: sync.headers() }).catch(() => null);
+    const r = await fetch(base(), { method: 'DELETE', headers: sync.headers() }).catch(() => null);
+    if (r && r.status === 403) { say(sm, 'Only a main device can remove the password.', 'err'); return; }
     say(sm, 'Password removed.', 'ok');
     refresh();
   });
