@@ -14,7 +14,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '3.0.33';
+const VERSION = '3.0.34';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -936,12 +936,12 @@ export class SyncRoom extends DurableObject {
   }
 
   /* ── number password sign-in. The password itself is never stored: only a slow, salted hash of it
-        (PBKDF2, 150 000 rounds) that points to the space. Wrong tries are limited per network and overall. ── */
+        (PBKDF2, 100 000 rounds — the Workers maximum) that points to the space. Wrong tries are limited per network and overall. ── */
   async loginId(pin) {
     let pep = this.sql.exec(`SELECT v FROM gmeta WHERE k = 'pepper'`).toArray()[0];
     if (!pep) { this.sql.exec(`INSERT OR IGNORE INTO gmeta (k, v) VALUES ('pepper', ?)`, b64url(crypto.getRandomValues(new Uint8Array(32)))); pep = this.sql.exec(`SELECT v FROM gmeta WHERE k = 'pepper'`).toArray()[0]; }
     const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
-    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode('syncpad-login:' + pep.v), iterations: 150000 }, base, 256);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode('syncpad-login:' + pep.v), iterations: 100000 }, base, 256);
     return b64url(bits);
   }
   initLogins() {
