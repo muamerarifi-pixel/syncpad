@@ -109,7 +109,7 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   const isText = () => target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT');
   function type(s) {
     if (!target) return;
-    if (document.activeElement !== target) target.focus({ preventScroll: true });
+    ensureFocus();
     if (!document.execCommand('insertText', false, s) && isText()) {
       const a = target.selectionStart, b = target.selectionEnd;
       target.setRangeText(s, a, b, 'end');
@@ -119,7 +119,7 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   }
   function del() {
     if (!target) return;
-    if (document.activeElement !== target) target.focus({ preventScroll: true });
+    ensureFocus();
     if (!document.execCommand('delete') && isText()) {
       const a = target.selectionStart, b = target.selectionEnd;
       if (a === b && a > 0) target.setRangeText('', a - 1, a, 'end');
@@ -154,7 +154,23 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   }
 
   /* keys fire on touch-down for speed; held ⌫ repeats; the space bar slides the cursor */
-  let rep = 0, repT = 0, slide = null, hold = null, dsl = null;
+  let rep = 0, repT = 0, slide = null, dsl = null;
+  const downKeys = new Map();
+  const holds = new Map(); // one long-press per finger, so two thumbs never mix their letters
+  box.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
+  box.addEventListener('mousedown', (e) => e.preventDefault());
+  /* remember exactly where the cursor is in the text, and put it back if focus ever slips */
+  let lastRange = null;
+  document.addEventListener('selectionchange', () => {
+    if (!target || isText() || document.activeElement !== target) return;
+    const sel = getSelection();
+    if (sel.rangeCount && target.contains(sel.anchorNode)) lastRange = sel.getRangeAt(0).cloneRange();
+  });
+  function ensureFocus() {
+    if (!target || document.activeElement === target) return;
+    target.focus({ preventScroll: true });
+    if (!isText() && lastRange && target.contains(lastRange.startContainer)) { const sel = getSelection(); sel.removeAllRanges(); sel.addRange(lastRange); }
+  }
   /* where the cursor was when ⌫ went down, then select n words back from there */
   function caretStart() {
     if (isText()) return { pos: target.selectionEnd };
@@ -182,7 +198,7 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     const b = e.target.closest('.k, .skb-mini, .skb-hide');
     e.preventDefault(); // never take focus away from the text
     if (!b) {
-      if (e.target.closest('[data-bar]')) { drag = { y: e.clientY, h: kh }; box.setPointerCapture(e.pointerId); box.classList.add('resizing'); }
+      if (e.target.closest('[data-bar]')) { drag = { id: e.pointerId, y: e.clientY, h: kh }; box.setPointerCapture(e.pointerId); box.classList.add('resizing'); }
       return;
     }
     if (b.classList.contains('skb-mini')) {
@@ -194,13 +210,17 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
       return;
     }
     b.classList.add('down');
+    downKeys.set(e.pointerId, b);
     click();
     const k = b.dataset.k;
     if (b.dataset.ch) {
       if (b.dataset.alt) {
         // a quick tap types the letter, holding types the small character in the corner
-        hold = { ch: b.dataset.ch, alt: b.dataset.alt, done: false };
-        hold.t = setTimeout(() => { if (hold) { hold.done = true; type(hold.alt); click(); afterChar(); } }, 330);
+        type(b.dataset.ch);
+        const h = { alt: b.dataset.alt };
+        h.t = setTimeout(() => { if (holds.get(e.pointerId) === h) { del(); type(h.alt); click(); } }, 380);
+        holds.set(e.pointerId, h);
+        afterChar();
         return;
       }
       type(b.dataset.ch);
@@ -209,12 +229,12 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
     }
     if (k === 'del') {
       // tap = delete one; hold = delete fast; slide left = select words backwards, let go = delete them
-      dsl = { x0: e.clientX, n: 0, sliding: false, start: caretStart() };
-      b.setPointerCapture(e.pointerId);
-      repT = setTimeout(() => { if (dsl && !dsl.sliding) { dsl.repeated = true; del(); rep = setInterval(del, 55); } }, 380);
+      del(); // at once, so fast typing stays in order
+      dsl = { id: e.pointerId, x0: e.clientX, n: 0, sliding: false, start: caretStart() };
+      repT = setTimeout(() => { if (dsl && !dsl.sliding) { rep = setInterval(del, 55); } }, 400);
       return;
     }
-    if (k === 'space') { slide = { x: e.clientX, moved: 0 }; b.setPointerCapture(e.pointerId); return; }
+    if (k === 'space') { type(' '); slide = { id: e.pointerId, x: e.clientX, moved: 0 }; return; } // the space goes in at once; sliding takes it back and moves the cursor
     if (k === 'shift') { const now = Date.now(); shift = shift === 0 ? (now - lastShift < 320 ? 2 : 1) : (shift === 1 && now - lastShift < 320 ? 2 : 0); lastShift = now; render(); return; }
     if (k === 'enter') { enter(); return; }
     if (k === 'sym' || k === 'sym2' || k === 'abc') { page = k; render(); return; }
@@ -222,6 +242,8 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
   });
   let drag = null;
   box.addEventListener('pointermove', (e) => {
+    // each finger only moves its own key: a second thumb never drags the cursor or the delete selection
+    if (drag && drag.id !== e.pointerId) return;
     if (drag) {
       const dy = e.clientY - drag.y; // up = bigger
       const h = drag.h - dy / 4.6;
@@ -229,29 +251,32 @@ export function createKeyboard({ isTarget, onShow, onHide }) {
       setH(h);
       return;
     }
-    if (dsl) {
-      const n = Math.max(0, Math.floor((dsl.x0 - e.clientX) / 18));
+    if (dsl && dsl.id === e.pointerId) {
+      const n = Math.max(0, Math.floor((dsl.x0 - e.clientX) / 22));
       if (!dsl.sliding && n >= 1) { dsl.sliding = true; stopRepeat(); box.classList.add('del-sliding'); }
       if (dsl.sliding && n !== dsl.n) { dsl.n = n; selectWordsBack(dsl.start, n); }
       return;
     }
-    if (!slide) return;
-    const steps = Math.trunc((e.clientX - slide.x) / 14);
-    if (steps) { moveCaret(steps); slide.x += steps * 14; slide.moved += Math.abs(steps); }
+    if (!slide || slide.id !== e.pointerId) return;
+    const steps = Math.trunc((e.clientX - slide.x) / 16);
+    if (steps) {
+      if (!slide.moved) del(); // it was a slide, not a space
+      moveCaret(steps); slide.x += steps * 16; slide.moved += Math.abs(steps);
+    }
   });
   const up = (e) => {
-    if (hold) { clearTimeout(hold.t); const h = hold; hold = null; if (!h.done && e.type === 'pointerup') { type(h.ch); afterChar(); } }
-    if (drag) { drag = null; box.classList.remove('resizing'); }
-    stopRepeat();
-    for (const d of box.querySelectorAll('.k.down')) d.classList.remove('down');
-    if (slide) { if (!slide.moved && e.type === 'pointerup') type(' '); slide = null; }
-    if (dsl) {
+    const h = holds.get(e.pointerId);
+    if (h) { clearTimeout(h.t); holds.delete(e.pointerId); }
+    if (drag && drag.id === e.pointerId) { drag = null; box.classList.remove('resizing'); }
+    const k = downKeys.get(e.pointerId);
+    if (k) { k.classList.remove('down'); downKeys.delete(e.pointerId); }
+    if (slide && slide.id === e.pointerId) slide = null;
+    if (dsl && dsl.id === e.pointerId) {
       const d = dsl;
       dsl = null;
+      stopRepeat();
       box.classList.remove('del-sliding');
-      if (e.type !== 'pointerup') return;
-      if (d.sliding) { if (d.n > 0) del(); } // the selected words go in one go
-      else if (!d.repeated) del();
+      if (e.type === 'pointerup' && d.sliding && d.n > 0) del(); // the selected words go in one go
     }
   };
   box.addEventListener('pointerup', up);
