@@ -2438,3 +2438,15 @@ html.skb-on .qn, html.skb-on .tabbar { display: none !important; }
 
 /* 3.0.29: slide ⌫ left to select words, let go to delete */
 .skb.del-sliding .k-del { background: #e03131; color: #fff; }
+
+/* 3.0.32: number password sign-in */
+.pin-set { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-2); }
+.pin-set-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.pin-set .small { font-size: 13px; margin: 0 0 10px; line-height: 1.45; }
+.pin-set .row, #pin-login-form .row { display: flex; gap: 8px; }
+.pin-set input, #pin-login-form input { flex: 1; min-width: 0; letter-spacing: .2em; }
+.ok-text { color: var(--accent-text, var(--accent)); font-weight: 600; }
+.btn-danger-soft { color: #c92a2a; }
+.pin-set input, #pin-login-form input { height: 44px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); padding: 0 14px; font: inherit; font-size: 16px; }
+.pin-set input:placeholder-shown, #pin-login-form input:placeholder-shown { letter-spacing: normal; }
+.signin-link { margin-top: 14px; font-size: 13.5px; color: var(--accent-text, var(--accent)); }

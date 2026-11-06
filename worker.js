@@ -14,7 +14,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '3.0.31';
+const VERSION = '3.0.32';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -148,6 +148,16 @@ export default {
         const res = await globalStub(env).claimCode(String(body.code || '').replace(/\D/g, ''), ip);
         return json(res, res.space ? 200 : res.error === 'slow' ? 429 : 404);
       }
+      if (p === '/api/login' && request.method === 'POST') {
+        // sign in on any computer with the number password: gives back this space's link and current token
+        const body = await request.json().catch(() => ({}));
+        const ip = request.headers.get('cf-connecting-ip') || 'local';
+        const pin = String(body.pin || '').replace(/\D/g, '');
+        const res = await globalStub(env).login(pin, ip);
+        if (!res.space) return json(res, res.error === 'slow' ? 429 : 401);
+        const token = await env.SYNC_ROOM.get(env.SYNC_ROOM.idFromName('space:' + res.space)).currentToken();
+        return json({ space: res.space, token: token || res.space });
+      }
       if (p === '/api/push/key') return json({ key: (await globalStub(env).vapid()).pub });
       if (p === '/api/link') {
         if (!KEY_RE.test(url.searchParams.get('s') || '')) return json({ error: 'forbidden' }, 403);
@@ -280,6 +290,19 @@ export class SyncRoom extends DurableObject {
         if (method === 'POST') return this.subscribe(await request.json().catch(() => ({})), dev, url);
         if (method === 'DELETE') { this.sql.exec('DELETE FROM subs WHERE device = ?', dev); return json({ ok: true }); }
         break;
+      case 'login': {
+        // set / check / remove this space's number password (only a device of the space can)
+        const g = globalStub(this.env);
+        if (method === 'GET') return json(await g.loginStatus(m[1]));
+        if (method === 'DELETE') return json(await g.clearLogin(m[1]));
+        if (method === 'POST') {
+          const body = await request.json().catch(() => ({}));
+          const pin = String(body.pin || '');
+          if (!/^\d{8,32}$/.test(pin)) return json({ error: 'short' }, 400);
+          return json(await g.setLogin(m[1], pin));
+        }
+        break;
+      }
       case 'latest':
         return json(this.latest(Number(url.searchParams.get('since')) || 0, clean(url.searchParams.get('d'), 64)));
       case 'history':
@@ -910,6 +933,63 @@ export class SyncRoom extends DurableObject {
       return { error: 'invalid' };
     }
     return { space: row.space, token: row.token || row.space };
+  }
+
+  /* ── number password sign-in. The password itself is never stored: only a slow, salted hash of it
+        (PBKDF2, 150 000 rounds) that points to the space. Wrong tries are limited per network and overall. ── */
+  async loginId(pin) {
+    let pep = this.sql.exec(`SELECT v FROM gmeta WHERE k = 'pepper'`).toArray()[0];
+    if (!pep) { this.sql.exec(`INSERT OR IGNORE INTO gmeta (k, v) VALUES ('pepper', ?)`, b64url(crypto.getRandomValues(new Uint8Array(32)))); pep = this.sql.exec(`SELECT v FROM gmeta WHERE k = 'pepper'`).toArray()[0]; }
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new TextEncoder().encode('syncpad-login:' + pep.v), iterations: 150000 }, base, 256);
+    return b64url(bits);
+  }
+  initLogins() {
+    this.initGlobal();
+    this.sql.exec('CREATE TABLE IF NOT EXISTS logins (lid TEXT PRIMARY KEY, space TEXT NOT NULL, created INTEGER NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS ltries (ip TEXT PRIMARY KEY, n INTEGER NOT NULL, reset INTEGER NOT NULL)');
+  }
+  async setLogin(space, pin) {
+    this.initLogins();
+    const lid = await this.loginId(pin);
+    const ex = this.sql.exec('SELECT space FROM logins WHERE lid = ?', lid).toArray()[0];
+    if (ex && ex.space !== space) return { error: 'taken' };
+    this.sql.exec('DELETE FROM logins WHERE space = ?', space);
+    this.sql.exec('INSERT OR REPLACE INTO logins (lid, space, created) VALUES (?, ?, ?)', lid, space, Date.now());
+    return { ok: true };
+  }
+  async loginStatus(space) {
+    this.initLogins();
+    const r = this.sql.exec('SELECT created FROM logins WHERE space = ?', space).toArray()[0];
+    return { set: !!r, created: r ? r.created : 0 };
+  }
+  async clearLogin(space) {
+    this.initLogins();
+    this.sql.exec('DELETE FROM logins WHERE space = ?', space);
+    return { ok: true };
+  }
+  async login(pin, ip) {
+    this.initLogins();
+    const now = Date.now();
+    const HOUR = 60 * 60 * 1000;
+    const t = this.sql.exec('SELECT n, reset FROM ltries WHERE ip = ?', ip).toArray()[0];
+    if (t && t.reset > now && t.n >= 6) return { error: 'slow', retry: t.reset - now };
+    // every wrong try anywhere counts too, so guessing from many networks stays slow
+    const all = this.sql.exec(`SELECT n, reset FROM ltries WHERE ip = '*'`).toArray()[0];
+    if (all && all.reset > now && all.n >= 60) return { error: 'slow', retry: all.reset - now };
+    const row = /^\d{8,32}$/.test(pin) ? this.sql.exec('SELECT space FROM logins WHERE lid = ?', await this.loginId(pin)).toArray()[0] : null;
+    if (row) { this.sql.exec('DELETE FROM ltries WHERE ip = ?', ip); return { space: row.space }; }
+    for (const [key, win] of [[ip, 15 * 60 * 1000], ['*', HOUR]]) {
+      const r = this.sql.exec('SELECT reset FROM ltries WHERE ip = ?', key).toArray()[0];
+      if (!r || r.reset <= now) this.sql.exec('INSERT OR REPLACE INTO ltries (ip, n, reset) VALUES (?, 1, ?)', key, now + win);
+      else this.sql.exec('UPDATE ltries SET n = n + 1 WHERE ip = ?', key);
+    }
+    return { error: 'invalid' };
+  }
+  /** the space's current token (it changes when a device is removed), for a password sign-in */
+  async currentToken() {
+    this.init();
+    return this.meta('key') || null;
   }
 
   async vapid() {

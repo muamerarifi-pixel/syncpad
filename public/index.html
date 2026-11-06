@@ -332,6 +332,25 @@
         </div>
         <p class="form-msg" id="join-msg" role="status"></p>
       </form>
+      <div class="divider"><span>or</span></div>
+      <form class="join" id="pin-login-form">
+        <label for="pin-login">Sign in with your number password</label>
+        <div class="row">
+          <input id="pin-login" type="password" inputmode="numeric" autocomplete="current-password" maxlength="32" placeholder="••••••••" aria-label="Number password">
+          <button class="btn btn-primary" type="submit">Sign in</button>
+        </div>
+        <p class="form-msg" id="pin-login-msg" role="status"></p>
+      </form>
+      <div class="pin-set" id="pin-set">
+        <div class="pin-set-head"><b>Sign in on any computer</b><span class="muted" id="pin-status">Checking…</span></div>
+        <p class="muted small">Set a number password (8 digits or more). On any computer, open the SyncPad address, tap Add device, type it, and all your notes and files are there.</p>
+        <form class="row" id="pin-set-form">
+          <input id="pin-new" type="password" inputmode="numeric" autocomplete="new-password" maxlength="32" placeholder="New password (numbers)" aria-label="New number password">
+          <button class="btn" type="submit" id="pin-save">Save</button>
+          <button class="btn btn-danger-soft" type="button" id="pin-remove" hidden>Remove</button>
+        </form>
+        <p class="form-msg" id="pin-set-msg" role="status"></p>
+      </div>
       <div class="devices" id="devices-list"></div>
       <div class="install-hint" id="install-hint" hidden></div>
     </div>

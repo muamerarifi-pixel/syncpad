@@ -21,7 +21,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.31';
+const VERSION = '3.0.32';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -489,6 +489,7 @@ function wire() {
     d.addEventListener('close', () => closeLayer(d));
   }
   el.joinForm.addEventListener('submit', (e) => { e.preventDefault(); joinWithCode(); });
+  setupPinLogin();
   el.joinCode.addEventListener('input', () => {
     const d = el.joinCode.value.replace(/\D/g, '').slice(0, 6);
     el.joinCode.value = d.length > 3 ? d.slice(0, 3) + ' ' + d.slice(3) : d;
@@ -1069,6 +1070,7 @@ function emptyDrops() {
       <button class="btn btn-primary" data-act="pick"><svg class="ic"><use href="#i-clip"/></svg><span>Choose files</span></button>
       ${alone ? `<button class="btn btn-soft" data-act="connect"><svg class="ic"><use href="#i-qr"/></svg><span>Connect a device</span></button>` : ''}
     </div>
+    ${alone ? `<button class="btn btn-ghost signin-link" data-act="signin"><svg class="ic"><use href="#i-lock"/></svg><span>Already use SyncPad? Sign in with your password</span></button>` : ''}
   </div>`;
 }
 
@@ -1255,6 +1257,7 @@ async function onFeedClick(e) {
   const act = a.dataset.act;
   if (act === 'pick') return el.fileInput.click();
   if (act === 'connect') return openConnect();
+  if (act === 'signin') { openConnect(); setTimeout(() => { const i = $('#pin-login'); i.scrollIntoView({ block: 'center' }); i.focus(); }, 120); return; }
   if (!it) return;
   if (act === 'copy') {
     await copyText(it.data.text || '');
@@ -3836,6 +3839,7 @@ async function openConnect() {
   renderDevices();
   renderInstallHint();
   openDialog(el.dlgConnect);
+  ui.pinRefresh && ui.pinRefresh();
   loadPairCode();
 }
 
@@ -6041,4 +6045,67 @@ function fingerSelect() {
   };
   ed.addEventListener('touchend', end, { passive: true });
   ed.addEventListener('touchcancel', end, { passive: true });
+}
+
+
+/* ───────── number password: sign in on any computer with the SyncPad address + a password ───────── */
+function setupPinLogin() {
+  const f = $('#pin-login-form'), inp = $('#pin-login'), msg = $('#pin-login-msg');
+  const say = (m, t, cls) => { m.textContent = t; m.className = 'form-msg' + (cls ? ' ' + cls : ''); };
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pin = inp.value.replace(/\D/g, '');
+    if (pin.length < 8) { say(msg, 'Your password has at least 8 digits.', 'err'); return; }
+    say(msg, 'Signing in…');
+    try {
+      const r = await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 429) throw new Error(`Too many wrong tries. Wait ${Math.max(1, Math.ceil((j.retry || 900000) / 60000))} minutes and try again.`);
+      if (!j.space) throw new Error('That password is not right.');
+      inp.value = '';
+      if (j.space === store.get('space')) { say(msg, 'This device is already signed in to your space.', 'ok'); return; }
+      el.dlgConnect.close();
+      await new Promise((res) => setTimeout(res, 80));
+      await offerJoin({ space: j.space, token: j.token || j.space });
+    } catch (err) {
+      say(msg, navigator.onLine ? err.message : 'You are offline. Connect to the internet first.', 'err');
+    }
+  });
+  // setting it (from a device that is already in your space)
+  const sf = $('#pin-set-form'), np = $('#pin-new'), sm = $('#pin-set-msg'), st = $('#pin-status'), rm = $('#pin-remove');
+  const base = () => `/api/s/${store.get('space')}/login`;
+  const refresh = async () => {
+    if (!store.get('space')) { st.textContent = ''; return; }
+    try {
+      const j = await fetch(base(), { headers: sync.headers() }).then((r) => r.json());
+      st.textContent = j.set ? '· On' : '· Not set yet';
+      st.className = j.set ? 'ok-text' : 'muted';
+      rm.hidden = !j.set;
+      $('#pin-save').textContent = j.set ? 'Change' : 'Save';
+    } catch { st.textContent = navigator.onLine ? '' : '· offline'; }
+  };
+  ui.pinRefresh = () => { refresh(); say(msg, ''); say(sm, ''); };
+  sf.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pin = np.value.replace(/\D/g, '');
+    if (pin !== np.value.trim()) { say(sm, 'Numbers only, please.', 'err'); return; }
+    if (pin.length < 8) { say(sm, 'Use at least 8 digits, so nobody can guess it.', 'err'); return; }
+    if (/^(\d)\1+$/.test(pin) || '0123456789012345678901234567890'.includes(pin) || '9876543210987654321098765432109'.includes(pin)) { say(sm, 'Too easy to guess (like 11111111 or 12345678). Pick another.', 'err'); return; }
+    say(sm, 'Saving…');
+    try {
+      const r = await fetch(base(), { method: 'POST', headers: sync.headers({ 'content-type': 'application/json' }), body: JSON.stringify({ pin }) });
+      const j = await r.json().catch(() => ({}));
+      if (j.error === 'taken') throw new Error('Pick a different password.');
+      if (!r.ok || !j.ok) throw new Error('Could not save it. Try again.');
+      np.value = '';
+      say(sm, 'Saved. Write it down somewhere safe — it opens all your notes and files.', 'ok');
+      refresh();
+    } catch (err) { say(sm, navigator.onLine ? err.message : 'You are offline. Connect to the internet first.', 'err'); }
+  });
+  rm.addEventListener('click', async () => {
+    if (!(await confirmDialog('Remove the password?', 'You will only be able to add a computer with a 6-digit code from a device that is already connected.', 'Remove'))) return;
+    await fetch(base(), { method: 'DELETE', headers: sync.headers() }).catch(() => null);
+    say(sm, 'Password removed.', 'ok');
+    refresh();
+  });
 }
