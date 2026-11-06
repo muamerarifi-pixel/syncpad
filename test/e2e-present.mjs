@@ -71,7 +71,7 @@ await A.click('.present-bar .zv', { force: true }).catch(() => {});
 step(`Present: only the note on screen (no list or titles); you can still type and format — the tools fade while the mouse rests; zoom ${z}; Esc leaves, the new text is saved`);
 
 // canvas presents too
-await A.click('#btn-new-canvas');
+await A.click('#btn-new-more'); await A.click('.menu >> text=New canvas');
 await A.click('[data-cv="text"]'); await A.click('.cv-world', { position: { x: 120, y: 80 } });
 await A.keyboard.type('Projector canvas');
 await A.keyboard.press('Escape');
@@ -90,7 +90,7 @@ const P = await (await browser.newContext({ ...devices['Pixel 7'] })).newPage();
 await P.goto(BASE + '/');
 await P.waitForSelector('.status-chip[data-state="online"]', { timeout: 15000 });
 await P.click('.tabbar-btn[data-tab="notes"]');
-await P.click('#fab-new-note');
+await P.click('#btn-new-note');
 await P.keyboard.type('Phone slide');
 await P.click('#btn-note-more');
 await P.click('.menu button:has-text("Present")');

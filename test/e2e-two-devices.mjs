@@ -82,7 +82,7 @@ await B.screenshot({ path: `${OUT}/06-mobile-feed.png` });
 
 // Notes: rich text editor — size before typing, colour, highlight, checklist
 await B.click('.tabbar-btn[data-tab="notes"]');
-await B.click('#fab-new-note');
+await B.click('#btn-new-note');
 await B.click('[data-fmt="size"]');
 await B.click('.menu button:has-text("Huge")');
 await B.keyboard.type('Shopping list');

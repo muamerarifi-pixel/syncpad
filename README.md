@@ -16,9 +16,25 @@ Send files, links and notes between all your devices — phone, laptop, tablet �
 - **PIN lock** per device and **A−/A+** text zoom in notes.
 - **Offline-first**: everything is saved on the device first and syncs when you're back online, including queued file uploads, which resume where they stopped.
 
+## New in 3.0
+
+- **One big “New note” button** on every screen (the **+** beside it: checklist, canvas, upload files, new Word/PDF document, import an e-book). The duplicate buttons are gone.
+- **Select several** notes or drops (Select button, press & hold on a phone, Ctrl/Shift+click on a computer): pin, move to a folder, colour, paper, reminder, archive, merge, save as one PDF, duplicate, delete.
+- **Arrange by hand**: press & hold, then drag (phone) or drag with the mouse. Notes and drops switch to “My order”, which syncs to every device.
+- **Search** ignores accents (`pershendetje` finds `përshëndetje`), matches every word, and looks **inside PDFs, Word, PowerPoint, Excel, ePUB and text files** — the hit shows the matching line and its page.
+- **ePUB**: read e-books in the viewer, or import one (or a .docx / .md / .html / .txt) as a note, pictures included.
+- **Very long notes** (hundreds of pages) are stored in pieces so they sync; PDFs with hundreds of pages open instantly and stay light on memory.
+- **PDF viewer**: smooth pinch zoom that stays under your fingers, one-finger panning in every direction, double-tap to zoom, page counter.
+- **Reminders** on notes (once, daily, weekly, monthly) — a notification on every device, even when SyncPad is closed.
+- **Save as PDF** keeps the note’s look: fonts, colours, pictures, paper; pages break between lines.
+- **Pictures in notes**: side by side, text beside a picture, select several pictures, draw / write on a picture after adding it. Canvas: select several things (drag a box, Shift+click, Ctrl+A) and move, colour, duplicate or delete them together; draw on canvas pictures too.
+- **Papers** redone: app backgrounds are painted once (no seams) with real paper grain; notes can use cream, lined, squared, dotted, recycled, kraft, linen, mint or night paper — lines follow the text.
+- **Capital letter** at the start of a note and of every new line (links and e-mails are left alone).
+- **Dark theme**: status bar and installed-app bars follow the theme; the note toolbar scrolls sideways on small phones.
+
 ## Where files are stored
 
-Files are kept in the same Cloudflare Durable Object (SQLite) that already powers sync, split into 1 MiB pieces. No R2 bucket, KV namespace or other extra Cloudflare resource is needed.
+Files are kept in the same Cloudflare Durable Object (SQLite) that already powers sync, split into 1 MiB pieces. Reminders use that same Durable Object's built-in alarm. No R2 bucket, KV namespace or other extra Cloudflare resource is needed.
 
 - The Workers free plan includes **5 GB** of Durable Object storage per account (shared with any other apps on the account). SyncPad caps itself at **3 GB** so your other apps always have room.
 - **Settings → Clean up old drops automatically** can remove drops after 1/7/30 days. Pinned drops and notes are never removed.

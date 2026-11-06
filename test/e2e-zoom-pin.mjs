@@ -15,7 +15,7 @@ await P.waitForSelector('.status-chip[data-state="online"]', { timeout: 15000 })
 
 // zoom
 await P.click('.tabbar-btn[data-tab="notes"]');
-await P.click('#fab-new-note');
+await P.click('#btn-new-note');
 await P.keyboard.type('Zoom test note');
 await P.keyboard.press('Enter');
 await P.keyboard.type('Some text to read more comfortably.');

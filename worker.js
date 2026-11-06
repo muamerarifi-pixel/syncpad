@@ -21,7 +21,8 @@ const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account fr
 const TRASH_DAYS = 30;
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
-const KINDS = new Set(['note', 'clip', 'file', 'settings', 'folder']);
+const KINDS = new Set(['note', 'clip', 'file', 'settings', 'folder', 'part']);
+const MIN = 60 * 1000;
 const PAIR_TTL = 10 * 60 * 1000;
 const ROUTE = /^\/api\/s\/([A-Za-z0-9_-]{20,64})\/(.+)$/;
 const DAY = 86400000;
@@ -70,6 +71,9 @@ function manifest(url) {
       display: 'standalone',
       background_color: bgColor,
       theme_color: themeColor,
+      // installed apps: use dark bars when the phone is in dark mode
+      color_scheme_dark: { theme_color: (bg && bgColors.dark[bg]) || bgColors.dark.none, background_color: (bg && bodyColors.dark[bg]) || bodyColors.dark.none },
+      user_preferences: { color_scheme: { dark: { theme_color: (bg && bgColors.dark[bg]) || bgColors.dark.none, background_color: (bg && bodyColors.dark[bg]) || bodyColors.dark.none } } },
       icons: [
         { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
         { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -439,26 +443,86 @@ export class SyncRoom extends DurableObject {
     return this.vapidCache;
   }
 
-  async sendPush(from) {
+  async sendPush(from, topic = 'syncpad-drops') {
     const subs = this.sql.exec('SELECT device, endpoint FROM subs WHERE device != ?', from || '').toArray();
     if (!subs.length) return;
     const v = await this.vapidKey();
     const now = Date.now();
     const enc = (o) => b64url(new TextEncoder().encode(JSON.stringify(o)));
     for (const s of subs) {
-      if (now - (this.lastPush.get(s.device) || 0) < 5000) continue;
-      this.lastPush.set(s.device, now);
+      if (topic === 'syncpad-drops') {
+        if (now - (this.lastPush.get(s.device) || 0) < 5000) continue;
+        this.lastPush.set(s.device, now);
+      }
       try {
         const aud = new URL(s.endpoint).origin;
         const unsigned = `${enc({ typ: 'JWT', alg: 'ES256' })}.${enc({ aud, exp: Math.floor(now / 1000) + 3600, sub: this.origin || this.meta('origin') || 'mailto:syncpad@example.com' })}`;
         const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, v.key, new TextEncoder().encode(unsigned));
         const r = await fetch(s.endpoint, {
           method: 'POST',
-          headers: { Authorization: `vapid t=${unsigned}.${b64url(sig)}, k=${v.pub}`, TTL: '86400', Urgency: 'high', Topic: 'syncpad-drops' }
+          headers: { Authorization: `vapid t=${unsigned}.${b64url(sig)}, k=${v.pub}`, TTL: '86400', Urgency: 'high', Topic: topic }
         });
         if (r.status === 404 || r.status === 410) this.sql.exec('DELETE FROM subs WHERE device = ?', s.device);
       } catch {}
     }
+  }
+
+  /* ───────────────────────── space: note reminders ───────────────────────── */
+
+  /** Notes with a reminder: { id, at, repeat, title } */
+  reminderRows() {
+    return this.sql
+      .exec(`SELECT id, data FROM items WHERE kind = 'note' AND deleted = 0 AND json_extract(data, '$.remind') > 0`)
+      .toArray()
+      .map((r) => {
+        const d = JSON.parse(r.data);
+        if (d.trashed) return null;
+        const text = String(d.text || d.body || '').trim();
+        return { id: r.id, at: Number(d.remind), repeat: d.repeat || '', title: text.split('\n')[0].slice(0, 80) || 'Note', body: text.split('\n').slice(1).join(' ').slice(0, 140) };
+      })
+      .filter(Boolean);
+  }
+
+  /** The next time (after `after`) a reminder is due, honouring daily / weekly / monthly repeats */
+  static nextAt(r, after) {
+    if (r.at > after) return r.at;
+    if (!r.repeat) return null;
+    const d = new Date(r.at);
+    if (r.repeat === 'daily' || r.repeat === 'weekly') {
+      const step = (r.repeat === 'daily' ? 1 : 7) * DAY;
+      return r.at + Math.ceil((after - r.at + 1) / step) * step;
+    }
+    if (r.repeat === 'monthly') {
+      for (let k = 1; k < 1200; k++) { const t = new Date(d); t.setUTCMonth(d.getUTCMonth() + k); if (t.getTime() > after) return t.getTime(); }
+    }
+    return null;
+  }
+
+  async scheduleReminders(now = Date.now()) {
+    const last = Number(this.meta('remindedUpTo')) || now;
+    if (!this.meta('remindedUpTo')) this.setMeta('remindedUpTo', String(now));
+    let next = null;
+    for (const r of this.reminderRows()) {
+      const t = SyncRoom.nextAt(r, Math.max(last, now - MIN));
+      if (t && (next === null || t < next)) next = t;
+    }
+    if (next === null) return;
+    const cur = await this.ctx.storage.getAlarm();
+    if (cur === null || cur > next || cur < now - MIN) await this.ctx.storage.setAlarm(next);
+  }
+
+  async alarm() {
+    this.init();
+    const now = Date.now();
+    const from = Number(this.meta('remindedUpTo')) || now - MIN;
+    const due = this.reminderRows().filter((r) => { const t = SyncRoom.nextAt(r, from); return t && t <= now + 1000; });
+    this.setMeta('remindedUpTo', String(now + 1000));
+    if (due.length) {
+      this.setMeta('lastReminders', JSON.stringify({ at: now, items: due.map((r) => ({ id: r.id, title: r.title, body: r.body })) }));
+      for (const s of this.ctx.getWebSockets()) { try { s.send(JSON.stringify({ t: 'remind', items: due.map((r) => r.id) })); } catch {} }
+      await this.sendPush(null, 'syncpad-remind').catch(() => {});
+    }
+    await this.scheduleReminders(now + 1000);
   }
 
   /** What a notification should say: newest drops from other devices since `since` */
@@ -475,7 +539,13 @@ export class SyncRoom extends DurableObject {
         kind: r.kind,
         from: names.get(r.device) || 'another device',
         text: r.kind === 'file' ? r.data.name : String(r.data.text || '').slice(0, 140)
-      }))
+      })),
+      reminders: (() => {
+        try {
+          const lr = JSON.parse(this.meta('lastReminders') || 'null');
+          return lr && Date.now() - lr.at < 3 * MIN ? lr.items : [];
+        } catch { return []; }
+      })()
     };
   }
 
@@ -535,6 +605,7 @@ export class SyncRoom extends DurableObject {
       if (this.cleanup(now)) changed = true;
     }
     if (!ws) this.touchDevice(device, clean(body.name, 40), false);
+    if (changed && ops.some((o) => o && o.kind === 'note')) await this.scheduleReminders(now);
     if (this.bytes !== bytesBefore || this.globalTotal === null) await this.reportUsage();
 
     const rows = this.sql.exec('SELECT * FROM items WHERE seq > ? ORDER BY seq LIMIT 500', since).toArray();
@@ -613,6 +684,13 @@ export class SyncRoom extends DurableObject {
   /** Permanently deleting something also removes its file bytes, attachments and history */
   cascade(id, kind, now) {
     if (kind === 'file') this.freeChunks(id);
+    if (kind === 'note' || kind === 'file') {
+      // big notes and document text indexes are stored in pieces ("parts")
+      const parts = this.sql
+        .exec(`SELECT id FROM items WHERE kind = 'part' AND deleted = 0 AND json_extract(data, '$.of') = ?`, id)
+        .toArray();
+      for (const k of parts) this.tombstone(k.id, 'part', now);
+    }
     if (kind === 'note') {
       const kids = this.sql
         .exec(`SELECT id FROM items WHERE kind = 'file' AND deleted = 0 AND json_extract(data, '$.parent') = ?`, id)
@@ -906,6 +984,17 @@ function sanitize(kind, d) {
     if (trashed) out.trashed = trashed;
     if (typeof d.thumb === 'string' && d.thumb.startsWith('data:image/') && d.thumb.length < 200000) out.thumb = d.thumb;
     if (Number.isFinite(d.w) && Number.isFinite(d.h)) { out.w = Math.floor(d.w); out.h = Math.floor(d.h); }
+    if (Number.isFinite(d.pos)) out.pos = Number(d.pos);
+    if (Number.isFinite(d.ft) && d.ft >= 0 && d.ft <= 200) out.ft = Math.floor(d.ft); // number of text-index parts
+    if (Number.isFinite(d.fx) && d.fx >= 0 && d.fx <= 100) out.fx = Math.floor(d.fx); // text-index version
+    if (Number.isFinite(d.pages) && d.pages > 0) out.pages = Math.floor(d.pages);
+    return out;
+  }
+  if (kind === 'part') {
+    if (!d.of || !ID_RE.test(d.of)) return null;
+    const out = { of: d.of, i: Math.max(0, Math.floor(Number(d.i) || 0)) };
+    if (typeof d.html === 'string') out.html = d.html;
+    if (typeof d.text === 'string') out.text = d.text;
     return out;
   }
   const out = { ...d };

@@ -13,7 +13,7 @@ A.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.
 await A.goto(BASE + '/');
 await A.waitForSelector('.status-chip[data-state="online"]', { timeout: 15000 });
 await A.click('.tab[data-tab="notes"]');
-await A.click('#btn-new-canvas');
+await A.click('#btn-new-more'); await A.click('.menu >> text=New canvas');
 await A.click('[data-cv="shapes"]'); await A.click('.cv-pop [data-k="star"]');
 await A.setInputFiles('.cv-file', [{ name: 'p.png', mimeType: 'image/png', buffer: fs.readFileSync(new URL('../public/icons/icon-512.png', import.meta.url)) }]);
 await A.waitForSelector('.cv-obj.cv-img');

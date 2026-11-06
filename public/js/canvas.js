@@ -270,10 +270,11 @@ export async function fromHtml(html, { imageSize }) {
 /* ───────────── the editor ───────────── */
 
 export class NoteCanvas {
-  constructor({ host, bar, fileSrc, upload, sanitize, menu, onChange, cleanText, onOpen, onExport, toast }) {
-    Object.assign(this, { host, bar, fileSrc, upload, sanitize, menu, onChange, cleanText, onOpen, onExport, toast });
+  constructor({ host, bar, fileSrc, upload, sanitize, menu, onChange, cleanText, onOpen, onExport, toast, onMarkup }) {
+    Object.assign(this, { host, bar, fileSrc, upload, sanitize, menu, onChange, cleanText, onOpen, onExport, toast, onMarkup });
     this.items = [];
     this.sel = null;
+    this.multi = new Set(); // several things selected at once
     this.editing = null;
     this.tool = null; // 'pen' or null
     this.pen = { stroke: '#1c7ed6', sw: 4 };
@@ -282,13 +283,14 @@ export class NoteCanvas {
     this.clip = null;
     this.zoom = (() => { try { return Number(localStorage.getItem('sp-cvzoom')) || 1; } catch { return 1; } })();
     host.innerHTML = `<div class="cv-scroll"><div class="cv-stage"><div class="cv-world" tabindex="0" aria-label="Canvas">
-      <div class="cv-guides"></div><div class="cv-sel" hidden></div></div></div></div>
+      <div class="cv-guides"></div><div class="cv-multi" hidden></div><div class="cv-sel" hidden></div></div></div></div>
       <input type="file" accept="image/*" multiple hidden class="cv-file">`;
     this.scroll = host.querySelector('.cv-scroll');
     this.stage = host.querySelector('.cv-stage');
     this.world = host.querySelector('.cv-world');
     this.guides = host.querySelector('.cv-guides');
     this.frame = host.querySelector('.cv-sel');
+    this.mframe = host.querySelector('.cv-multi');
     this.fileInput = host.querySelector('.cv-file');
     this.fileInput.addEventListener('change', () => { const f = [...this.fileInput.files]; this.fileInput.value = ''; if (f.length) this.addFiles(f); });
     this.buildBar();
@@ -331,6 +333,7 @@ export class NoteCanvas {
     this.items = JSON.parse(JSON.stringify((data && data.items) || []));
     if (!keepSel) { this.undoStack = []; this.redoStack = []; }
     this.sel = sel && this.items.some((o) => o.id === sel) ? sel : null;
+    this.multi = new Set();
     this.renderAll();
   }
   data() { return { v: 1, items: JSON.parse(JSON.stringify(this.items)), ...(this.page ? { page: { ...this.page } } : {}) }; }
@@ -441,6 +444,7 @@ export class NoteCanvas {
   }
 
   renderSel() {
+    this.renderMulti();
     const o = this.sel && this.get(this.sel);
     const f = this.frame;
     if (!o) { f.hidden = true; this.world.classList.remove('has-sel'); return; }
@@ -517,8 +521,9 @@ export class NoteCanvas {
     if (o.t === 'line') { o.x1 += dx; o.x2 += dx; o.y1 += dy; o.y2 += dy; } else { o.x += dx; o.y += dy; }
   }
 
-  select(id) {
+  select(id, keepMulti = false) {
     if (this.editing && this.editing !== id) this.stopEdit();
+    if (!keepMulti) this.multi.clear();
     this.sel = id;
     for (const e of this.world.querySelectorAll('.cv-obj.on')) e.classList.remove('on');
     if (id) { const e = this.elOf(id); if (e) e.classList.add('on'); }
@@ -605,17 +610,121 @@ export class NoteCanvas {
       return;
     }
     if (h) { this.dragHandle(e, h.dataset.h); return; }
+    const adding = e.shiftKey || e.ctrlKey || e.metaKey || this.tool === 'select';
     if (objEl) {
       const id = objEl.dataset.id;
       e.preventDefault();
+      if (adding) { this.toggleMulti(id); if (this.multi.size > 1 && this.multi.has(id)) this.dragMulti(e, true, id); return; }
+      if (this.multi.size > 1 && this.multi.has(id)) { this.dragMulti(e, false, id); return; }
       const was = this.sel === id;
       this.select(id);
       this.dragMove(e, id, was);
       return;
     }
     if (this.editing) this.stopEdit();
-    if (this.sel) this.select(null);
+    if (e.pointerType !== 'touch' || this.tool === 'select') { this.marquee(e, adding); return; }
+    if (this.sel || this.multi.size) this.select(null);
     if (e.pointerType === 'touch') this.panScroll(e);
+  }
+
+  /* ───── several things at once ───── */
+  multiIds() { return [...this.multi].filter((id) => this.get(id)); }
+  toggleMulti(id) {
+    if (!this.multi.size && this.sel && this.sel !== id) this.multi.add(this.sel);
+    if (this.multi.has(id)) this.multi.delete(id); else this.multi.add(id);
+    if (this.multi.size === 1) { const only = [...this.multi][0]; this.multi.clear(); this.select(only); return; }
+    if (!this.multi.size) { this.select(null); return; }
+    this.sel = null;
+    for (const e of this.world.querySelectorAll('.cv-obj.on')) e.classList.remove('on');
+    this.renderSel();
+    this.syncBar();
+  }
+  setMulti(ids) {
+    this.multi = new Set(ids);
+    if (this.multi.size === 1) { this.select(ids[0]); return; }
+    this.sel = null;
+    for (const e of this.world.querySelectorAll('.cv-obj.on')) e.classList.remove('on');
+    this.renderSel();
+    this.syncBar();
+  }
+  renderMulti() {
+    const ids = this.multiIds();
+    const m = this.mframe;
+    if (ids.length < 2) { m.hidden = true; m.innerHTML = ''; this.world.classList.remove('has-multi'); return; }
+    this.world.classList.add('has-multi');
+    m.hidden = false;
+    let x1 = Infinity; let y1 = Infinity; let x2 = -Infinity; let y2 = -Infinity;
+    let h = '';
+    for (const id of ids) {
+      const b = extent(this.get(id));
+      x1 = Math.min(x1, b.x); y1 = Math.min(y1, b.y); x2 = Math.max(x2, b.x + b.w); y2 = Math.max(y2, b.y + b.h);
+      h += `<i style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px"></i>`;
+    }
+    m.innerHTML = h + `<b style="left:${x1 - 8}px;top:${y1 - 8}px;width:${x2 - x1 + 16}px;height:${y2 - y1 + 16}px"></b>`;
+  }
+  /** drag a box across empty paper to select everything it touches */
+  marquee(e, adding) {
+    const p0 = this.pt(e);
+    const base = adding ? new Set(this.multi.size ? this.multi : this.sel ? [this.sel] : []) : new Set();
+    let box = null;
+    this.track(e, (ev) => {
+      const p = this.pt(ev);
+      if (!box) {
+        if (Math.hypot(p.x - p0.x, p.y - p0.y) * this.s < 6) return;
+        box = document.createElement('div');
+        box.className = 'cv-marquee';
+        this.world.append(box);
+      }
+      const r = { x: Math.min(p.x, p0.x), y: Math.min(p.y, p0.y), w: Math.abs(p.x - p0.x), h: Math.abs(p.y - p0.y) };
+      Object.assign(box.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
+      const hit = new Set(base);
+      for (const o of this.items) { const b = extent(o); if (b.x < r.x + r.w && b.x + b.w > r.x && b.y < r.y + r.h && b.y + b.h > r.y) hit.add(o.id); }
+      this.multi = hit;
+      this.sel = null;
+      for (const el of this.world.querySelectorAll('.cv-obj.on')) el.classList.remove('on');
+      this.renderSel();
+    }, () => {
+      if (!box) { if (!adding && (this.sel || this.multi.size)) this.select(null); return; }
+      box.remove();
+      const ids = [...this.multi];
+      if (ids.length === 1) this.select(ids[0]);
+      else if (!ids.length) this.select(null);
+      else this.setMulti(ids);
+    });
+  }
+  dragMulti(e, justAdded = false, id = null) {
+    const ids = this.multiIds();
+    const p0 = this.pt(e);
+    const start = ids.map((id) => JSON.stringify(this.get(id)));
+    let moved = false;
+    this.track(e, (ev) => {
+      const p = this.pt(ev);
+      const dx = p.x - p0.x;
+      const dy = p.y - p0.y;
+      if (!moved && Math.hypot(dx, dy) * this.s < 4) return;
+      if (!moved) { moved = true; this.remember(); }
+      ids.forEach((id, k) => {
+        const o = this.get(id);
+        Object.assign(o, JSON.parse(start[k]));
+        this.move(o, dx, dy);
+        const el = this.elOf(id);
+        if (o.t === 'line') fillItem(el, o, this.fileSrc, this.sanitize); else place(el, o);
+      });
+      this.renderMulti();
+    }, () => { if (moved) this.commit(); else if (!justAdded && id) this.select(id); });
+  }
+  selectAll() { if (this.editing) this.stopEdit(); this.setMulti(this.items.map((o) => o.id)); }
+  async markupImg(o) {
+    if (!o || o.t !== 'img' || !this.onMarkup) return;
+    const nu = await this.onMarkup(o.file);
+    if (!nu) return;
+    const cur = this.get(o.id);
+    if (!cur) return;
+    this.remember();
+    cur.file = nu.id;
+    if (nu.w && nu.h) cur.h = Math.round((cur.w * nu.h) / nu.w);
+    this.redraw(cur);
+    this.commit();
   }
   /** one finger on empty paper scrolls the page */
   panScroll(e) {
@@ -649,6 +758,8 @@ export class NoteCanvas {
     const o = this.get(id);
     this.menu(at, [
       ...((o.t === 'img' || o.t === 'file') && this.onOpen ? [{ icon: 'eye', label: 'Open', run: () => this.onOpen(o.file) }] : []),
+      ...(o.t === 'img' && this.onMarkup ? [{ icon: 'pen', label: 'Draw or write on the picture…', run: () => this.markupImg(o) }] : []),
+      { icon: 'select', label: 'Select several…', run: () => { this.setTool('select'); this.toggleMulti(id); } },
       { icon: 'copy', label: 'Duplicate', run: () => this.duplicate() },
       { icon: 'box', label: 'Bring to front', run: () => this.order(1) },
       { icon: 'box', label: 'Send to back', run: () => this.order(-1) },
@@ -882,9 +993,18 @@ export class NoteCanvas {
     else if (mod && k === 'd' && this.sel) this.duplicate();
     else if (mod && k === 'c' && this.sel) { this.clip = JSON.stringify(this.get(this.sel)); try { navigator.clipboard.writeText(this.plainOf(this.get(this.sel))); } catch {} }
     else if (mod && k === 'x' && this.sel) { this.clip = JSON.stringify(this.get(this.sel)); this.remove(); }
-    else if (mod && k === 'a') { /* nothing to select-all yet */ }
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && this.sel) this.remove();
+    else if (mod && k === 'a') this.selectAll();
+    else if (mod && k === 'd' && this.multi.size > 1) this.duplicate();
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && (this.sel || this.multi.size > 1)) this.remove();
     else if (e.key === 'Escape') { if (this.tool) this.setTool(null); else this.select(null); }
+    else if (e.key.startsWith('Arrow') && this.multi.size > 1) {
+      const n = e.shiftKey ? 10 : 1;
+      if (!this.nudging) { this.remember(); this.nudging = true; }
+      for (const id of this.multiIds()) { const o = this.get(id); this.move(o, k === 'arrowleft' ? -n : k === 'arrowright' ? n : 0, k === 'arrowup' ? -n : k === 'arrowdown' ? n : 0); this.redraw(o); }
+      this.renderMulti();
+      clearTimeout(this.nudgeT);
+      this.nudgeT = setTimeout(() => { this.nudging = false; this.commit(); }, 400);
+    }
     else if (e.key === 'Enter' && this.sel && this.get(this.sel).t === 'text') this.startEdit(this.sel);
     else if (e.key.startsWith('Arrow') && this.sel) {
       const o = this.get(this.sel);
@@ -931,6 +1051,16 @@ export class NoteCanvas {
 
   /* ───── actions on the selected item ───── */
   remove() {
+    if (this.multi.size > 1) {
+      const ids = new Set(this.multiIds());
+      this.remember();
+      this.items = this.items.filter((o) => !ids.has(o.id));
+      for (const id of ids) { const e = this.elOf(id); if (e) e.remove(); }
+      this.multi.clear();
+      this.sel = null;
+      this.commit();
+      return;
+    }
     const id = this.sel;
     if (!id) return;
     if (this.editing) this.stopEdit(true);
@@ -942,6 +1072,21 @@ export class NoteCanvas {
     this.commit();
   }
   duplicate() {
+    if (this.multi.size > 1) {
+      this.remember();
+      const made = [];
+      for (const id of this.multiIds()) {
+        const c = JSON.parse(JSON.stringify(this.get(id)));
+        c.id = uid();
+        this.move(c, 30, 30);
+        this.items.push(c);
+        this.world.insertBefore(drawItem(c, this.fileSrc, this.sanitize), this.guides);
+        made.push(c.id);
+      }
+      this.setMulti(made);
+      this.commit();
+      return;
+    }
     const o = this.get(this.sel);
     if (!o) return;
     if (this.editing) this.stopEdit();
@@ -961,6 +1106,19 @@ export class NoteCanvas {
     this.onChange && this.onChange();
   }
   set(props) {
+    if (this.multi.size > 1) {
+      this.remember();
+      for (const id of this.multiIds()) {
+        const q = this.get(id);
+        const p = {};
+        if ('stroke' in props) { if (q.t === 'text') p.color = props.stroke; else if (q.t !== 'img' && q.t !== 'file' && q.t !== 'emoji') p.stroke = props.stroke; }
+        if ('fill' in props) { if (q.t === 'shape') p.fill = props.fill; else if (q.t === 'text') p.bg = props.fill; }
+        Object.assign(q, p);
+        this.redraw(q);
+      }
+      this.commit();
+      return;
+    }
     const o = this.get(this.sel);
     if (!o) {
       if (this.tool === 'pen') { Object.assign(this.pen, props); this.syncBar(); }
@@ -978,8 +1136,10 @@ export class NoteCanvas {
   }
   setTool(t) {
     this.tool = t;
-    if (t) { if (this.editing) this.stopEdit(); this.select(null); }
+    if (t && t !== 'select') { if (this.editing) this.stopEdit(); this.select(null); }
+    if (t === 'select' && this.editing) this.stopEdit();
     this.world.classList.toggle('pen-mode', t === 'pen');
+    this.world.classList.toggle('select-mode', t === 'select');
     this.syncBar();
   }
 
@@ -988,7 +1148,7 @@ export class NoteCanvas {
     const b = (cv, icon, title, extra = '') => `<button class="icon-btn sm" data-cv="${cv}" title="${title}" aria-label="${title}" ${extra}><svg class="ic"><use href="#i-${icon}"/></svg></button>`;
     this.bar.innerHTML =
       `<div class="cv-tools">${b('text', 'text', 'Text box')}${b('shapes', 'square', 'Shapes', 'data-pop')}${b('lines', 'arrow', 'Lines and arrows', 'data-pop')}` +
-      `<button class="icon-btn sm cv-emoji-btn" data-cv="emoji" data-pop title="Emoji" aria-label="Emoji">🙂</button>${b('pic', 'image', 'Picture')}${b('pen', 'pen', 'Draw')}` +
+      `<button class="icon-btn sm cv-emoji-btn" data-cv="emoji" data-pop title="Emoji" aria-label="Emoji">🙂</button>${b('pic', 'image', 'Picture')}${b('pen', 'pen', 'Draw')}${b('select', 'select', 'Select several: tap things or drag a box (Shift+click, Ctrl+A)')}` +
       '<span class="fmt-sep"></span>' + b('undo', 'undo', 'Undo (Ctrl+Z)') + b('redo', 'redo', 'Redo (Ctrl+Y)') + b('page', 'crop', 'Crop the page (cut blank space, any shape)') + b('export', 'download', 'Save as PNG or PDF') + '</div>' +
       '<div class="cv-props"></div>';
     this.props = this.bar.querySelector('.cv-props');
@@ -1013,6 +1173,12 @@ export class NoteCanvas {
         case 'emoji': this.showPop(btn, this.emojiPop()); break;
         case 'pic': this.setTool(null); this.fileInput.click(); break;
         case 'pen': this.setTool(this.tool === 'pen' ? null : 'pen'); break;
+        case 'select': this.setTool(this.tool === 'select' ? null : 'select'); break;
+        case 'selall': this.selectAll(); break;
+        case 'markup': if (o) this.markupImg(o); break;
+        case 'mcolor': this.showPop(btn, this.colorPop(INKS, (v) => this.set({ stroke: v }))); break;
+        case 'mfill': this.showPop(btn, this.colorPop(FILLS, (v) => this.set({ fill: v }))); break;
+        case 'mclear': this.select(null); break;
         case 'undo': this.undo(); break;
         case 'redo': this.redo(); break;
         case 'bold':
@@ -1141,6 +1307,7 @@ export class NoteCanvas {
     const pen = this.tool === 'pen';
     for (const b of this.bar.querySelectorAll('[data-cv="pen"]')) b.setAttribute('aria-pressed', String(pen));
     for (const b of this.bar.querySelectorAll('[data-cv="text"]')) b.setAttribute('aria-pressed', String(this.tool === 'text'));
+    for (const b of this.bar.querySelectorAll('[data-cv="select"]')) b.setAttribute('aria-pressed', String(this.tool === 'select'));
     this.world.classList.toggle('text-mode', this.tool === 'text');
     const und = this.bar.querySelector('[data-cv="undo"]');
     const red = this.bar.querySelector('[data-cv="redo"]');
@@ -1157,7 +1324,12 @@ export class NoteCanvas {
         '<button class="btn btn-soft btn-sm" data-cv="crop-cancel">Cancel</button><button class="btn btn-primary btn-sm" data-cv="crop-done">Done</button>';
       return;
     }
-    if (pen && !o) h = btn('color', sw(this.pen.stroke), 'Pen colour') + btn('width', '<b class="cv-w">' + this.pen.sw + '</b>', 'Pen size');
+    const nm = this.multiIds().length;
+    if (nm > 1) {
+      h = `<span class="cv-count">${nm} selected</span>` + btn('mcolor', sw(''), 'Colour (lines and text)') + btn('mfill', sw('#ffe8a3', 'fill'), 'Fill (shapes)') +
+        '<span class="fmt-sep"></span>' + btn('dup', ic('copy'), 'Duplicate all (Ctrl+D)') + btn('del', ic('trash'), 'Delete all') + btn('mclear', ic('x'), 'Clear selection');
+    } else if (this.tool === 'select' && !o) h = `<span class="cv-count">Tap things or drag a box</span>` + btn('selall', '<b>All</b>', 'Select everything (Ctrl+A)');
+    else if (pen && !o) h = btn('color', sw(this.pen.stroke), 'Pen colour') + btn('width', '<b class="cv-w">' + this.pen.sw + '</b>', 'Pen size');
     else if (o) {
       if (o.t === 'text') {
         h = btn('smaller', '<b>A−</b>', 'Smaller text') + btn('bigger', '<b>A+</b>', 'Bigger text') + btn('bold', ic('bold'), 'Bold', !!o.bold) + btn('italic', ic('italic'), 'Italic', !!o.italic) +
@@ -1166,7 +1338,8 @@ export class NoteCanvas {
       else if (o.t === 'line') h = btn('color', sw(o.stroke), 'Colour') + btn('width', `<b class="cv-w">${o.sw != null ? o.sw : 5}</b>`, 'Thickness') + btn('kind', ic(o.kind === 'line' ? 'line' : 'arrow'), 'Line / arrow type');
       else if (o.t === 'pen') h = btn('color', sw(o.stroke), 'Colour') + btn('width', `<b class="cv-w">${o.sw}</b>`, 'Thickness');
       else if (o.t === 'emoji') h = btn('smaller', '<b>A−</b>', 'Smaller') + btn('bigger', '<b>A+</b>', 'Bigger');
-      else if (o.t === 'img' || o.t === 'file') h = btn('open', ic('eye'), 'Open');
+      else if (o.t === 'img') h = btn('markup', ic('pen'), 'Draw, mark up or add text on the picture') + btn('open', ic('eye'), 'Open');
+      else if (o.t === 'file') h = btn('open', ic('eye'), 'Open');
       h += (h ? '<span class="fmt-sep"></span>' : '') + btn('front', '<b class="cv-lyr">⬆</b>', 'Bring to front') + btn('back', '<b class="cv-lyr">⬇</b>', 'Send to back') + btn('dup', ic('copy'), 'Duplicate (Ctrl+D)') + btn('del', ic('trash'), 'Delete');
     }
     this.props.innerHTML = h ? '<span class="fmt-sep"></span>' + h : '';

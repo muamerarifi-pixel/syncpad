@@ -18,7 +18,8 @@ const png = fs.readFileSync(new URL('../public/icons/icon-512.png', import.meta.
 // quick new note from the Drops screen
 const chipW = await A.$eval('.status-chip', (c) => c.getBoundingClientRect().width);
 if (chipW > 40) throw new Error('status chip still wide ' + chipW);
-await A.click('#btn-quick-note');
+await A.evaluate(() => localStorage.setItem('sp-autocap', '0')); // this check types lowercase on purpose
+await A.click('#btn-new-note');
 await A.waitForSelector('#editor-text:focus');
 await A.keyboard.type('zebra notes');
 await A.keyboard.press('Enter');
@@ -35,10 +36,10 @@ step('Aa: Sentence case → UPPERCASE → lowercase, one click each');
 // font, paper, colour from ⋯
 const pick = async (menu, label) => { await A.click('#btn-note-more'); await A.click(`.menu button:has-text("${menu}")`); await A.click(`.menu button:has-text("${label}")`); };
 await pick('Font…', 'Lora');
-await pick('Paper…', 'Sepia, lined');
+await pick('Paper…', 'Cream, lined');
 await pick('Colour…', 'Blue');
 const look = await A.$eval('#editor', (e) => ({ f: getComputedStyle(e.querySelector('.editor-text')).fontFamily, bg: getComputedStyle(e).backgroundColor, c: e.dataset.color }));
-if (!/Lora/.test(look.f) || look.bg !== 'rgb(244, 236, 216)' || look.c !== 'blue') throw new Error('look ' + JSON.stringify(look));
+if (!/Lora/.test(look.f) || look.bg !== 'rgb(243, 234, 214)' || look.c !== 'blue') throw new Error('look ' + JSON.stringify(look));
 await A.waitForSelector('.note-item[data-color="blue"]');
 await A.waitForFunction(() => document.fonts.check('16px Lora'));
 await A.screenshot({ path: `${OUT}/150-lora-sepia.png` });
@@ -80,7 +81,7 @@ if (await A.$('#editor-text a[data-file]')) throw new Error('chip not removed');
 step('Files in notes: tap to open, move or remove');
 
 // canvas: text tool places text where you click
-await A.click('#btn-new-canvas');
+await A.click('#btn-new-more'); await A.click('.menu >> text=New canvas');
 await A.waitForSelector('#note-canvas:not([hidden]) .cv-world');
 await A.click('[data-cv="text"]');
 const wr = await A.$eval('.cv-world', (w) => { const r = w.getBoundingClientRect(); return { x: r.left, y: r.top, s: r.width / 1000 }; });

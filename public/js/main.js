@@ -16,8 +16,11 @@ import { NoteCanvas, renderStatic as renderCanvasStatic, fallback as canvasFallb
 import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
 import { cycleCase, CASE_LABEL } from './textcase.js';
+import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VERSION } from './search.js';
+import { touchReorder, slot, between } from './reorder.js';
+import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '2.28.3';
+const VERSION = '3.0.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -45,6 +48,8 @@ const ui = {
   layout: (() => { try { return localStorage.getItem('sp-layout') || 'list'; } catch { return 'list'; } })(),
   selecting: false,
   selected: new Set(),
+  nselecting: false,
+  nsel: new Set(),
   busy: false,
   installPrompt: null
 };
@@ -101,12 +106,22 @@ async function boot() {
   if (joinOffer) whenUnlocked(() => offerJoin(joinOffer));
   takeShared(params.shared);
   initLaunchQueue();
+  if (params.note && store.items.get(params.note)) whenUnlocked(() => openNote(params.note));
+  scheduleLocalReminders();
+  setTimeout(indexBacklog, 6000);
+  syncThemeColor();
+  if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
+    // hooks for the automated tests (only on a developer's own machine)
+    window.__test_setRemind = (t) => { const n = openNoteItem(); if (n) setReminder([n], t); };
+    window.__test_pdf = () => { const n = openNoteItem(); if (n) saveNotesPdf([n]); };
+    window.__test_store = store;
+  }
 }
 
 function readParams() {
   const q = new URLSearchParams(location.search);
   const h = new URLSearchParams(location.hash.replace(/^#/, ''));
-  return { join: h.get('join') || q.get('join'), s: q.get('s'), shared: q.has('shared'), removed: q.has('removed') };
+  return { join: h.get('join') || q.get('join'), s: q.get('s'), shared: q.has('shared'), removed: q.has('removed'), note: q.get('note') };
 }
 
 function cleanUrl() {
@@ -230,7 +245,7 @@ function wire() {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isTouch()) { e.preventDefault(); sendText(); }
   });
   el.composer.addEventListener('submit', (e) => { e.preventDefault(); sendText(); });
-  el.btnAttach.addEventListener('click', () => el.fileInput.click());
+  el.btnUpload.addEventListener('click', () => el.fileInput.click());
   el.fileInput.addEventListener('change', () => { sendFiles([...el.fileInput.files]); el.fileInput.value = ''; });
   el.noteFileInput.addEventListener('change', () => { attachToNote([...el.noteFileInput.files]); el.noteFileInput.value = ''; });
 
@@ -258,6 +273,7 @@ function wire() {
     const ids = ui.selecting && ui.selected.has(row.dataset.id) ? [...ui.selected] : [row.dataset.id];
     e.dataTransfer.setData('application/x-syncpad', JSON.stringify(ids));
     e.dataTransfer.effectAllowed = 'move';
+    ui.dragDrop = row.dataset.id;
     el.app.classList.add('dragging-drop');
   });
   el.feedInner.addEventListener('dragend', () => el.app.classList.remove('dragging-drop'));
@@ -280,31 +296,6 @@ function wire() {
     e.stopPropagation();
     try { moveTo(JSON.parse(raw), t.dataset.folderDrop); } catch {}
   });
-  // long-press a drop on a phone to start selecting
-  el.feedInner.addEventListener('pointerdown', (e) => {
-    if (e.pointerType !== 'touch' || ui.selecting) return;
-    const row = e.target.closest('[data-id]');
-    if (!row) return;
-    clearTimeout(ui.lpTimer);
-    const x = e.clientX;
-    const y = e.clientY;
-    ui.lpTimer = setTimeout(() => {
-      ui.suppressClick = true;
-      try { navigator.vibrate && navigator.vibrate(30); } catch {}
-      enterSelect();
-      toggleSelect(row.dataset.id);
-    }, 480);
-    const cancel = (ev) => {
-      if (ev.type === 'pointermove' && Math.hypot(ev.clientX - x, ev.clientY - y) < 10) return;
-      clearTimeout(ui.lpTimer);
-      removeEventListener('pointerup', cancel);
-      removeEventListener('pointermove', cancel);
-      removeEventListener('pointercancel', cancel);
-    };
-    addEventListener('pointerup', cancel);
-    addEventListener('pointermove', cancel);
-    addEventListener('pointercancel', cancel);
-  });
   // right-click / two-finger tap on a touchpad → SyncPad's own menus (Shift + right-click = browser menu)
   addEventListener('pointerdown', (e) => { ui.lastPointer = e.pointerType; }, true);
   // phones: while the keyboard is up, hide the bottom tab bar so it doesn't sit on top of the keyboard
@@ -325,15 +316,45 @@ function wire() {
     const b = e.target.closest('.note-item');
     if (ui.swiped && Date.now() - ui.swiped < 400) return;
     if (ui.blockClick) { ui.blockClick = false; return; }
-    if (b) openNote(b.dataset.id);
+    if (clickBlocked()) return;
+    if (!b) { if (ui.nselecting && !isTouch() && e.target === el.noteList) exitNoteSelect(); return; }
+    const id = b.dataset.id;
+    if (!isTouch() && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+      e.preventDefault();
+      if (!ui.nselecting) enterNoteSelect();
+      if (e.shiftKey && ui.lastNotePicked) {
+        const order = visibleNoteIds();
+        const [x, y] = [order.indexOf(ui.lastNotePicked), order.indexOf(id)].sort((p, q) => p - q);
+        if (x >= 0) { for (const k of order.slice(x, y + 1)) ui.nsel.add(k); renderNotesList(); return; }
+      }
+      toggleNoteSel(id);
+      return;
+    }
+    if (ui.nselecting) { toggleNoteSel(id); return; }
+    openNote(id);
   });
+  el.btnNselect.addEventListener('click', () => (ui.nselecting ? exitNoteSelect() : enterNoteSelect()));
+  el.nselBar.addEventListener('click', (e) => { const b = e.target.closest('[data-nsel]'); if (b) nselAction(b.dataset.nsel, b); });
+  el.btnDsort.addEventListener('click', () => dropSortMenu(el.btnDsort));
+  el.importInput.addEventListener('change', () => { const f = [...el.importInput.files]; el.importInput.value = ''; (async () => { for (const x of f) await importAsNote(x); })(); });
+  el.btnRemind.addEventListener('click', () => { const n = openNoteItem(); if (n) remindMenu(el.btnRemind, [n]); });
+  sync.addEventListener('remind', (e) => { for (const id of e.detail) { const n = store.items.get(id); if (n) showReminder(n); } });
+  if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', (e) => {
+    const m = e.data || {};
+    if (m.t === 'open' && m.url) { const id = new URL(m.url, location.origin).searchParams.get('note'); if (id && store.items.get(id)) whenUnlocked(() => openNote(id)); }
+  });
+  el.editorText.addEventListener('input', autoCapital);
+  el.editorText.addEventListener('beforeinput', () => { if (ui.autoCap) undoAutoCapIfLink(); });
+  el.editorText.addEventListener('input', (e) => { if (e.inputType === 'insertParagraph') autoCapitalPrevLine(); });
   el.tagChips.addEventListener('click', (e) => {
     const c = e.target.closest('.chip');
     if (!c) return;
     ui.tag = ui.tag === c.dataset.tag ? null : c.dataset.tag;
     renderNotesList();
   });
-  for (const b of [el.btnNewNote, el.fabNewNote]) b.addEventListener('click', newNote);
+  el.btnNewNote.addEventListener('click', () => newNote());
+  el.btnNewMore.addEventListener('click', () => newMenu(el.btnNewMore));
+  el.btnNewNote.addEventListener('contextmenu', (e) => { e.preventDefault(); newMenu(el.btnNewMore); });
   el.editorPane.addEventListener('click', (e) => {
     const a = e.target.closest('[data-act]');
     if (!a) return;
@@ -354,11 +375,18 @@ function wire() {
   ui.imgTools = new ImageTools({
     editor: el.editorText,
     onChange: onEditorInput,
-    onView: (im) => { const it = store.items.get(im.dataset.file); if (it) openFile(it); }
+    onView: (im) => { const it = store.items.get(im.dataset.file); if (it) openFile(it); },
+    onMarkup: async (im) => {
+      const r = await markupFile(im.dataset.file);
+      if (!r || !im.isConnected) return;
+      im.dataset.file = r.id;
+      im.src = files.src(r.id);
+      onEditorInput();
+      ui.imgTools.select(im);
+    },
+    toast: (m) => toast(m)
   });
-  el.btnNewCanvas.addEventListener('click', () => newNote({ canvas: true }));
   el.btnToggleList.addEventListener('click', () => toggleNotesList());
-  el.btnQuickNote.addEventListener('click', () => newNote());
   el.btnNotesView.addEventListener('click', () => notesViewMenu(el.btnNotesView));
   el.nfolderChips.addEventListener('click', onFolderChipClick);
   el.nfolderChips.addEventListener('contextmenu', onFolderChipContext);
@@ -379,10 +407,11 @@ function wire() {
     if (!b) return;
     e.dataTransfer.setData('application/x-syncpad-note', b.dataset.id);
     e.dataTransfer.effectAllowed = 'move';
+    ui.dragNote = b.dataset.id;
     el.app.classList.add('dragging-note');
   });
   el.noteList.addEventListener('dragend', () => el.app.classList.remove('dragging-note'));
-  setupNoteLongPress();
+  setupArranging();
   setupTabSwipe();
   fitToKeyboard();
   setupPasteChip();
@@ -488,16 +517,30 @@ function wire() {
   // viewer
   el.viewerDownload.addEventListener('click', () => ui.viewing && files.download(ui.viewing));
   el.viewerShare.addEventListener('click', () => ui.viewing && files.share(ui.viewing).catch(() => {}));
-  el.viewerMarkup.addEventListener('click', () => {
+  ui.markupBtnHtml = el.viewerMarkup.innerHTML;
+  el.viewerMarkup.addEventListener('click', async () => {
     const it = ui.viewing;
     if (!it) return;
+    if (ui.epubOpen === it) {
+      let blob = null;
+      try { blob = await files.blobOf(it); } catch {}
+      if (!blob) return;
+      el.dlgViewer.close();
+      importAsNote(new File([blob], it.data.name, { type: 'application/epub+zip' }));
+      return;
+    }
     if (canEditDoc(it)) openDocEdit(it);
     else if (canEditPdf(it)) (ui.docSource ? editDocument(it, { kind: 'html', html: ui.docSource }) : openPdfEdit(it));
     else openMarkup(it);
   });
-  el.btnNewDoc.addEventListener('click', newDocument);
   el.dlgViewer.addEventListener('close', () => {
     if (ui.zoom) { ui.zoom.destroy(); ui.zoom = null; }
+    if (ui.epubOpen) {
+      ui.epubOpen = null;
+      for (const u of ui.epubUrls || []) URL.revokeObjectURL(u);
+      ui.epubUrls = null;
+      el.viewerMarkup.innerHTML = ui.markupBtnHtml;
+    }
     el.viewerBody.innerHTML = '';
     el.viewerBody.classList.remove('is-zoom', 'is-docv');
     ui.viewing = null;
@@ -633,6 +676,16 @@ function wire() {
       el.search.select();
     } else if (e.key === 'Escape' && !el.menu.hidden) {
       closeMenu();
+    } else if (e.key === 'Escape' && ui.nselecting && ui.tab === 'notes' && !$('dialog[open]')) {
+      exitNoteSelect();
+    } else if (e.altKey && !mod && e.key.toLowerCase() === 'n' && !$('dialog[open]')) {
+      e.preventDefault();
+      newNote();
+    } else if (ui.tab === 'notes' && mod && e.key.toLowerCase() === 'a' && !$('dialog[open]') && !(e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]'))) {
+      e.preventDefault();
+      if (!ui.nselecting) enterNoteSelect();
+      ui.nsel = new Set(visibleNoteIds());
+      renderNotesList();
     } else if (e.key === 'Escape' && ui.selecting && !$('dialog[open]')) {
       exitSelect();
     } else if (ui.tab === 'drops' && !$('dialog[open]') && !(e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]'))) {
@@ -733,6 +786,10 @@ function onStoreChange({ ids, remote }) {
       }
     }
     if (ui.noteId && ids.includes(ui.noteId)) renderEditor(false);
+    else if (ui.noteId && ids.some((id) => { const it = store.items.get(id); return it && it.kind === 'part' && it.data.of === ui.noteId; })) {
+      const n = openNoteItem();
+      if (n && partsReady(n) && !ui.dirty) renderEditor(true);
+    }
   } else {
     for (const id of ids) ui.known.add(id);
   }
@@ -740,6 +797,8 @@ function onStoreChange({ ids, remote }) {
   const drops = kinds.some((it) => !it || isDrop(it) || it.kind === 'folder');
   const notes = kinds.some((it) => !it || it.kind === 'note');
   scheduleRender(drops, notes);
+  if (notes) { clearTimeout(ui.remindSchedT); ui.remindSchedT = setTimeout(scheduleLocalReminders, 300); }
+  if (kinds.some((it) => it && it.kind === 'file')) { clearTimeout(ui.indexT); ui.indexT = setTimeout(indexBacklog, 4000); }
 }
 
 function setTab(tab) {
@@ -753,6 +812,7 @@ function setTab(tab) {
   } else {
     renderNotesList(); // the list (or grid) first; a note opens only when you pick one
   }
+  renderNoteSelectBar();
 }
 function renderTabs() {
   for (const b of $$('[data-tab]')) if (b.tagName === 'BUTTON') b.setAttribute('aria-selected', String(b.dataset.tab === ui.tab));
@@ -821,8 +881,11 @@ function folderOf(it) {
 function currentFolder() {
   return ui.dloc.startsWith('f:') && store.items.get(ui.dloc.slice(2)) ? ui.dloc.slice(2) : null;
 }
+const dropOrder = () => lsGet('sp-dsort', 'new');
+const posOf = (i) => (Number.isFinite(i.data.pos) ? i.data.pos : i.created);
 function dropItems() {
-  return store.list().filter((i) => isDrop(i) && !i.data.trashed).sort((a, b) => b.created - a.created);
+  const custom = dropOrder() === 'custom';
+  return store.list().filter((i) => isDrop(i) && !i.data.trashed).sort(custom ? (a, b) => posOf(b) - posOf(a) : (a, b) => b.created - a.created);
 }
 /** Home shows only drops that aren't in a folder; a folder shows only its own drops */
 function inLocation(it, loc = ui.dloc) {
@@ -835,12 +898,27 @@ function ofType(it, type = ui.dtype) {
   return dropType(it) === type;
 }
 function visibleDrops(all = dropItems()) {
-  const q = ui.query.toLowerCase();
-  if (q) {
-    // search looks everywhere, folders included
-    return all.filter((i) => ofType(i) && [i.data.text, i.data.name, i.data.link && i.data.link.title].some((s) => s && s.toLowerCase().includes(q)));
+  const ts = terms(ui.query);
+  if (ts.length) {
+    // search looks everywhere, folders included, and inside documents (PDF, Word, ePUB…)
+    return all.filter((i) => ofType(i) && dropMatches(i, ts));
   }
   return all.filter((i) => inLocation(i) && ofType(i));
+}
+function dropFields(i) {
+  const l = i.data.link || {};
+  const f = folderOf(i);
+  return [i.data.text, i.data.name, l.title, l.site, l.desc || l.description, f && f.data.name, i.kind === 'file' ? extOf(i.data.name) : ''];
+}
+function dropMatches(i, ts) {
+  if (matches(ts, ...dropFields(i))) return true;
+  return i.kind === 'file' && i.data.ft > 0 && matches(ts, docText(i.id));
+}
+/** the searchable text of a document (stored in pieces next to the file) */
+function docText(id) {
+  const ps = [];
+  for (let k = 0; k < 200; k++) { const p = store.items.get(`${id.slice(0, 50)}_t${k}`); if (!p) break; ps.push(p.data.text || ''); }
+  return ps.join('');
 }
 function viewTitle() {
   if (ui.query) return 'Search results';
@@ -931,13 +1009,14 @@ function renderDrops() {
   const seen = new Set();
   let day = '';
   let group = null;
+  const custom = dropOrder() === 'custom' && !ui.query;
   for (const it of list) {
-    const d = dayLabel(it.created);
+    const d = custom ? 'My order' : dayLabel(it.created);
     if (d !== day) {
       day = d;
       const h = document.createElement('div');
-      h.className = 'day';
-      h.textContent = d;
+      h.className = 'day' + (custom ? ' day-custom' : '');
+      h.textContent = custom ? '' : d;
       group = document.createElement('div');
       group.className = ui.layout === 'grid' ? 'tile-grid' : 'row-group';
       nodes.push(h, group);
@@ -981,7 +1060,7 @@ function cardNode(it) {
   const f = folderOf(it);
   const sig = [ui.namesVer || 0, ui.layout, ui.selecting ? 1 : 0, ui.selected.has(it.id) ? 1 : 0, f ? f.data.name : '', ui.dloc,
     it.kind === 'file' && files.isOffline(it.id) ? 'off' : '', it.rev, it.updated, it.data.keep ? 1 : 0,
-    prog ? prog.state + (prog.err || '') : '', ui.expanded.has(it.id) ? 1 : 0].join('|');
+    prog ? prog.state + (prog.err || '') : '', ui.expanded.has(it.id) ? 1 : 0, ui.query].join('|');
   const c = cards.get(it.id);
   if (c && c.sig === sig) {
     c.node.classList.toggle('fresh', ui.fresh.has(it.id));
@@ -1064,6 +1143,7 @@ function rowHTML(it, prog) {
         ? `<div class="ri-text">${linkify(it.data.text || '')}</div>`
         : `<div class="ri-title${isText ? ' is-text' : ''}" draggable="${dr}" title="${esc(dropTitle(it).slice(0, 300))}">${esc(dropTitle(it).slice(0, 400))}</div>`}
       <div class="ri-meta">${metaParts(it, prog)}</div>
+      ${hitHTML(it)}
       ${prog && prog.state !== 'err' ? `<div class="progress"><span style="width:${pct(prog)}%"></span></div>` : ''}
     </div>
     <div class="ri-actions">${primaryAction(it, prog)}<button class="icon-btn" data-act="menu" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button></div>
@@ -1081,11 +1161,23 @@ function tileHTML(it, prog) {
     <button class="tile-more icon-btn sm" data-act="menu" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button>
     <div class="tile-name" title="${esc(dropTitle(it).slice(0, 300))}">${esc(dropTitle(it).slice(0, 120))}</div>
     <div class="tile-meta">${it.kind === 'file' && !prog ? esc(fmtBytes(it.data.size)) + ' · ' : ''}${clock(it.created)}</div>
+    ${hitHTML(it)}
     ${prog && prog.state !== 'err' ? `<div class="progress"><span style="width:${pct(prog)}%"></span></div>` : ''}
   </article>`;
 }
 
 const pct = (p) => (p.total ? Math.min(100, Math.floor((p.sent / p.total) * 100)) : 0);
+
+/** search: why this drop matched — a highlighted line from inside the document, with its page */
+function hitHTML(it) {
+  const ts = terms(ui.query);
+  if (!ts.length || it.kind !== 'file' || !(it.data.ft > 0) || matches(ts, ...dropFields(it))) return '';
+  const t = docText(it.id);
+  const sn = snippet(t, ts, 150);
+  if (!sn) return '';
+  const pg = pageOf(t, ts);
+  return `<div class="hit" data-act="open-hit" data-page="${pg}">${pg ? `<b>p. ${pg}</b> ` : ''}${sn}</div>`;
+}
 
 function updateProgress(id) {
   const c = cards.get(id);
@@ -1143,6 +1235,9 @@ async function onFeedClick(e) {
     if (it.kind === 'file') openFile(it);
     else if (singleUrl(it.data.text || '')) window.open(singleUrl(it.data.text), '_blank', 'noopener');
     else openTextViewer(it);
+  } else if (act === 'open-hit') {
+    ui.openPage = Number(a.dataset.page) || 0;
+    openFile(it);
   } else if (act === 'download') {
     files.download(it);
   } else if (act === 'share') {
@@ -1388,7 +1483,8 @@ async function openDocViewer(it, dk) {
   if (!blob) { host.innerHTML = '<div class="dv-empty">Could not load this file. Check your connection.</div>'; return; }
   try {
     const { viewDocument } = await import('./docview.js');
-    const ctl = await viewDocument(host, blob, { kind: dk, onLabel: (t) => { pct.textContent = t; } });
+    const ctl = await viewDocument(host, blob, { kind: dk, page: ui.openPage || 0, onLabel: (t) => { pct.textContent = t; } });
+    ui.openPage = 0;
     if (ui.viewing !== it) { ctl.destroy(); return; }
     ui.zoom = ctl;
     ui.docSource = ctl.source || null;
@@ -1562,6 +1658,9 @@ function noteItemMenu(b, n, at) {
     { icon: 'copy', label: 'Copy text', run: async () => { await copyText(noteText(n)); toast('Copied'); } },
     { icon: 'folder', label: 'Move to folder…', run: () => folderPick(n, null, at) },
     { icon: 'marker', label: 'Colour…', run: () => colorPick(n, null, at) },
+    { icon: 'bell', label: n.data.remind ? `Reminder: ${remindLabel(n)}…` : 'Remind me…', run: () => remindMenu(null, [n]) },
+    { icon: 'download', label: 'Save as PDF', run: () => saveNotesPdf([n]) },
+    { icon: 'select', label: 'Select', run: () => enterNoteSelect(n.id) },
     { icon: 'archive', label: n.data.archived ? 'Unarchive' : 'Archive', run: () => archiveNote(n, !n.data.archived) },
     { icon: 'trash', label: 'Move to Trash', danger: true, run: () => deleteWithUndo(n, 'Note') }
   ], { at });
@@ -1693,6 +1792,14 @@ async function selAction(act, b) {
   }
   if (!ids.length) return;
   if (act === 'move') moveMenu(b, ids);
+  else if (act === 'pin') {
+    const items = ids.map((id) => store.items.get(id)).filter(Boolean);
+    const on = !items.every((x) => x.data.keep);
+    for (const it of items) { it.data = { ...it.data, keep: on }; await store.save(it); }
+    sync.schedule();
+    exitSelect();
+    toast(on ? `${items.length} pinned — they stay when old drops are cleaned up` : `${items.length} unpinned`);
+  }
   else if (act === 'collage') makeCollage();
   else if (act === 'download') {
     const fl = ids.map((id) => store.items.get(id)).filter((i) => i && i.kind === 'file');
@@ -1970,12 +2077,15 @@ const SENT_BG = 'rgb(1, 2, 4)';
 
 const noteText = (n) => (n.data.text != null ? n.data.text : n.data.body || '');
 function noteHtml(n) {
+  if (n.data.parts) return sanitizeNote(joinParts(n));
   return n.data.html != null ? sanitizeNote(n.data.html) : markdownToHtml(n.data.body || '');
 }
 
 const NOTE_COLORS = [['red', '#e03131', 'Red'], ['orange', '#f08c00', 'Orange'], ['yellow', '#f5b700', 'Yellow'], ['green', '#2f9e44', 'Green'], ['blue', '#1c7ed6', 'Blue'], ['purple', '#7048e8', 'Purple'], ['pink', '#d6336c', 'Pink']];
 const NOTE_FONTS = [['', 'Outfit — modern (default)'], ['lora', 'Lora — elegant serif'], ['caveat', 'Caveat — handwriting'], ['system', 'System font']];
-const NOTE_PAPERS = [['', 'Plain'], ['sepia', 'Sepia paper'], ['sepia-lined', 'Sepia, lined']];
+const NOTE_PAPERS = [['', 'Plain', 'transparent'], ['sepia', 'Cream', '#f3ead6'], ['sepia-lined', 'Cream, lined', '#efe3c6'], ['lined', 'Notebook, lined', '#f4f6fb'],
+  ['grid', 'Squared (graph paper)', '#eef2f8'], ['dots', 'Dotted', '#f3f2ee'], ['recycled', 'Recycled', '#e8e2d5'], ['kraft', 'Kraft brown', '#d8c29d'],
+  ['linen', 'Linen', '#f1ece3'], ['mint', 'Mint', '#e2f2e9'], ['night', 'Night (dark)', '#1b1e25']];
 const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 function noteFolders() { const st = store.items.get('settings'); return (st && st.data.noteFolders) || []; }
@@ -1993,7 +2103,8 @@ function notesSorted(archived = ui.nfolder === 'archive') {
     edited: (a, b) => b.updated - a.updated,
     created: (a, b) => b.created - a.created,
     title: (a, b) => noteTitle(noteText(a)).localeCompare(noteTitle(noteText(b)), undefined, { sensitivity: 'base', numeric: true }),
-    color: (a, b) => ci(a) - ci(b) || b.updated - a.updated
+    color: (a, b) => ci(a) - ci(b) || b.updated - a.updated,
+    custom: (a, b) => posOf(b) - posOf(a)
   }[sort] || ((a, b) => b.updated - a.updated);
   return store
     .list('note')
@@ -2071,7 +2182,8 @@ function notesViewMenu(anchor) {
     it(sort === 'edited', 'Sort: last edited', set('sp-nsort', 'edited')),
     it(sort === 'created', 'Sort: date created', set('sp-nsort', 'created')),
     it(sort === 'title', 'Sort: title A–Z', set('sp-nsort', 'title')),
-    it(sort === 'color', 'Sort: colour', set('sp-nsort', 'color'))
+    it(sort === 'color', 'Sort: colour', set('sp-nsort', 'color')),
+    it(sort === 'custom', 'Sort: my order (hold & drag a note)', set('sp-nsort', 'custom'))
   ]);
 }
 
@@ -2104,7 +2216,7 @@ function setupNoteLongPress() {
 
 /* swipe between Drops and Notes: finger on phones, two-finger trackpad swipe on computers */
 function tabSwipeBlocked(target, dir) {
-  if (ui.presenting || ui.selecting || el.app.classList.contains('editing') || $('dialog[open]') || !el.menu.hidden) return true;
+  if (ui.presenting || ui.selecting || ui.nselecting || document.documentElement.classList.contains('rd-dragging') || el.app.classList.contains('editing') || $('dialog[open]') || !el.menu.hidden) return true;
   if (el.lock && !el.lock.hidden) return true;
   if (!target || !target.closest) return true;
   if (target.closest('input, textarea, select, [contenteditable="true"], .editor-pane, .cv-scroll, .composer, .menu, .toasts, .paste-chip, .img-bar')) return true;
@@ -2332,18 +2444,22 @@ function renderNotesList() {
     (nArch ? `<button class="chip" data-nf="archive" aria-pressed="${ui.nfolder === 'archive'}"><svg class="ic"><use href="#i-archive"/></svg>Archive <b>${nArch}</b></button>` : '');
   const view = lsGet('sp-nview', 'list');
   el.noteList.className = `note-list view-${view} size-${lsGet('sp-nsize', 'm')}${ui.nfolder === 'archive' ? ' in-archive' : ''}`;
-  const q = ui.query.toLowerCase();
-  const list = all.filter((n) => (!ui.nfolder || ui.nfolder === 'archive' || n.data.nf === ui.nfolder) && (!ui.tag || noteTags(noteText(n)).includes(ui.tag)) && (!q || noteText(n).toLowerCase().includes(q)));
+  const ts = terms(ui.query);
+  const q = ts.length;
+  const list = all.filter((n) => (!ui.nfolder || ui.nfolder === 'archive' || n.data.nf === ui.nfolder) && (!ui.tag || noteTags(noteText(n)).includes(ui.tag)) && (!q || noteMatches(n, ts)));
+  el.noteList.classList.toggle('selecting', ui.nselecting);
+  renderNoteSelectBar();
   if (!list.length) {
     el.noteList.innerHTML = `<div class="list-empty">${q || ui.tag ? 'No notes match.' : ui.nfolder ? 'No notes in this folder yet.<br>Drag notes onto the folder, or use ⋯ → Move to folder.' : 'No notes yet.<br>Notes sync to all your devices as you type.'}</div>`;
     return;
   }
   el.noteList.innerHTML = list
-    .map((n) => { const m = noteMedia(n); return `<button class="note-item${m.thumb ? ' has-thumb' : ''}" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}"${n.data.color ? ` data-color="${esc(n.data.color)}"` : ''}${isTouch() ? '' : ' draggable="true"'}>
+    .map((n) => { const m = noteMedia(n); const sel = ui.nselecting && ui.nsel.has(n.id); return `<button class="note-item${m.thumb ? ' has-thumb' : ''}${sel ? ' selected' : ''}" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}"${n.data.color ? ` data-color="${esc(n.data.color)}"` : ''}${isTouch() ? '' : ' draggable="true"'}>
+      ${ui.nselecting ? '<span class="ri-check ni-check" aria-hidden="true"><svg class="ic"><use href="#i-check"/></svg></span>' : ''}
       ${m.thumb ? `<img class="ni-thumb" src="${esc(m.thumb)}" alt="" loading="lazy" draggable="false">` : ''}
       <div class="t">${n.data.pinned ? '<svg class="ic"><use href="#i-pin"/></svg>' : ''}${n.data.canvas ? '<svg class="ic"><use href="#i-canvas"/></svg>' : ''}<span>${esc(noteTitle(noteText(n)))}</span></div>
-      ${(() => { const sn = noteSnippet(noteText(n), 600, '\n'); return sn ? `<div class="s">${esc(sn)}</div>` : ''; })()}
-      <div class="d">${esc(shortDate(n.updated))}${m.imgs ? `<span class="ni-badge" title="${m.imgs} picture${m.imgs > 1 ? 's' : ''}"><svg class="ic"><use href="#i-image"/></svg>${m.imgs > 1 ? m.imgs : ''}</span>` : ''}${m.files ? `<span class="ni-badge" title="${m.files} file${m.files > 1 ? 's' : ''}"><svg class="ic"><use href="#i-clip"/></svg>${m.files > 1 ? m.files : ''}</span>` : ''}${n.data.conflictOf ? ' · <span class="warn">Conflict copy</span>' : ''}</div>
+      ${(() => { const hs = q ? noteHit(n, ts) : ''; if (hs) return `<div class="s hit">${hs}</div>`; const sn = noteSnippet(noteText(n), 600, '\n'); return sn ? `<div class="s">${esc(sn)}</div>` : ''; })()}
+      <div class="d">${esc(shortDate(n.updated))}${n.data.remind ? `<span class="ni-badge ni-remind${remindNext(n) ? '' : ' past'}" title="Reminder"><svg class="ic"><use href="#i-bell"/></svg>${esc(remindLabel(n))}</span>` : ''}${n.data.parts ? `<span class="ni-badge" title="Long note"><svg class="ic"><use href="#i-book"/></svg>${Math.max(1, Math.round((n.data.chars || 0) / 1800))} p.</span>` : ''}${m.imgs ? `<span class="ni-badge" title="${m.imgs} picture${m.imgs > 1 ? 's' : ''}"><svg class="ic"><use href="#i-image"/></svg>${m.imgs > 1 ? m.imgs : ''}</span>` : ''}${m.files ? `<span class="ni-badge" title="${m.files} file${m.files > 1 ? 's' : ''}"><svg class="ic"><use href="#i-clip"/></svg>${m.files > 1 ? m.files : ''}</span>` : ''}${n.data.conflictOf ? ' · <span class="warn">Conflict copy</span>' : ''}</div>
     </button>`; })
     .join('');
   layoutNoteGrid();
@@ -2384,6 +2500,7 @@ function noteMedia(n) {
 const files_src = (id) => { try { return files.src(id); } catch { return null; } };
 
 function openNote(id, { focus = true } = {}) {
+  if (ui.tab !== 'notes') setTab('notes');
   if (ui.noteId && ui.noteId !== id) saveNote.flush();
   ui.noteId = id;
   ui.noteEdits = 0;
@@ -2448,6 +2565,7 @@ function closeEditor(fromLayer = false) {
   renderEditor(true);
   renderNotesList();
   applyNotesList();
+  requestAnimationFrame(syncThemeColor);
 }
 
 function renderEditor(force) {
@@ -2506,6 +2624,12 @@ function renderEditor(force) {
   }
   el.btnPin.setAttribute('aria-pressed', String(!!n.data.pinned));
   el.btnPin.setAttribute('aria-label', n.data.pinned ? 'Unpin note' : 'Pin note');
+  // a long note whose pieces haven't all arrived yet is read-only until they have
+  const waiting = !isCanvas && !partsReady(n);
+  el.editorText.contentEditable = waiting ? 'false' : 'true';
+  el.editor.classList.toggle('parts-waiting', waiting);
+  renderRemindButton();
+  requestAnimationFrame(syncThemeColor);
   el.conflictBar.hidden = !n.data.conflictOf;
   renderFoot();
   renderSaveState();
@@ -2530,6 +2654,11 @@ function updateEmpty() {
 
 function renderFoot() {
   const cn = openNoteItem();
+  if (cn && cn.data.parts && !cn.data.canvas) {
+    clearTimeout(ui.footT);
+    ui.footT = setTimeout(() => { const w = Math.round((el.editorText.textContent || '').length / 6); el.editorFoot.textContent = `≈ ${w.toLocaleString()} words · ≈ ${Math.max(1, Math.round(w / 300))} pages`; }, 900);
+    return;
+  }
   const t = cn && cn.data.canvas ? cn.data.text || '' : el.editorText.innerText || '';
   const words = (t.match(/\S+/g) || []).length;
   el.editorFoot.textContent = `${words} word${words === 1 ? '' : 's'} · ${Math.max(1, Math.round(words / 220))} min read`;
@@ -2554,12 +2683,11 @@ const saveNote = debounce(async () => {
   ui.dirty = false;
   const text = (el.editorText.innerText || '').replace(/ /g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   const exists = store.items.has(n.id);
-  if (exists && html === n.data.html) { renderSaveState(); return; }
+  if (n.data.parts && !partsReady(n)) { renderSaveState(); return; } // never save half of a long note
+  if (exists && html === (n.data.parts ? ui.loadedHtml : n.data.html)) { renderSaveState(); return; }
   if (!exists && !text && !/data-file/.test(html)) { renderSaveState(); return; }
-  const { body, ...rest } = n.data;
-  n.data = { ...rest, html, text };
-  ui.loadedHtml = sanitizeNote(html);
-  await store.save(n);
+  ui.loadedHtml = html.length > BIG ? html : sanitizeNote(html);
+  await writeNoteContent(n, html, text);
   if (ui.newNote && ui.newNote.id === n.id) ui.newNote = null;
   sync.schedule();
   renderSaveState();
@@ -2693,6 +2821,7 @@ function startPresent() {
   if (ui.imgTools) ui.imgTools.select(null);
   for (const t of $$('.toast', el.toasts)) t.remove();
   el.app.classList.add('presenting');
+  requestAnimationFrame(syncThemeColor);
   let bar = $('.present-bar');
   if (!bar) {
     bar = document.createElement('div');
@@ -2733,6 +2862,7 @@ function stopPresent(fromLayer = false) {
   if (!ui.presenting) return;
   ui.presenting = false;
   el.app.classList.remove('presenting', 'idle');
+  requestAnimationFrame(syncThemeColor);
   const bar = $('.present-bar');
   if (bar) bar.hidden = true;
   clearTimeout(ui.presentIdle);
@@ -2764,6 +2894,7 @@ function getCanvas() {
     },
     onOpen: (id) => { const it = store.items.get(id); if (it) openFile(it); else toast('This file is still on its way'); },
     onExport: () => exportCanvas(),
+    onMarkup: (id) => markupFile(id),
     toast: (m) => toast(m, { duration: 1500 }),
     onChange: () => { ui.dirty = true; renderSaveState(); saveNote(); syncNoteUndoRedo(); }
   });
@@ -2931,6 +3062,8 @@ function noteMenu(anchor) {
   if (!n) return;
   const text = () => (n.data.canvas ? n.data.text || '' : el.editorText.innerText || '').trim();
   const m = [
+    { icon: 'download', label: 'Save as PDF (keeps the layout)', run: () => saveNotesPdf([n]) },
+    { icon: 'bell', label: n.data.remind ? `Reminder: ${remindLabel(n)}…` : 'Remind me…', run: () => remindMenu(anchor, [n]) },
     { icon: 'copy', label: 'Copy text', run: async () => { await copyText(text()); toast('Copied'); } },
     { icon: 'drops', label: 'Send as a drop', run: () => { sendClip(text()); toast('Sent to Drops'); } },
     { icon: 'present', label: 'Present (full screen)', run: startPresent },
@@ -2940,6 +3073,7 @@ function noteMenu(anchor) {
     { icon: 'text', label: 'Font…', run: () => fontPick(n, anchor) },
     { icon: 'file', label: 'Paper…', run: () => paperPick(n, anchor) },
     ...(n.data.canvas ? [{ icon: 'download', label: 'Save as PNG or PDF…', run: exportCanvas }] : []),
+    { icon: 'pen', label: 'New note', run: () => newNote() },
     n.data.canvas
       ? { icon: 'note', label: 'Turn into normal note', run: turnIntoPage }
       : { icon: 'canvas', label: 'Turn into canvas', run: turnIntoCanvas },
@@ -3472,6 +3606,7 @@ async function openFile(it) {
   const src = files.src(it.id);
   const textual = (kind === 'doc' || kind === 'code') && d.size <= 1024 * 1024 &&
     (/^text\/|json|xml|javascript/.test(d.type || '') || /^(txt|md|csv|tsv|json|js|mjs|ts|css|html?|py|xml|ya?ml|sh|log|ini|sql|dart|kt|java|c|cpp|h|go|rs|php|rb)$/.test(extOf(d.name)));
+  if (extOf(d.name) === 'epub' || /epub/.test(d.type || '')) { openEpubViewer(it); return; }
   const dk = docKindOf(kind, d.name);
   if (dk) { openDocViewer(it, dk); return; }
   if (!['image', 'video', 'audio', 'pdf'].includes(kind) && !textual) { files.download(it); return; }
@@ -3772,6 +3907,7 @@ function applyTheme() {
     m.content = col;
   }
   updateManifest();
+  requestAnimationFrame(syncThemeColor);
 }
 function renderStorage() {
   const i = sync.info;
@@ -4648,6 +4784,761 @@ function registerSW() {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (had && !reloaded && !ui.dirty && !files.queue.length) { reloaded = true; location.reload(); }
   });
+}
+
+/* ═════════════════════════ 3.0: one “New note” button, selecting & arranging, reminders, long notes ═════════════════════════ */
+
+function newMenu(anchor) {
+  openMenu(anchor, [
+    { icon: 'pen', label: 'New note', run: () => newNote() },
+    { icon: 'task', label: 'New checklist', run: () => { newNote(); setTimeout(() => { makeChecklist(); onEditorInput(); }, 40); } },
+    { icon: 'canvas', label: 'New canvas — draw and place anything', run: () => newNote({ canvas: true }) },
+    { icon: 'upload', label: 'Upload files to all devices', run: () => el.fileInput.click() },
+    { icon: 'doc', label: 'New document (Word or PDF)', run: newDocument },
+    { icon: 'book', label: 'Import e-book or document as a note…', run: () => el.importInput.click() }
+  ]);
+}
+
+/* ───────── selecting several notes ───────── */
+
+const selNotes = () => [...ui.nsel].map((id) => store.items.get(id)).filter((n) => n && n.kind === 'note');
+function enterNoteSelect(id) {
+  if (!ui.nselecting) { ui.nselecting = true; ui.nsel = new Set(); el.app.classList.add('nselecting'); }
+  if (id) ui.nsel.add(id);
+  renderNotesList();
+}
+function exitNoteSelect() {
+  if (!ui.nselecting) return;
+  ui.nselecting = false;
+  ui.nsel.clear();
+  el.app.classList.remove('nselecting');
+  renderNotesList();
+}
+function toggleNoteSel(id) {
+  if (ui.nsel.has(id)) ui.nsel.delete(id); else ui.nsel.add(id);
+  ui.lastNotePicked = id;
+  renderNotesList();
+}
+function renderNoteSelectBar() {
+  const on = ui.nselecting && ui.tab === 'notes';
+  el.nselBar.hidden = !on;
+  el.app.classList.toggle('nsel-on', on);
+  el.btnNselect.textContent = ui.nselecting ? 'Done' : 'Select';
+  const n = ui.nsel.size;
+  el.nselCount.textContent = n ? `${n} selected` : 'Tap notes to select';
+  for (const b of $$('[data-nsel]', el.nselBar)) if (!['cancel', 'all'].includes(b.dataset.nsel)) b.disabled = !n;
+  const ns = selNotes();
+  $('[data-nsel="pin"] .sel-lbl', el.nselBar).textContent = ns.length && ns.every((x) => x.data.pinned) ? 'Unpin' : 'Pin';
+}
+/** change several notes at once (one save each, then one sync) */
+async function patchNotes(list, fn) {
+  for (const n of list) {
+    const p = fn(n);
+    n.data = { ...n.data, ...p };
+    for (const k of Object.keys(p)) if (p[k] == null) delete n.data[k];
+    if (store.items.has(n.id)) await store.save(n);
+  }
+  sync.schedule();
+  renderNotesList();
+  if (ui.noteId && list.some((n) => n.id === ui.noteId)) renderEditor(false);
+}
+function visibleNoteIds() { return $$('.note-item', el.noteList).map((b) => b.dataset.id); }
+async function nselAction(act, b) {
+  if (act === 'cancel') return exitNoteSelect();
+  if (act === 'all') {
+    const v = visibleNoteIds();
+    ui.nsel = new Set(v.every((id) => ui.nsel.has(id)) ? [] : v);
+    renderNotesList();
+    return;
+  }
+  const ns = selNotes();
+  if (!ns.length) return;
+  const many = ns.length === 1 ? 'Note' : `${ns.length} notes`;
+  if (act === 'pin') {
+    const on = !ns.every((x) => x.data.pinned);
+    await patchNotes(ns, () => ({ pinned: on || null }));
+    toast(on ? `${many} pinned to the top` : `${many} unpinned`);
+  } else if (act === 'move') {
+    const fs = noteFolders();
+    pickMenu(b, 'Folder', [['', 'No folder'], ...fs.map((f) => [f.id, f.name]), ['+new', '＋ New folder…']], '', async (v) => {
+      if (v === '+new') { const f = await newNoteFolder(); if (!f) return; v = f.id; }
+      await patchNotes(ns, () => ({ nf: v || null }));
+      const f = noteFolders().find((x) => x.id === v);
+      toast(f ? `${many} moved to “${f.name}”` : `${many} removed from folders`);
+      exitNoteSelect();
+    });
+  } else if (act === 'more') {
+    const arch = ns.every((x) => x.data.archived);
+    openMenu(b, [
+      { icon: 'marker', label: 'Colour…', run: () => pickMenu(b, 'Colour', [['', 'No colour', 'transparent'], ...NOTE_COLORS.map(([v, c, l]) => [v, l, c])], '', (v) => patchNotes(ns, () => ({ color: v || null }))) },
+      { icon: 'file', label: 'Paper…', run: () => pickMenu(b, 'Paper', NOTE_PAPERS, '', (v) => patchNotes(ns, () => ({ paper: v || null }))) },
+      { icon: 'bell', label: 'Remind me…', run: () => remindMenu(b, ns) },
+      { icon: 'archive', label: arch ? 'Unarchive' : 'Archive', run: async () => { await patchNotes(ns, () => ({ archived: arch ? null : true })); toast(arch ? `${many} back in your notes` : `${many} archived`); exitNoteSelect(); } },
+      ...(ns.length > 1 ? [{ icon: 'note', label: `Merge into one note`, run: () => mergeNotes(ns) }] : []),
+      { icon: 'download', label: ns.length > 1 ? 'Save as one PDF' : 'Save as PDF', run: () => saveNotesPdf(ns) },
+      { icon: 'copy', label: 'Copy text', run: async () => { await copyText(ns.map((n) => noteFullText(n)).join('\n\n———\n\n')); toast('Copied'); } },
+      { icon: 'copy', label: 'Duplicate', run: () => duplicateNotes(ns) }
+    ]);
+  } else if (act === 'trash') {
+    const ids = ns.map((n) => n.id);
+    if (ui.noteId && ids.includes(ui.noteId)) closeEditor();
+    await patchNotes(ns, () => ({ trashed: Date.now() }));
+    exitNoteSelect();
+    toast(`${many} moved to Trash`, { action: 'Undo', duration: 6000, onAction: async () => { for (const id of ids) await restoreItem(id); } });
+  }
+}
+async function mergeNotes(ns) {
+  const parts = ns.map((n) => (n.data.canvas ? sanitizeNote(n.data.html || '') : noteHtml(n)));
+  const html = parts.join('<hr>');
+  const now = Date.now();
+  const n = { id: rid(16), kind: 'note', rev: 0, created: now, updated: now, device: me(), data: { html: '', text: '', pinned: false, ...(ns[0].data.nf ? { nf: ns[0].data.nf } : {}) } };
+  await writeNoteContent(n, html, textOf(html));
+  sync.schedule();
+  exitNoteSelect();
+  toast(`Merged ${ns.length} notes into a new note. The originals are unchanged.`, { action: 'Open', onAction: () => openNote(n.id) });
+}
+async function duplicateNotes(ns) {
+  for (const src of ns) {
+    const now = Date.now();
+    const n = { id: rid(16), kind: 'note', rev: 0, created: now, updated: now, device: me(), data: { ...JSON.parse(JSON.stringify(src.data)), pinned: false } };
+    delete n.data.parts; delete n.data.conflictOf; delete n.data.remind; delete n.data.repeat; delete n.data.pos;
+    if (src.data.parts) await writeNoteContent(n, joinParts(src), noteFullText(src)); else await store.save(n);
+  }
+  sync.schedule();
+  exitNoteSelect();
+  toast(ns.length === 1 ? 'Note duplicated' : `${ns.length} notes duplicated`);
+}
+
+/* ───────── arranging notes and drops by hand ───────── */
+
+function blockClicks() { ui.blockClickUntil = Date.now() + 700; }
+const clickBlocked = () => Date.now() < (ui.blockClickUntil || 0);
+
+async function placeNote(id, prevId, nextId) {
+  const n = store.items.get(id);
+  if (!n) return;
+  let a = prevId && store.items.get(prevId);
+  let b = nextId && store.items.get(nextId);
+  // pinned notes always stay on top: dropping among them pins it, below them unpins it
+  const pa = a ? !!a.data.pinned : null;
+  const pb = b ? !!b.data.pinned : null;
+  let pinned = !!n.data.pinned;
+  if (a && b && pa === pb) pinned = pa;
+  else if (!a && b) pinned = pb;
+  else if (a && !b) pinned = pa;
+  if (a && !!a.data.pinned !== pinned) a = null;
+  if (b && !!b.data.pinned !== pinned) b = null;
+  if (a && b && Math.abs(posOf(a) - posOf(b)) < 1e-6) {
+    await renumber(visibleNoteIds().filter((x) => x !== id).map((x) => store.items.get(x)).filter(Boolean));
+  }
+  await patchNotes([n], () => ({ pos: between(a ? posOf(a) : null, b ? posOf(b) : null), pinned: pinned || null }));
+  if (ui.switchedSort) { ui.switchedSort = false; toast('Notes now stay in your own order. Change it with the view button → Sort.'); }
+}
+async function placeDrops(ids, prevId, nextId) {
+  const a = prevId && store.items.get(prevId);
+  const b = nextId && store.items.get(nextId);
+  let hi = a ? posOf(a) : null;
+  const lo = b ? posOf(b) : null;
+  if (hi != null && lo != null && Math.abs(hi - lo) < 1e-6) {
+    await renumber(visibleDrops().filter((x) => !ids.includes(x.id)));
+    hi = posOf(a);
+  }
+  const top = hi == null ? (lo == null ? Date.now() : lo + 60_000 * (ids.length + 1)) : hi;
+  const bottom = lo == null ? top - 60_000 * (ids.length + 1) : lo;
+  for (let k = 0; k < ids.length; k++) {
+    const it = store.items.get(ids[k]);
+    if (!it) continue;
+    it.data = { ...it.data, pos: top - ((top - bottom) * (k + 1)) / (ids.length + 1) };
+    await store.save(it);
+  }
+  sync.schedule();
+  renderDrops();
+  if (ui.switchedSort) { ui.switchedSort = false; toast('Drops now stay in your own order. Change it with the sort button.'); }
+}
+/** give every item in a list its own position (only needed when two positions collide) */
+async function renumber(list) {
+  const top = Date.now();
+  for (let k = 0; k < list.length; k++) { const it = list[k]; it.data = { ...it.data, pos: top - k * 60_000 }; await store.save(it); }
+}
+function dropSortMenu(anchor) {
+  const cur = dropOrder();
+  pickMenu(anchor, 'Sort', [['new', 'Newest first (by day)'], ['custom', 'My order — hold & drag to arrange']], cur, (v) => { lsSet('sp-dsort', v); cards.clear(); renderDrops(); });
+}
+function setupArranging() {
+  // touch: hold a note → it's selected; keep holding and drag → it moves
+  touchReorder(el.noteList, {
+    item: '.note-item',
+    scroller: el.noteList,
+    onHold: (id) => { if (!ui.nselecting) enterNoteSelect(id); else if (!ui.nsel.has(id)) toggleNoteSel(id); },
+    canDrag: () => !ui.query && !ui.tag,
+    onStart: (id) => {
+      ui.nselecting = false;
+      ui.nsel.clear();
+      el.app.classList.remove('nselecting');
+      if (lsGet('sp-nsort', 'edited') !== 'custom') { lsSet('sp-nsort', 'custom'); ui.switchedSort = true; }
+      renderNotesList();
+      return el.noteList.querySelector(`.note-item[data-id="${CSS.escape(id)}"]`);
+    },
+    onDrop: (id, prev, next) => placeNote(id, prev, next),
+    blockClick: blockClicks
+  });
+  touchReorder(el.feedInner, {
+    item: 'article[data-id]',
+    scroller: el.feed,
+    onHold: (id) => { if (!ui.selecting) enterSelect(); if (!ui.selected.has(id)) toggleSelect(id); },
+    canDrag: () => !ui.query,
+    onStart: (id) => {
+      ui.selecting = false;
+      ui.selected.clear();
+      el.app.classList.remove('selecting');
+      renderSelectBar();
+      if (dropOrder() !== 'custom') { lsSet('sp-dsort', 'custom'); ui.switchedSort = true; }
+      cards.clear();
+      renderDrops();
+      return el.feedInner.querySelector(`article[data-id="${CSS.escape(id)}"]`);
+    },
+    onDrop: (id, prev, next) => placeDrops([id], prev, next),
+    blockClick: () => { blockClicks(); ui.suppressClick = true; setTimeout(() => { ui.suppressClick = false; }, 700); }
+  });
+  // mouse: drag a note or drop within its list (a line shows where it lands)
+  const marker = document.createElement('div');
+  marker.className = 'rd-marker';
+  marker.hidden = true;
+  document.body.append(marker);
+  const showMarker = (at) => {
+    if (!at.ref) { marker.hidden = true; return; }
+    const r = at.ref.getBoundingClientRect();
+    const grid = at.ref.parentElement && getComputedStyle(at.ref.parentElement).display === 'grid' && at.ref.parentElement.offsetWidth > r.width * 1.5;
+    marker.hidden = false;
+    marker.classList.toggle('v', !!grid);
+    if (grid) Object.assign(marker.style, { left: (at.side === 'before' ? r.left - 5 : r.right + 3) + 'px', top: r.top + 'px', width: '3px', height: r.height + 'px' });
+    else Object.assign(marker.style, { left: r.left + 'px', top: (at.side === 'before' ? r.top - 5 : r.bottom + 2) + 'px', width: r.width + 'px', height: '3px' });
+  };
+  const hide = () => { marker.hidden = true; };
+  el.noteList.addEventListener('dragover', (e) => {
+    if (![...e.dataTransfer.types].includes('application/x-syncpad-note') || ui.query) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    showMarker(slot($$('.note-item', el.noteList), e.clientX, e.clientY, ui.dragNote && el.noteList.querySelector(`.note-item[data-id="${CSS.escape(ui.dragNote)}"]`)));
+  });
+  el.noteList.addEventListener('dragleave', (e) => { if (!el.noteList.contains(e.relatedTarget)) hide(); });
+  el.noteList.addEventListener('drop', (e) => {
+    const id = e.dataTransfer.getData('application/x-syncpad-note');
+    hide();
+    if (!id || ui.query) return;
+    e.preventDefault();
+    const self = el.noteList.querySelector(`.note-item[data-id="${CSS.escape(id)}"]`);
+    const at = slot($$('.note-item', el.noteList), e.clientX, e.clientY, self);
+    if (!at.ref) return;
+    if (lsGet('sp-nsort', 'edited') !== 'custom') { lsSet('sp-nsort', 'custom'); ui.switchedSort = true; }
+    placeNote(id, at.before && at.before.dataset.id, at.after && at.after.dataset.id);
+  });
+  el.feedInner.addEventListener('dragover', (e) => {
+    if (![...e.dataTransfer.types].includes('application/x-syncpad') || ui.query) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    showMarker(slot($$('article[data-id]', el.feedInner), e.clientX, e.clientY, ui.dragDrop && el.feedInner.querySelector(`article[data-id="${CSS.escape(ui.dragDrop)}"]`)));
+  });
+  el.feedInner.addEventListener('dragleave', (e) => { if (!el.feedInner.contains(e.relatedTarget)) hide(); });
+  el.feedInner.addEventListener('drop', (e) => {
+    const raw = e.dataTransfer.getData('application/x-syncpad');
+    hide();
+    if (!raw || ui.query) return;
+    e.preventDefault();
+    e.stopPropagation();
+    let ids;
+    try { ids = JSON.parse(raw); } catch { return; }
+    const rows = $$('article[data-id]', el.feedInner).filter((r) => !ids.includes(r.dataset.id));
+    const at = slot(rows, e.clientX, e.clientY);
+    if (!at.ref) return;
+    if (dropOrder() !== 'custom') { lsSet('sp-dsort', 'custom'); ui.switchedSort = true; }
+    placeDrops(ids, at.before && at.before.dataset.id, at.after && at.after.dataset.id);
+  });
+  addEventListener('dragend', hide);
+}
+
+/* ───────── reminders ───────── */
+
+const DAYMS = 86_400_000;
+function remindNext(n, after = Date.now()) {
+  const at = Number(n.data.remind);
+  if (!at) return null;
+  if (at > after) return at;
+  const rep = n.data.repeat;
+  if (rep === 'daily' || rep === 'weekly') { const step = (rep === 'daily' ? 1 : 7) * DAYMS; return at + Math.ceil((after - at + 1) / step) * step; }
+  if (rep === 'monthly') { const d = new Date(at); for (let k = 1; k < 1200; k++) { const t = new Date(d); t.setMonth(d.getMonth() + k); if (t.getTime() > after) return t.getTime(); } }
+  return null;
+}
+function fmtWhen(t) {
+  const d = new Date(t);
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(d) - day(now)) / DAYMS);
+  if (diff === 0) return time;
+  if (diff === 1) return 'Tomorrow ' + time;
+  if (diff === -1) return 'Yesterday ' + time;
+  if (diff > 1 && diff < 7) return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
+  return d.toLocaleDateString([], { day: 'numeric', month: 'short' }) + ' ' + time;
+}
+function remindLabel(n) {
+  const t = remindNext(n) || Number(n.data.remind);
+  return fmtWhen(t) + (n.data.repeat ? ' ↻' : '');
+}
+function remindMenu(anchor, notes) {
+  const now = new Date();
+  const at = (h, addDays = 0) => { const d = new Date(); d.setDate(d.getDate() + addDays); d.setHours(h, 0, 0, 0); return d.getTime(); };
+  const inHour = Math.ceil((Date.now() + 3_600_000) / 300_000) * 300_000;
+  const monday = (() => { const d = new Date(); d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7)); d.setHours(8, 0, 0, 0); return d.getTime(); })();
+  const presets = [['In 1 hour', inHour]];
+  if (now.getHours() < 17) presets.push(['This evening', at(18)]);
+  else if (now.getHours() < 20) presets.push(['Tonight', at(21)]);
+  presets.push(['Tomorrow morning', at(8, 1)], ['Next Monday', monday]);
+  const cur = notes.length === 1 && notes[0].data.remind ? notes[0] : null;
+  const local = (t) => { const d = new Date(t - new Date(t).getTimezoneOffset() * 60_000); return d.toISOString().slice(0, 16); };
+  const html = `<div class="rm-head"><svg class="ic"><use href="#i-bell"/></svg><b>Remind me</b>${cur ? `<span class="muted">${esc(remindLabel(cur))}</span>` : ''}</div>` +
+    presets.map(([l, t]) => `<button data-rm="${t}"><svg class="ic"><use href="#i-bell"/></svg><span>${esc(l)}</span><small>${esc(fmtWhen(t))}</small></button>`).join('') +
+    `<div class="rm-pick"><input type="datetime-local" class="rm-when" value="${local(cur ? remindNext(cur) || cur.data.remind : at(9, 1))}" aria-label="Date and time">
+      <select class="rm-rep" aria-label="Repeat">${[['', 'Once'], ['daily', 'Every day'], ['weekly', 'Every week'], ['monthly', 'Every month']].map(([v, l]) => `<option value="${v}"${cur && (cur.data.repeat || '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <button class="btn btn-primary btn-sm" data-rm="pick">Set</button></div>` +
+    (notes.some((n) => n.data.remind) ? '<button data-rm="off" class="danger"><svg class="ic"><use href="#i-x"/></svg><span>Remove reminder</span></button>' : '');
+  openMenu(anchor, null, {
+    content: html,
+    onClick: (b) => {
+      const v = b.dataset.rm;
+      if (!v) return;
+      if (v === 'off') { setReminder(notes, null); return; }
+      if (v === 'pick') {
+        const t = new Date(el.menu.querySelector('.rm-when').value).getTime();
+        if (!Number.isFinite(t)) { toast('Pick a date and time first.'); return; }
+        setReminder(notes, t, el.menu.querySelector('.rm-rep').value);
+        return;
+      }
+      setReminder(notes, Number(v), '');
+    }
+  });
+  el.menu.classList.add('rm-menu');
+  const clear = () => { el.menu.classList.remove('rm-menu'); };
+  setTimeout(() => { const obs = new MutationObserver(() => { if (el.menu.hidden) { clear(); obs.disconnect(); } }); obs.observe(el.menu, { attributes: true, attributeFilter: ['hidden'] }); }, 0);
+}
+async function setReminder(notes, at, repeat = '') {
+  if (ui.noteId && notes.some((n) => n.id === ui.noteId)) await saveNote.flush();
+  const saved = notes.filter((n) => store.items.has(n.id));
+  if (!saved.length) { toast('Write something in the note first.'); return; }
+  if (at && at < Date.now() - 60_000 && !repeat) { toast('That time has already passed.'); return; }
+  await patchNotes(saved, () => (at ? { remind: at, repeat: repeat || null } : { remind: null, repeat: null }));
+  renderRemindButton();
+  scheduleLocalReminders();
+  if (!at) { toast('Reminder removed'); return; }
+  toast(`I’ll remind you ${fmtWhen(remindNext(saved[0]) || at).replace(/^(\d)/, 'at $1')}${repeat ? ' (repeats)' : ''}`);
+  // a reminder needs notifications on this device; ask once
+  if (pushSupported() && !(store.get('push') && Notification.permission === 'granted') && Notification.permission !== 'denied') {
+    try {
+      if ((await Notification.requestPermission()) === 'granted') { await subscribePush(true); toast('Notifications are on — reminders reach this device even when SyncPad is closed.'); }
+    } catch {}
+  }
+}
+function renderRemindButton() {
+  const n = openNoteItem();
+  const on = !!(n && n.data.remind && remindNext(n));
+  el.btnRemind.setAttribute('aria-pressed', String(on));
+  el.btnRemind.title = on ? 'Reminder: ' + remindLabel(n) : 'Remind me about this note';
+}
+/** while SyncPad is open, reminders also fire here (the server sends them to closed devices) */
+function scheduleLocalReminders() {
+  clearTimeout(ui.remindTimer);
+  const now = Date.now();
+  if (!ui.remindFrom) ui.remindFrom = now;
+  let next = null;
+  for (const n of store.list('note')) {
+    if (n.data.trashed || !n.data.remind) continue;
+    const t = remindNext(n, ui.remindFrom);
+    if (t && (next === null || t < next)) next = t;
+  }
+  if (next !== null) ui.remindTimer = setTimeout(fireLocalReminders, Math.max(0, Math.min(next - now, 2 ** 31 - 1)));
+}
+function fireLocalReminders() {
+  const now = Date.now();
+  const from = ui.remindFrom || now;
+  ui.remindFrom = now + 1;
+  for (const n of store.list('note')) {
+    if (n.data.trashed || !n.data.remind) continue;
+    const t = remindNext(n, from - 1);
+    if (t && t <= now + 500) showReminder(n);
+  }
+  scheduleLocalReminders();
+}
+function showReminder(n) {
+  ui.shownReminders ||= new Map();
+  const last = ui.shownReminders.get(n.id) || 0;
+  if (Date.now() - last < 90_000) return;
+  ui.shownReminders.set(n.id, Date.now());
+  const title = noteTitle(noteText(n)) || 'Note';
+  if (document.visibilityState === 'visible') {
+    try { navigator.vibrate && navigator.vibrate([60, 60, 60]); } catch {}
+    toast(`🔔 ${title}`, { action: 'Open', onAction: () => openNote(n.id), duration: 15000 });
+  } else if (!store.get('push') && 'Notification' in window && Notification.permission === 'granted') {
+    navigator.serviceWorker.ready.then((reg) => reg.showNotification('🔔 ' + title, { body: noteSnippet(noteText(n), 140), tag: 'remind-' + n.id, data: { url: '/?note=' + n.id } })).catch(() => {});
+  }
+}
+
+/* ───────── long notes (stored in parts) ───────── */
+
+function joinParts(n) { return (n.data.parts || []).map((id) => { const p = store.items.get(id); return p ? p.data.html || '' : ''; }).join(''); }
+const partsReady = (n) => !n.data.parts || n.data.parts.every((id) => store.items.has(id));
+function noteFullText(n) {
+  if (!n.data.parts) return noteText(n);
+  return n.data.parts.map((id) => { const p = store.items.get(id); return p ? p.data.text || '' : ''; }).join('\n');
+}
+function noteMatches(n, ts) {
+  const f = noteFolders().find((x) => x.id === n.data.nf);
+  return matches(ts, noteText(n), f && f.name) || (!!n.data.parts && matches(ts, noteFullText(n)));
+}
+function noteHit(n, ts) {
+  const t = noteFullText(n);
+  const body = t.slice(noteTitle(t).length);
+  return snippet(body, ts, 170) || '';
+}
+/** Save a note's content; very long notes go into parts so each piece fits the sync limit */
+async function writeNoteContent(n, html, text) {
+  const old = n.data.parts || [];
+  const { body, parts, chars, ...rest } = n.data;
+  if (html.length <= BIG) {
+    n.data = { ...rest, html, text };
+    await store.save(n);
+  } else {
+    const segs = splitHtml(html);
+    const used = new Set();
+    const ids = [];
+    for (let i = 0; i < segs.length; i++) {
+      const id = partId(n.id, segs[i], used);
+      ids.push(id);
+      const ex = store.items.get(id);
+      if (ex && ex.data.html === segs[i] && ex.data.of === n.id && ex.data.i === i) continue;
+      const now = Date.now();
+      const p = ex || { id, kind: 'part', rev: 0, created: now, updated: now, device: me(), data: {} };
+      p.data = { of: n.id, i, html: segs[i], text: textOf(segs[i]) };
+      await store.save(p);
+    }
+    n.data = { ...rest, html: '', text: text.slice(0, 8000), parts: ids, chars: text.length };
+    await store.save(n);
+  }
+  const keep = new Set(n.data.parts || []);
+  for (const id of old) if (!keep.has(id)) { const p = store.items.get(id); if (p) await store.remove(p); }
+}
+
+/* ───────── importing e-books and documents as notes ───────── */
+
+async function importAsNote(file) {
+  const name = file.name || 'Imported';
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  toast(`Importing “${name}”…`, { duration: 8000 });
+  const id = rid(16);
+  let html = '';
+  try {
+    if (ext === 'epub' || /epub/.test(file.type)) {
+      const { readEpub } = await import('./epub.js');
+      const book = await readEpub(new Uint8Array(await file.arrayBuffer()));
+      // pictures become files inside the note
+      const map = new Map();
+      for (const [path, blob] of book.images) {
+        const f = new File([blob], path.split('/').pop() || 'picture.jpg', { type: blob.type });
+        const [it] = await files.add([f], { parent: id });
+        if (it) map.set(path, it.id);
+      }
+      const fix = (h) => h.replace(/<img\b[^>]*\bsrc="([^"]+)"[^>]*>/g, (m, src) => (map.has(src) ? `<img data-file="${map.get(src)}" alt="">` : ''));
+      html = `<h1>${esc(book.title)}</h1>` + (book.author ? `<p><i>${esc(book.author)}</i></p>` : '') +
+        (book.cover && map.has(book.cover) && !book.chapters.some((c) => c.html.includes(book.cover)) ? `<p><img data-file="${map.get(book.cover)}" alt="" data-align="center" style="width:45%"></p>` : '') +
+        book.chapters.map((c) => {
+          const h = fix(c.html);
+          const hasTitle = c.title && /<h[1-3]\b/i.test(h.slice(0, 600));
+          return (c.title && !hasTitle ? `<h2>${esc(c.title)}</h2>` : '') + h;
+        }).join('<hr>');
+    } else if (ext === 'docx') {
+      const M = await import('./docmodel.js');
+      html = M.modelToHtml(M.readDocx(new Uint8Array(await file.arrayBuffer())));
+    } else if (ext === 'md' || ext === 'markdown') {
+      html = markdownToHtml(await file.text());
+    } else if (ext === 'html' || ext === 'htm') {
+      const d = new DOMParser().parseFromString(await file.text(), 'text/html');
+      html = d.body ? d.body.innerHTML : '';
+    } else {
+      html = textToHtml(await file.text());
+    }
+  } catch (err) {
+    toast(`Could not import “${name}”: ${err.message || 'unknown format'}`, { duration: 7000 });
+    return;
+  }
+  html = sanitizeNote(html);
+  const text = textOf(html);
+  if (!text.trim() && !/data-file/.test(html)) { toast('That file has no text to import.'); return; }
+  const now = Date.now();
+  const n = { id, kind: 'note', rev: 0, created: now, updated: now, device: me(), data: { html: '', text: '', pinned: false, ...(ui.nfolder && ui.nfolder !== 'archive' ? { nf: ui.nfolder } : {}) } };
+  await writeNoteContent(n, html, text);
+  sync.schedule();
+  const pages = Math.max(1, Math.round(text.length / 1800));
+  toast(`Imported “${name}” — about ${pages} page${pages === 1 ? '' : 's'}.`);
+  openNote(n.id);
+}
+
+/* ───────── e-book viewer (Drops) ───────── */
+
+async function openEpubViewer(it) {
+  let blob;
+  try { blob = await files.blobOf(it); } catch {}
+  if (!blob) { toast('Could not load this e-book. Check your connection.'); return; }
+  ui.viewing = it;
+  el.viewerTitle.textContent = it.data.name;
+  el.viewerShare.hidden = !navigator.share;
+  el.viewerDownload.hidden = false;
+  el.viewerMarkup.hidden = false;
+  el.viewerMarkup.innerHTML = '<svg class="ic"><use href="#i-note"/></svg><span>Open as note</span>';
+  el.viewerBody.classList.add('is-docv');
+  el.viewerBody.innerHTML = '<div class="dv-loading">Opening…</div>';
+  ui.epubOpen = it;
+  openDialog(el.dlgViewer);
+  try {
+    const { readEpub } = await import('./epub.js');
+    const book = await readEpub(new Uint8Array(await blob.arrayBuffer()));
+    const urls = new Map([...book.images].map(([p, b]) => [p, URL.createObjectURL(b)]));
+    ui.epubUrls = [...urls.values()];
+    const clean = (h) => (window.DOMPurify ? DOMPurify.sanitize(h) : h).replace(/<img\b([^>]*)\bsrc="([^"]+)"/g, (m, pre, src) => (urls.has(src) ? `<img${pre}src="${urls.get(src)}"` : m));
+    const wrap = document.createElement('div');
+    wrap.className = 'dv-scroll epub-scroll';
+    wrap.innerHTML = `<article class="epub-book doc-view"><header><h1>${esc(book.title)}</h1>${book.author ? `<p class="epub-by">${esc(book.author)}</p>` : ''}</header>` +
+      book.chapters.map((c, i) => `<section class="epub-ch" data-i="${i}">${clean(c.html)}</section>`).join('') + '</article>';
+    el.viewerBody.replaceChildren(wrap);
+    let z = Number(lsGet('sp-epub-z', '1')) || 1;
+    const apply = () => { wrap.style.setProperty('--ez', z); lsSet('sp-epub-z', String(z)); };
+    apply();
+    ui.zoom = { zoomBy: (f) => { z = Math.max(0.7, Math.min(2.4, z * (f > 1 ? 1.1 : 1 / 1.1))); apply(); }, fit: () => { z = 1; apply(); }, destroy: () => {} };
+    if (ui.openPage > 1) { const s = wrap.querySelector(`.epub-ch[data-i="${ui.openPage - 1}"]`); if (s) s.scrollIntoView(); }
+    ui.openPage = 0;
+  } catch (err) {
+    el.viewerBody.innerHTML = `<div class="dv-empty">Could not open this e-book (${esc(err.message || 'unknown format')}).</div>`;
+  }
+}
+
+/* ───────── save notes as PDF (keeps the layout: fonts, colours, pictures, paper) ───────── */
+
+async function saveNotesPdf(ns) {
+  const list = ns.filter(Boolean);
+  if (!list.length) return;
+  if (list.length === 1 && list[0].data.canvas) { if (ui.noteId !== list[0].id) openNote(list[0].id); exportCanvas(); return; }
+  toast(list.length > 1 ? `Making a PDF of ${list.length} notes…` : 'Making the PDF…', { duration: 6000 });
+  try {
+    const { notesPdf } = await import('./notepdf.js');
+    const docs = list.map((n) => ({
+      html: n.data.canvas ? sanitizeNote(n.data.html || '') : n.id === ui.noteId && !n.data.parts ? sanitizeNote(el.editorText.innerHTML) : noteHtml(n),
+      font: n.data.font || '',
+      paper: n.data.paper || '',
+      color: n.data.color ? (NOTE_COLORS.find((c) => c[0] === n.data.color) || [])[1] : ''
+    }));
+    const blob = await notesPdf(docs, { fileUrl: (id) => files.src(id) || files.url(id) });
+    const title = noteTitle(noteText(list[0])) || 'Note';
+    const fname = (list.length > 1 ? `${title} + ${list.length - 1} more` : title).replace(/[\\/:*?"<>|]+/g, '').slice(0, 60) + '.pdf';
+    const file = new File([blob], fname, { type: 'application/pdf' });
+    if (isTouch() && navigator.canShare && navigator.canShare({ files: [file] })) {
+      openMenu(null, [
+        { icon: 'download', label: 'Download the PDF', run: () => downloadBlob(blob, fname) },
+        { icon: 'share', label: 'Share the PDF…', run: () => navigator.share({ files: [file], title: fname }).catch(() => {}) },
+        { icon: 'drops', label: 'Send to Drops (all devices)', run: () => { sendFiles([file]); toast('Sent to Drops'); } }
+      ]);
+    } else {
+      downloadBlob(blob, fname);
+      toast('PDF saved', { action: 'Send to Drops', onAction: () => sendFiles([file]) });
+    }
+  } catch (err) {
+    console.error(err);
+    toast('Could not make the PDF: ' + (err.message || 'unknown error'));
+  }
+}
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/* ───────── draw / write on a picture inside a note or a canvas ───────── */
+
+async function markupFile(fileId) {
+  const it = store.items.get(fileId);
+  if (!it) { toast('This picture is still on its way.'); return null; }
+  let blob = null;
+  try { blob = await files.blobOf(it); } catch {}
+  if (!blob) { toast('Could not load this picture. Check your connection.'); return null; }
+  let res;
+  try { res = await markup.open(blob, it.data.type || blob.type, openDialog); } catch { toast('This picture can’t be edited here.'); return null; }
+  if (!res) return null;
+  const n = openNoteItem();
+  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[res.blob.type] || 'png';
+  const name = String(it.data.name || 'picture').replace(/\.[a-z0-9]{2,5}$/i, '') + '.' + ext;
+  const [nu] = await files.add([new File([res.blob], name, { type: res.blob.type })], { parent: (n && n.id) || it.data.parent || null });
+  if (!nu) return null;
+  if (!res.keep) { it.data = { ...it.data, trashed: Date.now() }; await store.save(it); sync.schedule(); }
+  let size = {};
+  try { size = (await imageSize(nu.id)) || {}; } catch {}
+  toast(res.keep ? 'Saved. The original picture is kept in the note’s files.' : 'Picture updated.');
+  return { id: nu.id, ...size };
+}
+
+/* ───────── capital letter at the start of a note and of every new line ───────── */
+
+const BLOCKS = 'p, div, li, h1, h2, h3, h4, h5, h6, blockquote, pre, td, th';
+function lineStartBefore(node, offsetInNode) {
+  // true when nothing but spaces precedes this point on its line
+  if (node.nodeType === 3 && node.data.slice(0, offsetInNode).trim()) return false;
+  let n = node;
+  while (n && n !== el.editorText) {
+    let p = n.previousSibling;
+    while (p) {
+      if (p.nodeName === 'BR') return true;
+      if (p.nodeType === 1 && p.matches(BLOCKS)) return true;
+      if (p.nodeType === 1 && (p.matches('img, a[data-file], .link-card') || (p.textContent || '').trim())) return false;
+      if (p.nodeType === 3 && p.data.trim()) return false;
+      p = p.previousSibling;
+    }
+    n = n.parentNode;
+    if (n && n.nodeType === 1 && n.matches(BLOCKS)) return true;
+  }
+  return true;
+}
+function capitalizeAt(node, i) {
+  const word = (/^\S*/.exec(node.data.slice(i)) || [''])[0];
+  if (/[./@:\\_#0-9]/.test(word.replace(/[.,!?;:]+$/, ''))) return false; // links, e-mails, file names, #tags stay as typed
+  const ch = node.data[i];
+  const up = ch.toLocaleUpperCase();
+  if (up === ch || up.length !== 1) return false;
+  const s = getSelection();
+  const keep = s.rangeCount && s.anchorNode === node ? s.anchorOffset : null;
+  node.data = node.data.slice(0, i) + up + node.data.slice(i + 1);
+  if (keep != null) { const r = document.createRange(); r.setStart(node, keep); r.collapse(true); s.removeAllRanges(); s.addRange(r); }
+  ui.autoCap = { node, i, up, orig: ch };
+  return true;
+}
+/** the capital we just made turned out to start a link or an e-mail (www.…, name@…): put it back */
+function undoAutoCapIfLink() {
+  const ac = ui.autoCap;
+  if (!ac || !ac.node.isConnected || ac.node.data[ac.i] !== ac.up) { ui.autoCap = null; return; }
+  const w = (/^\S*/.exec(ac.node.data.slice(ac.i)) || [''])[0];
+  if (!/[./@:\\_#0-9]/.test(w.replace(/[.,!?;:]+$/, ''))) return;
+  const s = getSelection();
+  const keep = s.rangeCount && s.anchorNode === ac.node ? s.anchorOffset : null;
+  ac.node.data = ac.node.data.slice(0, ac.i) + ac.orig + ac.node.data.slice(ac.i + 1);
+  if (keep != null) { const r = document.createRange(); r.setStart(ac.node, keep); r.collapse(true); s.removeAllRanges(); s.addRange(r); }
+  ui.autoCap = null;
+}
+function autoCapital(e) {
+  if (lsGet('sp-autocap', '1') !== '1' || e.isComposing) return;
+  if (ui.autoCap) undoAutoCapIfLink();
+  const s = getSelection();
+  if (!s.rangeCount || !s.isCollapsed || !el.editorText.contains(s.anchorNode)) return;
+  const node = s.anchorNode;
+  if (node.nodeType !== 3 || (node.parentElement && node.parentElement.closest('pre, code, a, .link-card'))) return;
+  const before = node.data.slice(0, s.anchorOffset);
+  const t = e.inputType;
+  let changed = false;
+  if (t === 'insertText' && e.data && e.data.length === 1 && /\p{Ll}/u.test(e.data)) {
+    // typing on a keyboard: the first letter of a line
+    const i = s.anchorOffset - 1;
+    if (i >= 0 && !before.slice(0, i).trim() && lineStartBefore(node, i)) changed = capitalizeAt(node, i);
+  } else if ((t === 'insertText' && e.data && /^[\s.,!?;:]$/.test(e.data)) || t === 'insertCompositionText' || t === 'insertReplacementText') {
+    // phone keyboards: once the first word of a line is finished
+    const m = /^(\s*)(\p{Ll})\S*[\s.,!?;:]?$/u.exec(before);
+    if (m && lineStartBefore(node, m[1].length) && t !== 'insertCompositionText') changed = capitalizeAt(node, m[1].length);
+  }
+  if (changed) { ui.dirty = true; saveNote(); }
+}
+function autoCapitalPrevLine() {
+  // Enter after a one-word line on a phone keyboard: capitalize that word
+  if (lsGet('sp-autocap', '1') !== '1') return;
+  const s = getSelection();
+  if (!s.rangeCount) return;
+  let b = s.anchorNode && (s.anchorNode.nodeType === 1 ? s.anchorNode : s.anchorNode.parentElement);
+  b = b && b.closest(BLOCKS);
+  const prev = b && b.previousElementSibling;
+  if (!prev || !el.editorText.contains(prev)) return;
+  const w = document.createTreeWalker(prev, NodeFilter.SHOW_TEXT);
+  const first = w.nextNode();
+  if (!first) return;
+  const m = /^(\s*)(\p{Ll})\S*\s*$/u.exec(first.data);
+  if (m && !w.nextNode() && lineStartBefore(first, m[1].length)) capitalizeAt(first, m[1].length);
+}
+
+/* ───────── documents: search inside PDFs, Word, ePUB… (text is indexed once, on one device) ───────── */
+
+async function indexDocText(it, blob) {
+  const kind = indexable(it.data.type, it.data.name);
+  if (!kind) return;
+  const had = files.mem.has(it.id);
+  if (!blob) {
+    const local = had || (await files.cachedBlob(it.id).catch(() => null));
+    if (!local && (it.data.size > 20 * 1024 * 1024 || (navigator.connection && navigator.connection.saveData) || !navigator.onLine)) return;
+    try { blob = local || await files.blobOf(it); } catch { return; }
+    if (!had) files.mem.delete(it.id);
+  }
+  if (!blob) return;
+  let text = '';
+  let pages = 0;
+  try {
+    const r = await extractText(blob, kind);
+    if (typeof r === 'string') text = r; else { text = r.text || ''; pages = r.pages || 0; }
+  } catch (err) { console.warn('index', it.data.name, err); return; }
+  const cur = store.items.get(it.id);
+  if (!cur || cur.data.trashed) return;
+  const CH = 400_000;
+  const n = Math.min(200, Math.ceil(text.length / CH));
+  for (let k = 0; k < n; k++) {
+    const id = `${it.id.slice(0, 50)}_t${k}`;
+    const now = Date.now();
+    const p = store.items.get(id) || { id, kind: 'part', rev: 0, created: now, updated: now, device: me(), data: {} };
+    p.data = { of: it.id, i: k, text: text.slice(k * CH, (k + 1) * CH) };
+    await store.save(p);
+  }
+  cur.data = { ...cur.data, ft: n, fx: INDEX_VERSION, ...(pages ? { pages } : {}) };
+  await store.save(cur);
+  sync.schedule();
+}
+/** quietly index documents that were added before 3.0 (or on devices without this version) */
+function indexBacklog() {
+  if (ui.indexing) return;
+  const todo = store.list('file').filter((it) => !it.data.trashed && !it.data.fx && !files.progress.get(it.id) && indexable(it.data.type, it.data.name) && it.data.size < 60 * 1024 * 1024)
+    .sort((a, b) => b.created - a.created);
+  const it = todo.find((x) => !(ui.indexTried || (ui.indexTried = new Set())).has(x.id));
+  if (!it) return;
+  ui.indexTried.add(it.id);
+  ui.indexing = true;
+  const run = () => indexDocText(it).catch(() => {}).finally(() => { ui.indexing = false; setTimeout(indexBacklog, 1500); });
+  (window.requestIdleCallback || ((f) => setTimeout(f, 800)))(run, { timeout: 4000 });
+}
+
+/* ───────── status bar colour follows what is on top (light, dark, paper) ───────── */
+
+function syncThemeColor() {
+  // the phone's status bar sits right above SyncPad's top bar, so it takes that colour
+  // (or the note's paper while presenting full screen)
+  const src = el.app.classList.contains('presenting') ? el.editor : $('.topbar');
+  const c = solidColor(src) || solidColor(document.body);
+  if (c) for (const m of document.querySelectorAll('meta[name="theme-color"]')) if (m.content !== c) m.content = c;
+}
+/** an element's background as plain #rrggbb (status bars don't understand transparency or color-mix) */
+function solidColor(node) {
+  if (!node) return null;
+  const c = getComputedStyle(node).backgroundColor;
+  if (!c || c === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(c)) return null;
+  const cv = solidColor.cv || (solidColor.cv = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }));
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  g.clearRect(0, 0, 1, 1);
+  g.fillStyle = c;
+  g.fillRect(0, 0, 1, 1);
+  const [r, gg, b, a] = g.getImageData(0, 0, 1, 1).data;
+  if (a < 200) return null;
+  return '#' + [r, gg, b].map((v) => v.toString(16).padStart(2, '0')).join('');
 }
 
 boot().catch((err) => {

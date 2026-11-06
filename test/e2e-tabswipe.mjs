@@ -48,7 +48,7 @@ const swipe = async (x1, x2, y = 420) => {
 };
 await swipe(330, 60);
 if ((await tab(P)) !== 'notes') throw new Error('phone → notes');
-await P.click('#fab-new-note'); await P.keyboard.type('Keep me'); await P.click('#btn-editor-back');
+await P.click('#btn-new-note'); await P.keyboard.type('Keep me'); await P.click('#btn-editor-back');
 await P.waitForSelector('.note-item:has-text("Keep me")');
 const nb = await P.locator('.note-item:has-text("Keep me")').boundingBox();
 await swipe(60, 330, Math.max(nb.y + nb.height + 120, 640)); // right swipe on empty space: back to Drops

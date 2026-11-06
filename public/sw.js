@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v2.28.3';
+const VERSION = 'v3.0.0';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
@@ -20,7 +20,7 @@ const SHELL = [
   '/js/pdfcore.js',
   '/js/docview.js',
   '/js/docmodel.js',
-  '/js/docedit.js', '/js/declutter.js', '/js/canvas.js', '/js/noteimg.js', '/js/cvexport.js', '/js/textcase.js', '/vendor/fonts/outfit-latin-wght-normal.woff2',
+  '/js/docedit.js', '/js/declutter.js', '/js/canvas.js', '/js/noteimg.js', '/js/cvexport.js', '/js/textcase.js', '/js/search.js', '/js/reorder.js', '/js/bignote.js', '/js/epub.js', '/js/notepdf.js', '/vendor/fonts/outfit-latin-wght-normal.woff2',
   '/vendor/doc/fflate.mjs',
   '/js/md.js',
   '/vendor/marked.esm.js',
@@ -215,16 +215,31 @@ async function onPush() {
   let body = 'Something new arrived from another device';
   try {
     const kv = await readKV(['space', 'token', 'device', 'seq', 'pinOn']);
-    if (kv.space && !kv.pinOn) {
+    if (kv.space) {
       const r = await fetch(`/api/s/${kv.space}/latest?k=${encodeURIComponent(kv.token || kv.space)}&d=${kv.device || ''}&since=${kv.seq || 0}`);
       const j = await r.json();
-      if (j.count) {
+      if (j.reminders && j.reminders.length) {
+        // a note reminder: one notification per note, tapping it opens the note
+        for (const n of j.reminders) {
+          await self.registration.showNotification(kv.pinOn ? 'Reminder' : '🔔 ' + n.title, {
+            body: kv.pinOn ? 'Open SyncPad to see your note' : n.body || 'Reminder from SyncPad',
+            tag: 'remind-' + n.id,
+            renotify: true,
+            requireInteraction: true,
+            icon: '/icons/icon-192.png',
+            badge: '/icons/icon-192.png',
+            data: { url: '/?note=' + n.id }
+          });
+        }
+        return;
+      }
+      if (kv.pinOn) {
+        body = 'New drop — open SyncPad to see it';
+      } else if (j.count) {
         const first = j.items[0];
         title = j.count > 1 ? `${j.count} new drops from ${first.from}` : `From ${first.from}`;
         body = j.items.map((i) => (i.kind === 'file' ? `📎 ${i.text}` : i.text)).join('\n');
       }
-    } else if (kv.pinOn) {
-      body = 'New drop — open SyncPad to see it';
     }
   } catch {}
   try { if (self.navigator.setAppBadge) self.navigator.setAppBadge(); } catch {}
@@ -240,9 +255,15 @@ async function onPush() {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
   event.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const w of wins) { if ('focus' in w) return w.focus(); }
-    return self.clients.openWindow('/');
+    for (const w of wins) {
+      if ('focus' in w) {
+        if (url !== '/') w.postMessage({ t: 'open', url });
+        return w.focus();
+      }
+    }
+    return self.clients.openWindow(url);
   })());
 });

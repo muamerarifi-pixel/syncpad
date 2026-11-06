@@ -21,7 +21,7 @@ await P.waitForSelector('#editor-text >> text=and markers');
 await P.click('#btn-editor-back');
 step('Drops box: typed text + send → a new note (toast with Open)');
 await P.click('.tabbar-btn[data-tab="notes"]');
-for (const t of ['Alpha note', 'Beta note', 'Gamma note']) { await P.click('#fab-new-note'); await P.keyboard.type(t); await P.click('#btn-editor-back'); await P.waitForSelector(`.note-item:has-text("${t}")`); }
+for (const t of ['Alpha note', 'Beta note', 'Gamma note']) { await P.click('#btn-new-note'); await P.keyboard.type(t); await P.click('#btn-editor-back'); await P.waitForSelector(`.note-item:has-text("${t}")`); }
 const cdp = await P.context().newCDPSession(P);
 const at = async (name) => { const b = await P.locator(`.note-item:has-text("${name}")`).boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
 const swipe = async (name, dx) => {
@@ -33,37 +33,41 @@ const swipe = async (name, dx) => {
 };
 const tab = () => P.evaluate(() => document.querySelector('.app').dataset.tab);
 
-// press and hold → menu
+// press and hold → the note is selected (3.0); its actions are in the selection bar
 const h = await at('Alpha note');
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [h] });
 await P.waitForTimeout(700);
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-await P.waitForSelector('#menu:not([hidden]) button:has-text("Archive")');
+await P.waitForSelector('#nsel-bar:not([hidden])');
 if (await P.isVisible('#editor-text')) throw new Error('hold opened the note');
-await P.screenshot({ path: `${OUT}/190-hold-menu.png` });
+await P.screenshot({ path: `${OUT}/190-hold-select.png` });
+await P.click('[data-nsel="more"]');
 await P.click('#menu button:has-text("Colour")');
 await P.click('#menu button:has-text("Green")');
 await P.waitForSelector('.note-item[data-color="green"]:has-text("Alpha note")');
-step('Press and hold a note → its menu (Open, Pin, Copy, Folder, Colour, Archive, Trash); the note doesn’t open');
+step('Press and hold a note → it is selected; Colour from the selection bar');
+await P.click('[data-nsel="cancel"]');
 
-// swipe right → Archive
-await swipe('Beta note', 260);
-await P.waitForSelector('.toast >> text=Note archived');
-if ((await tab()) !== 'notes') throw new Error('swipe on a note switched tabs');
+// archive from the selection bar
+await P.click('#btn-nselect');
+await P.click('.note-item:has-text("Beta note")');
+await P.click('[data-nsel="more"]');
+await P.click('#menu button:has-text("Archive")');
+await P.waitForSelector('.toast >> text=archived');
+if ((await tab()) !== 'notes') throw new Error('archiving switched tabs');
 if (await P.isVisible('.note-item:has-text("Beta note")')) throw new Error('not archived');
 await P.click('[data-nf="archive"]');
 await P.waitForSelector('.note-item:has-text("Beta note")');
-await swipe('Beta note', 260); // in Archive: right swipe brings it back
-await P.waitForSelector('.toast >> text=Note back in your notes');
+step('Archive from the selection bar; the Archive chip lists it');
 await P.click('[data-nf="all"]').catch(() => {});
-await P.waitForSelector('.note-item:has-text("Beta note")');
-step('Swipe right → Archive (with Undo); the Archive chip lists it; swiping right there brings it back');
 
-// swipe left → Trash
-await swipe('Gamma note', -260);
+// delete from the selection bar
+await P.click('#btn-nselect');
+await P.click('.note-item:has-text("Gamma note")');
+await P.click('[data-nsel="trash"]');
 await P.waitForSelector('.toast >> text=Undo');
 await P.waitForFunction(() => ![...document.querySelectorAll('.note-item')].some((b) => /Gamma note/.test(b.textContent)));
-step('Swipe left → Trash (with Undo)');
+step('Delete from the selection bar (with Undo)');
 
 if (errors.length) { console.log(errors); throw new Error('page errors'); }
 await browser.close();

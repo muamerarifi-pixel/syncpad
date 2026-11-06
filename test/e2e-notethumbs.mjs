@@ -18,7 +18,7 @@ await A.keyboard.type('Trip photos');
 await A.keyboard.press('Enter');
 await A.setInputFiles('#note-file-input', [{ name: 'a.png', mimeType: 'image/png', buffer: png }, { name: 'b.png', mimeType: 'image/png', buffer: png }, { name: 'list.txt', mimeType: 'text/plain', buffer: Buffer.from('x') }]);
 await A.waitForFunction(() => document.querySelectorAll('#editor-text [data-file]').length === 3);
-await A.click('#btn-new-canvas');
+await A.click('#btn-new-more'); await A.click('.menu >> text=New canvas');
 await A.setInputFiles('.cv-file', [{ name: 'c.png', mimeType: 'image/png', buffer: png }]);
 await A.waitForSelector('.cv-obj.cv-img');
 await A.click('#btn-new-note');

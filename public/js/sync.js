@@ -147,6 +147,8 @@ export class Sync extends EventTarget {
         this.emit('presence');
       } else if (m.t === 'token') {
         this.setToken(m.token);
+      } else if (m.t === 'remind') {
+        this.emit('remind', m.items || []);
       } else if (m.t === 'revoked') {
         this.stop();
         this.emit('revoked');

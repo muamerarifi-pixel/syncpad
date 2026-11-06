@@ -7,6 +7,7 @@
   <title>SyncPad</title>
   <meta name="description" content="Send files, links and notes between all your devices.">
   <meta name="theme-color" content="#ffffff" id="meta-theme-color">
+  <meta name="color-scheme" content="light dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -101,6 +102,10 @@
       <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
       <symbol id="i-rows" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1.2"/><rect x="3" y="10" width="18" height="4" rx="1.2"/><rect x="3" y="16" width="18" height="4" rx="1.2"/></symbol>
       <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3 5h18l-7 8.5V19l-4 2v-7.5z"/></symbol>
+      <symbol id="i-sort" viewBox="0 0 24 24"><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/></symbol>
+      <symbol id="i-columns" viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="16" rx="2"/><rect x="13" y="4" width="8" height="16" rx="2"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></symbol>
+      <symbol id="i-select" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" stroke-dasharray="3 3"/><path d="m9 12 2 2 4-4"/></symbol>
       <symbol id="i-sync" viewBox="0 0 24 24"><path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/></symbol>
     </defs>
   </svg>
@@ -125,7 +130,6 @@
 
       <div class="top-actions">
         <button class="icon-btn only-mobile" id="btn-search" aria-label="Search"><svg class="ic"><use href="#i-search"/></svg></button>
-        <button class="icon-btn" id="btn-quick-note" aria-label="New note" title="New note"><svg class="ic"><use href="#i-note-plus"/></svg></button>
         <button class="status-chip" id="status-chip" aria-label="Devices and sync status">
           <span class="dot"></span><span class="status-text">Connecting…</span>
         </button>
@@ -145,7 +149,9 @@
             <div class="spacer"></div>
             <button class="icon-btn sm" id="btn-folder-more" aria-label="Folder options" title="Folder options" hidden><svg class="ic"><use href="#i-more"/></svg></button>
             <button class="btn btn-sm type-btn" id="btn-type" aria-haspopup="menu"><svg class="ic"><use href="#i-filter"/></svg><span>All types</span></button>
+            <button class="icon-btn sm" id="btn-upload" aria-label="Upload files" title="Upload files to all your devices"><svg class="ic"><use href="#i-upload"/></svg></button>
             <button class="icon-btn sm" id="btn-refresh" aria-label="Refresh" title="Refresh: sync now"><svg class="ic"><use href="#i-refresh"/></svg></button>
+            <button class="icon-btn sm" id="btn-dsort" aria-label="Sort" title="Sort: newest first or your own order" aria-haspopup="menu"><svg class="ic"><use href="#i-sort"/></svg></button>
             <button class="btn btn-sm" id="btn-select">Select</button>
             <div class="seg" id="view-toggle" role="group" aria-label="Layout">
               <button class="seg-btn" data-layout="list" aria-label="List" title="List"><svg class="ic"><use href="#i-rows"/></svg></button>
@@ -158,9 +164,7 @@
             <div class="feed-inner" id="feed-inner"></div>
           </div>
           <form class="composer" id="composer">
-            <button type="button" class="icon-btn composer-attach" id="btn-attach" aria-label="Attach files"><svg class="ic"><use href="#i-clip"/></svg></button>
-            <button type="button" class="icon-btn composer-attach" id="btn-new-doc" aria-label="New document" title="New document (Word or PDF)"><svg class="ic"><use href="#i-doc"/></svg></button>
-            <textarea id="composer-input" rows="1" placeholder="Type, paste or drop anything…" aria-label="Message to your devices" enterkeyhint="send"></textarea>
+            <textarea id="composer-input" rows="1" autocapitalize="sentences" placeholder="Type, paste or drop anything…" aria-label="Message to your devices" enterkeyhint="send"></textarea>
             <button type="submit" class="send-btn" id="btn-send" aria-label="Send" disabled><svg class="ic"><use href="#i-send"/></svg></button>
           </form>
           <div class="select-bar" id="select-bar" hidden>
@@ -169,6 +173,7 @@
             <button class="btn btn-sm" data-sel="all">All</button>
             <div class="spacer"></div>
             <button class="btn btn-sm btn-soft" data-sel="collage" aria-label="Make a collage" hidden><svg class="ic"><use href="#i-grid"/></svg><span class="sel-lbl">Collage</span></button>
+            <button class="btn btn-sm btn-soft" data-sel="pin" aria-label="Pin or unpin"><svg class="ic"><use href="#i-pin"/></svg><span class="sel-lbl">Pin</span></button>
             <button class="btn btn-sm btn-soft" data-sel="move" aria-label="Move to folder"><svg class="ic"><use href="#i-folder"/></svg><span class="sel-lbl">Move</span></button>
             <button class="btn btn-sm btn-soft" data-sel="download" aria-label="Download"><svg class="ic"><use href="#i-download"/></svg><span class="sel-lbl">Download</span></button>
             <button class="btn btn-sm btn-danger-soft" data-sel="trash" aria-label="Move to Trash"><svg class="ic"><use href="#i-trash"/></svg><span class="sel-lbl">Delete</span></button>
@@ -183,8 +188,7 @@
             <h2>Notes</h2>
             <div class="row-btns">
               <button class="icon-btn" id="btn-notes-view" aria-label="View, size and sort" title="View, size and sort"><svg class="ic"><use href="#i-grid"/></svg></button>
-              <button class="btn btn-soft btn-sm" id="btn-new-canvas" title="New canvas: place text, pictures, shapes and arrows anywhere"><svg class="ic"><use href="#i-canvas"/></svg><span>Canvas</span></button>
-              <button class="btn btn-primary btn-sm" id="btn-new-note"><svg class="ic"><use href="#i-plus"/></svg><span>New</span></button>
+              <button class="btn btn-sm" id="btn-nselect">Select</button>
             </div>
           </div>
           <div class="chips nf-chips" id="nfolder-chips"></div>
@@ -203,16 +207,16 @@
               <button class="icon-btn" id="btn-editor-back" aria-label="Back to notes" title="Back to all notes"><svg class="ic"><use href="#i-back"/></svg></button>
               <button class="icon-btn hide-mobile" id="btn-toggle-list" aria-label="Hide the notes list" aria-pressed="false" title="Hide the notes list (Ctrl+\)"><svg class="ic"><use href="#i-sidebar"/></svg></button>
               <span class="save-state" id="save-state"></span>
-              <div class="spacer"></div>
-              <button class="icon-btn" id="btn-note-undo" aria-label="Undo" title="Undo (Ctrl+Z)"><svg class="ic"><use href="#i-undo"/></svg></button>
-              <button class="icon-btn" id="btn-note-redo" aria-label="Redo" title="Redo (Ctrl+Y)"><svg class="ic"><use href="#i-redo"/></svg></button>
+              <div class="eb-scroll" id="eb-scroll">
               <div class="zoom" role="group" aria-label="Text zoom">
                 <button class="zo" id="btn-zoom-out" aria-label="Smaller text" title="Smaller text">A−</button>
                 <button class="zv" id="btn-zoom-reset" title="Reset zoom">100%</button>
                 <button class="zi" id="btn-zoom-in" aria-label="Bigger text" title="Bigger text">A+</button>
               </div>
               <button class="icon-btn" id="btn-present" aria-label="Present full screen" title="Present: full screen, only this note"><svg class="ic"><use href="#i-present"/></svg></button>
+              <button class="icon-btn" id="btn-remind" aria-label="Remind me" title="Remind me about this note" aria-pressed="false"><svg class="ic"><use href="#i-bell"/></svg></button>
               <button class="icon-btn" id="btn-pin" aria-label="Pin note" aria-pressed="false"><svg class="ic"><use href="#i-pin"/></svg></button>
+              </div>
               <button class="icon-btn" id="btn-note-more" aria-label="More note actions"><svg class="ic"><use href="#i-more"/></svg></button>
             </div>
             <div class="conflict-bar" id="conflict-bar" hidden>
@@ -243,15 +247,30 @@
               <button class="icon-btn sm" data-fmt="clear" title="Clear formatting"><svg class="ic"><use href="#i-eraser"/></svg></button>
             </div>
             <div class="cv-bar" id="cv-bar" role="toolbar" aria-label="Canvas tools" hidden></div>
-            <div class="editor-text rt" id="editor-text" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Note text" spellcheck="true"
+            <div class="editor-text rt" id="editor-text" contenteditable="true" autocapitalize="sentences" role="textbox" aria-multiline="true" aria-label="Note text" spellcheck="true"
                  data-placeholder="Start typing… the first line becomes the title."></div>
             <div class="note-canvas" id="note-canvas" hidden></div>
             <div class="editor-foot" id="editor-foot"></div>
           </div>
         </div>
-        <button class="fab only-mobile" id="fab-new-note" aria-label="New note"><svg class="ic"><use href="#i-plus"/></svg></button>
       </section>
     </main>
+
+    <div class="select-bar nsel-bar" id="nsel-bar" hidden>
+      <button class="icon-btn" data-nsel="cancel" aria-label="Cancel selection"><svg class="ic"><use href="#i-x"/></svg></button>
+      <span class="sel-count" id="nsel-count"></span>
+      <button class="btn btn-sm" data-nsel="all">All</button>
+      <div class="spacer"></div>
+      <button class="btn btn-sm btn-soft" data-nsel="pin" aria-label="Pin or unpin"><svg class="ic"><use href="#i-pin"/></svg><span class="sel-lbl">Pin</span></button>
+      <button class="btn btn-sm btn-soft" data-nsel="move" aria-label="Move to folder"><svg class="ic"><use href="#i-folder"/></svg><span class="sel-lbl">Move</span></button>
+      <button class="btn btn-sm btn-soft" data-nsel="more" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg><span class="sel-lbl">More</span></button>
+      <button class="btn btn-sm btn-danger-soft" data-nsel="trash" aria-label="Move to Trash"><svg class="ic"><use href="#i-trash"/></svg><span class="sel-lbl">Delete</span></button>
+    </div>
+
+    <div class="qn" id="quick-new">
+      <button class="qn-main" id="btn-new-note" aria-label="New note" title="New note (Alt+N)"><svg class="ic"><use href="#i-pen"/></svg><span>New note</span></button>
+      <button class="qn-more" id="btn-new-more" aria-label="More: canvas, files, document, e-book" title="More ways to add" aria-haspopup="menu"><svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
 
     <nav class="tabbar" aria-label="Sections">
       <button class="tabbar-btn" data-tab="drops" aria-selected="true"><svg class="ic"><use href="#i-drops"/></svg><span>Drops</span><b class="badge" hidden></b></button>
@@ -261,6 +280,7 @@
 
   <input type="file" id="file-input" multiple hidden>
   <input type="file" id="note-file-input" multiple hidden>
+  <input type="file" id="import-input" accept=".epub,.docx,.txt,.md,.markdown,.html,.htm,application/epub+zip" multiple hidden>
 
   <!-- Drag & drop overlay -->
   <div class="drop-overlay" id="drop-overlay" hidden>

@@ -50,7 +50,7 @@ await A.waitForTimeout(800);
 step(`Normal note: picture floats right with text wrapping, − / + and corner drag resize (${w2.toFixed(0)}%), ✥ moves it into the text`);
 
 // ── 2) a new canvas
-await A.click('#btn-new-canvas');
+await A.click('#btn-new-more'); await A.click('.menu >> text=New canvas');
 await A.waitForSelector('#note-canvas:not([hidden]) .cv-world');
 if (!(await A.isVisible('#cv-bar')) || (await A.isVisible('#fmt-bar'))) throw new Error('canvas toolbar');
 await A.click('[data-cv="text"]'); await A.click('.cv-world', { position: { x: 120, y: 80 } });

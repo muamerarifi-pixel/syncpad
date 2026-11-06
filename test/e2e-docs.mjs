@@ -102,7 +102,7 @@ await A.keyboard.press('Escape');
 step('Word file edited and saved in place; colours kept');
 
 // 7) a new document saved as PDF, then edited again
-await A.click('#btn-new-doc');
+await A.click('#btn-new-more'); await A.click('.menu >> text=New document');
 await A.waitForSelector('#dlg-doc[open] .de-page');
 await A.fill('#de-name', 'Class notes');
 await A.selectOption('#de-style', 'h1');
