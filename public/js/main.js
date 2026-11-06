@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.9';
+const VERSION = '3.0.10';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -5651,7 +5651,8 @@ function ytInfo(url) {
   return { id, start, list: u.searchParams.get('list') || '' };
 }
 /* the player floats above the app: big, or a small corner player that keeps playing while you use SyncPad */
-const yt = { box: null, mode: '' };
+const YT_ORIGIN = 'https://www.youtube-nocookie.com';
+const yt = { box: null, mode: '', state: -1, wanted: false, autoPaused: false, tries: 0, hideAt: 0, showAt: 0, listenT: 0, heard: false };
 function ytMode(mode) {
   const box = yt.box;
   if (!box) return;
@@ -5661,28 +5662,88 @@ function ytMode(mode) {
   box.hidden = mode === '';
   if (mode === 'big' && !wasBig) pushLayer({ key: box, close: () => ytMode('mini') });
   if (mode !== 'big' && wasBig) { ui.fromPop || closeLayer(box); }
-  if (mode === '') box.querySelector('.yt-frame').innerHTML = '';
+  if (mode === '') { clearInterval(yt.listenT); box.querySelector('.yt-frame').innerHTML = ''; yt.wanted = false; yt.autoPaused = false; yt.state = -1; }
 }
+/* talk to YouTube's own player (its official iframe messages), so it can be told to play on */
+const ytFrame = () => (yt.box && yt.box.querySelector('.yt-frame iframe')) || null;
+function ytSend(func, args = []) {
+  const f = ytFrame();
+  if (f && f.contentWindow) f.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args, id: 1, channel: 'widget' }), YT_ORIGIN);
+}
+function ytListen() {
+  clearInterval(yt.listenT);
+  yt.heard = false;
+  let n = 0;
+  yt.listenT = setInterval(() => {
+    const f = ytFrame();
+    if (!f || yt.heard || ++n > 60) { clearInterval(yt.listenT); return; }
+    try { f.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), YT_ORIGIN); } catch {}
+  }, 250);
+}
+addEventListener('message', (e) => {
+  const f = ytFrame();
+  if (!f || e.source !== f.contentWindow || e.origin !== YT_ORIGIN) return;
+  let d;
+  try { d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch { return; }
+  if (!d || !d.event) return;
+  if (!yt.heard) { yt.heard = true; clearInterval(yt.listenT); ytSend('addEventListener', ['onStateChange']); }
+  let st = null;
+  if (d.event === 'onStateChange' && typeof d.info === 'number') st = d.info;
+  else if (d.event === 'infoDelivery' && d.info && typeof d.info.playerState === 'number') st = d.info.playerState;
+  if (st !== null && st !== yt.state) ytState(st);
+});
+function ytState(st) {
+  yt.state = st;
+  if (st === 1 || st === 3) { yt.wanted = true; if (st === 1) yt.autoPaused = false; return; } // playing / loading
+  if (st === 0) { yt.wanted = false; yt.autoPaused = false; return; } // finished
+  if (st !== 2) return;
+  // paused. Right after the app went to the background, that was YouTube, not you: play on.
+  const fresh = document.hidden && (Date.now() - yt.hideAt < 4000 || yt.hideAt <= yt.showAt);
+  if (fresh && yt.wanted) {
+    yt.autoPaused = true;
+    if (yt.tries < 5) { yt.tries++; setTimeout(() => { if (yt.autoPaused) ytSend('playVideo'); }, 120 * yt.tries); }
+  } else { yt.wanted = false; yt.autoPaused = false; } // you paused it
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { yt.hideAt = Date.now(); yt.tries = 0; return; }
+  yt.showAt = Date.now();
+  // back in SyncPad: if YouTube stopped it while you were away, carry on where it was
+  if (yt.mode && yt.autoPaused && yt.wanted) { yt.autoPaused = false; ytSend('playVideo'); }
+});
+/* phones: full screen, then swipe up and the video keeps playing in a small floating window */
+async function ytPopOut() {
+  const f = ytFrame();
+  if (!f) return;
+  try {
+    await f.requestFullscreen({ navigationUI: 'hide' });
+    try { await screen.orientation.lock('landscape'); } catch {}
+    toast('Now swipe up — the video keeps playing in a small window over your other apps.', { duration: 6000 });
+  } catch { toast('Your phone did not allow full screen here. Use YouTube’s ⛶ button in the video.'); }
+}
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) { try { screen.orientation.unlock(); } catch {} } });
 function openUrl(url) {
   const info = ytInfo(url);
   if (!info) { window.open(url, '_blank', 'noopener'); return; }
   if (!yt.box) {
     const box = document.createElement('div');
-    box.innerHTML = `<div class="yt-shade"></div><div class="yt-card"><div class="yt-bar"><span class="yt-note"><svg class="ic"><use href="#i-lock"/></svg><span>Private — not saved to your YouTube history</span></span><span class="spacer"></span><a class="btn btn-sm" id="yt-open" target="_blank" rel="noopener noreferrer">Open in YouTube</a><button class="icon-btn" id="yt-min" aria-label="Keep playing in the corner" title="Keep playing in the corner"><svg class="ic"><use href="#i-chev"/></svg></button><button class="icon-btn" id="yt-max" aria-label="Bigger" title="Bigger"><svg class="ic"><use href="#i-fit"/></svg></button><button class="icon-btn" id="yt-close" aria-label="Stop and close" title="Stop and close"><svg class="ic"><use href="#i-x"/></svg></button></div><div class="yt-frame"></div></div>`;
+    box.innerHTML = `<div class="yt-shade"></div><div class="yt-card"><div class="yt-bar"><span class="yt-note"><svg class="ic"><use href="#i-lock"/></svg><span>Private — not saved to your YouTube history</span></span><span class="spacer"></span><button class="btn btn-sm" id="yt-pop" title="Full screen — then swipe up and it keeps playing over your other apps"><svg class="ic"><use href="#i-fit"/></svg><span>Pop out</span></button><a class="btn btn-sm" id="yt-open" target="_blank" rel="noopener noreferrer">Open in YouTube</a><button class="icon-btn" id="yt-min" aria-label="Keep playing in the corner" title="Keep playing in the corner"><svg class="ic"><use href="#i-chev"/></svg></button><button class="icon-btn" id="yt-max" aria-label="Bigger" title="Bigger"><svg class="ic"><use href="#i-fit"/></svg></button><button class="icon-btn" id="yt-close" aria-label="Stop and close" title="Stop and close"><svg class="ic"><use href="#i-x"/></svg></button></div><div class="yt-frame"></div></div>`;
     document.body.append(box);
     yt.box = box;
     box.addEventListener('click', (e) => {
       if (e.target.closest('.yt-shade, #yt-min')) ytMode('mini');
       else if (e.target.closest('#yt-max')) ytMode('big');
+      else if (e.target.closest('#yt-pop')) ytPopOut();
       else if (e.target.closest('#yt-close')) ytMode('');
       else if (e.target.closest('#yt-open')) ytMode('');
     });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && yt.mode === 'big') { e.stopPropagation(); ytMode('mini'); } }, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && yt.mode === 'big' && !document.fullscreenElement) { e.stopPropagation(); ytMode('mini'); } }, true);
   }
-  const q = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1', modestbranding: '1', enablejsapi: '0' });
+  const q = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1', modestbranding: '1', enablejsapi: '1', origin: location.origin });
   if (info.start) q.set('start', String(info.start));
   if (info.list) q.set('list', info.list);
-  yt.box.querySelector('.yt-frame').innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${info.id}?${q}" title="YouTube video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+  yt.state = -1; yt.wanted = true; yt.autoPaused = false; yt.tries = 0;
+  yt.box.querySelector('.yt-frame').innerHTML = `<iframe src="${YT_ORIGIN}/embed/${info.id}?${q}" title="YouTube video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+  ytFrame().addEventListener('load', ytListen);
   yt.box.querySelector('#yt-open').href = url;
   ytMode('big');
 }
