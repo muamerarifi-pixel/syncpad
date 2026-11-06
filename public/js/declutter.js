@@ -378,3 +378,183 @@ function dropChip(a) {
   }
   if (prev && prev.nodeType === 3 && (!next || (next.nodeType === 3 && /^[\s.,;:!?]/.test(next.nodeValue)))) prev.nodeValue = prev.nodeValue.replace(/\s+$/, '');
 }
+
+/* ───────────────── Readable: make a long, flat wall of text easy to read (on this device, no AI service) ─────────────────
+   • a short "Key points" box at the top (the most telling sentences, in their order)
+   • short lines that work as titles become headings; "Note:", "Important:"… labels are bold
+   • very long paragraphs are cut into short ones, at the natural turns ("However…", "For example…")
+   • inline lists ("1) … 2) …", "First… Second… Finally…", "you need: a, b, c and d") become real lists
+   Pictures, files, tables, existing lists and headings are left exactly as they are. */
+const KP_TITLE = 'Key points';
+const STOP = new Set(('a an and are as at be been but by can could did do does for from had has have he her him his how i if in into is it its just me more most my no not of on or our out over she so some than that the their them then there these they this those to too up us very was we were what when which who why will with would you your also about after again all any because before being both down during each few further here just only other own same should such through under until while yet one two get got make made like ' +
+  'dhe në një për me që se nga të e i u ka kanë është janë do edhe por apo ose si ku kur më mos jo po ky kjo këtë këto ato ai ajo ata ato tij saj tyre ne ju unë ti jemi jeni isha ishte kishte kemi keni pra nëse sepse deri pas para mbi nën tek te pa duke qe qenë do të gjithë çdo vetëm shumë pak tani atëherë këtu atje').split(' '));
+const TURN = /^(another|one more|the idea|however|but|also|additionally|moreover|furthermore|in addition|for example|for instance|on the other hand|in contrast|meanwhile|finally|in conclusion|to sum up|overall|first|second|third|next|then|lastly|as a result|therefore|so,|instead|still|megjithatë|por|gjithashtu|për shembull|nga ana tjetër|në fund|përfundimisht|si rezultat|prandaj|pra,|së pari|së dyti|së treti|më pas|pastaj|ndërkohë)\b/i;
+const LABEL = /^(note|important|tip|warning|remember|caution|summary|example|key|reminder|shënim|kujdes|këshillë|e rëndësishme|kujtesë|shembull|përmbledhje)\s*[:\-–—]\s*/i;
+const ORDINAL = /^(first(ly)?|second(ly)?|third(ly)?|fourth|fifth|next|then|after that|finally|lastly|së pari|së dyti|së treti|së katërti|më pas|pastaj|në fund)\b[,:]?\s*/i;
+const ABBR = /(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|e\.g|i\.e|p\.sh|etj|nr|fig|vol|no|approx|zt|znj|ing|av|kap|fq)|\b[A-Z]|\d)\.$/i;
+const isRtl = (t) => (t.match(/[֐-ࣿ]/g) || []).length > t.replace(/\s/g, '').length * 0.3;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const words = (t) => (t.toLowerCase().match(/[\p{L}\p{N}']+/gu) || []);
+
+export function sentences(text) {
+  const parts = String(text).replace(/\s+/g, ' ').trim().split(/(?<=[.!?…؟]["”’»)\]]?)\s+(?=["“«'(\[]?[\p{Lu}\p{Lo}\d])/u);
+  const out = [];
+  for (const p of parts) {
+    if (out.length && ABBR.test(out[out.length - 1])) out[out.length - 1] += ' ' + p;
+    else if (p) out.push(p);
+  }
+  return out;
+}
+
+/** a flat paragraph → short paragraphs (and lists where the text is really a list) */
+function splitBlock(text) {
+  const t = text.replace(/\s+/g, ' ').trim();
+  // "1) a 2) b 3) c" / "1. a 2. b 3. c" inside one paragraph
+  const num = t.split(/\s(?=\(?\d{1,2}[.)]\s+\S)/);
+  if (num.length >= 3 && num.slice(1).every((x) => /^\(?\d{1,2}[.)]\s/.test(x))) {
+    const lead = /^\(?\d{1,2}[.)]\s/.test(num[0]) ? '' : num.shift();
+    return [...(lead ? [{ p: lead }] : []), { ol: num.map((x) => x.replace(/^\(?\d{1,2}[.)]\s+/, '')) }];
+  }
+  // "you will need: eggs, milk, flour, sugar and butter."
+  const ss = sentences(t);
+  if (ss.length === 1 && colonList(t)) { const cl = colonList(t); return [{ p: cl.lead }, { ul: cl.items }]; }
+  // "First, … Second, … Finally, …"
+  const ord = ss.filter((x) => ORDINAL.test(x)).length;
+  if (ord >= 3 && ord >= ss.length * 0.5) {
+    const lead = [];
+    while (ss.length && !ORDINAL.test(ss[0])) lead.push(ss.shift());
+    const items = [];
+    for (const x of ss) { if (ORDINAL.test(x) || !items.length) items.push(x.replace(ORDINAL, (m) => m)); else items[items.length - 1] += ' ' + x; }
+    return [...(lead.length ? [{ p: lead.join(' ') }] : []), { ol: items.map((x) => x.replace(ORDINAL, '').replace(/^\p{Ll}/u, (c) => c.toUpperCase())) }];
+  }
+  if (t.length < 380 || ss.length < 4) {
+    const k = ss.findIndex((x) => colonList(x));
+    if (k < 0 || ss.length === 1) return [{ p: t }];
+  }
+  // cut into paragraphs of 2–3 sentences, preferring the natural turns
+  const paras = [];
+  let cur = [];
+  let len = 0;
+  for (const x of ss) {
+    const turn = TURN.test(x) && cur.length >= 1;
+    if (cur.length && (turn || len + x.length > 340 || cur.length >= 3)) { paras.push(cur.join(' ')); cur = []; len = 0; }
+    cur.push(x);
+    len += x.length;
+  }
+  if (cur.length) {
+    // a lone short last sentence joins the paragraph before it
+    if (paras.length && cur.length === 1 && cur[0].length < 90) paras[paras.length - 1] += ' ' + cur[0];
+    else paras.push(cur.join(' '));
+  }
+  // a lone short sentence joins the paragraph before it (unless it starts a new turn)
+  const merged = [];
+  for (const p of paras) {
+    if (merged.length && sentences(p).length === 1 && p.length < 140 && !TURN.test(p)) merged[merged.length - 1] += ' ' + p;
+    else merged.push(p);
+  }
+  // "…you will need: a, b, c and d." inside a paragraph becomes its own list
+  const out = [];
+  for (const p of merged) {
+    const ps = sentences(p);
+    const k = ps.findIndex((x) => colonList(x));
+    if (k < 0) { out.push({ p }); continue; }
+    const cl = colonList(ps[k]);
+    if (k > 0) out.push({ p: ps.slice(0, k).join(' ') });
+    out.push({ p: cl.lead }, { ul: cl.items });
+    if (k < ps.length - 1) out.push({ p: ps.slice(k + 1).join(' ') });
+  }
+  return out;
+}
+function colonList(t) {
+  const m = t.match(/^(.{3,140}?):\s+(.+)$/);
+  if (!m) return null;
+  const items = m[2].replace(/[.;]\s*$/, '').split(/\s*[,;]\s*|\s+(?:and|or|dhe|ose)\s+(?=[^,]+$)/i).filter(Boolean);
+  return items.length >= 4 && items.every((x) => x.split(' ').length <= 6) ? { lead: m[1] + ':', items } : null;
+}
+
+function keyPoints(allSentences, nWords) {
+  const freq = new Map();
+  for (const s of allSentences) for (const w of words(s.text)) if (w.length > 2 && !STOP.has(w) && !/^\d+$/.test(w)) freq.set(w, (freq.get(w) || 0) + 1);
+  const top = Math.max(1, ...freq.values());
+  const scored = allSentences.map((s, i) => {
+    const ws = words(s.text);
+    if (ws.length < 6 || ws.length > 45) return { i, s, v: -1 };
+    let v = 0;
+    for (const w of ws) v += (freq.get(w) || 0) / top;
+    v = v / Math.sqrt(ws.length);
+    if (s.first) v *= 1.25; // a paragraph's opening sentence usually carries its point
+    if (/\d/.test(s.text)) v *= 1.1;
+    if (/\?$/.test(s.text.trim())) v *= 0.6;
+    return { i, s, v };
+  });
+  const n = nWords > 900 ? 5 : nWords > 450 ? 4 : 3;
+  const pick = scored.filter((x) => x.v > 0).sort((a, b) => b.v - a.v).slice(0, n).sort((a, b) => a.i - b.i);
+  return pick.map((x) => x.s.text.length > 220 ? x.s.text.slice(0, 217).replace(/\s+\S*$/, '') + '…' : x.s.text);
+}
+
+/** returns new HTML, or the same HTML when there is nothing worth changing */
+export function readable(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = String(html || '');
+  const root = tpl.content;
+  // an earlier "Key points" box is rebuilt, not doubled
+  for (const o of [...root.children].filter((q) => q.tagName === 'BLOCKQUOTE').filter((q) => q.classList.contains('kp') || (q.firstElementChild && q.firstElementChild.tagName === 'B' && q.firstElementChild.textContent.trim() === KP_TITLE))) { const nx = o.nextElementSibling; o.remove(); if (nx && nx.tagName === 'HR') nx.remove(); }
+  const plainBlock = (e) => /^(P|DIV)$/.test(e.tagName) && !e.querySelector('img, a[data-file], table, ul, ol, pre, h1, h2, h3, blockquote, br + br') && !isRtl(e.textContent);
+  const kids = [...root.children];
+  const all = [];
+  let nWords = 0;
+  let changed = false;
+  kids.forEach((e, idx) => {
+    const text = e.textContent.replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    nWords += words(text).length;
+    if (!plainBlock(e)) { if (/^(P|DIV|LI|BLOCKQUOTE)$/.test(e.tagName)) sentences(text).forEach((s, k) => all.push({ text: s, first: k === 0 })); return; }
+    const hasInline = !!e.querySelector('b, strong, i, em, u, a, mark, span[style], font');
+    // a short line on its own, followed by a longer paragraph → heading
+    const next = kids.slice(idx + 1).find((x) => x.textContent.trim());
+    const nextLen = next ? next.textContent.trim().length : 0;
+    if (text.length <= 70 && text.split(' ').length <= 9 && !/[.,;!?…]$/.test(text) && nextLen > 120 && idx > 0 || (/^[^.!?]{3,60}:$/.test(text) && nextLen > 60)) {
+      const h = document.createElement('h3');
+      h.textContent = text.replace(/:$/, '');
+      e.replaceWith(h);
+      changed = true;
+      return;
+    }
+    sentences(text).forEach((s, k) => all.push({ text: s, first: k === 0 }));
+    if (hasInline) return; // keep the user's own formatting untouched
+    const parts = splitBlock(text);
+    const lab = LABEL.exec(text);
+    if (parts.length === 1 && parts[0].p && !lab) return;
+    const frag = document.createDocumentFragment();
+    for (const part of parts) {
+      if (part.p) {
+        const p = document.createElement('p');
+        const m = LABEL.exec(part.p);
+        if (m) { const b = document.createElement('b'); b.textContent = m[0].trim().replace(/[:\-–—]$/, '') + ':'; p.append(b, ' ' + part.p.slice(m[0].length)); }
+        else p.textContent = part.p;
+        frag.append(p);
+      } else {
+        const list = document.createElement(part.ol ? 'ol' : 'ul');
+        for (const it of part.ol || part.ul) { const li = document.createElement('li'); li.textContent = it.replace(/[;,]\s*$/, ''); list.append(li); }
+        frag.append(list);
+      }
+    }
+    e.replaceWith(frag);
+    changed = true;
+  });
+  if (nWords >= 220 && all.length >= 8) {
+    const kp = keyPoints(all, nWords);
+    if (kp.length >= 2) {
+      const bq = document.createElement('blockquote');
+      bq.className = 'kp';
+      bq.innerHTML = `<b>${KP_TITLE}</b><ul>${kp.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+      // the note's title (its first short line) stays first; the box goes right under it
+      const first = [...root.children].find((x) => x.textContent.trim());
+      const isTitle = first && (/^H[1-3]$/.test(first.tagName) || (first.textContent.trim().length <= 120 && !first.matches('ul, ol, table, blockquote')));
+      if (isTitle) first.after(bq, document.createElement('hr'));
+      else root.prepend(bq, document.createElement('hr'));
+      changed = true;
+    }
+  }
+  return changed ? tpl.innerHTML : String(html || '');
+}

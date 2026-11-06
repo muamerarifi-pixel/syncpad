@@ -26,7 +26,7 @@ function P() {
         if (kept.length) data.attrValue = kept.join('; ');
         else data.keepAttr = false;
       } else if (data.attrName === 'class') {
-        if (!/^(file-chip|link-card|lc-img|lc-t|lc-d)$/.test(data.attrValue)) data.keepAttr = false;
+        if (!/^(file-chip|link-card|lc-img|lc-t|lc-d|kp)$/.test(data.attrValue)) data.keepAttr = false;
       } else if (data.attrName === 'contenteditable') {
         if (node.tagName === 'A' && (node.hasAttribute('data-file') || /\blink-card\b/.test(node.getAttribute('class') || ''))) data.attrValue = 'false';
         else data.keepAttr = false;
