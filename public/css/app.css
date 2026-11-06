@@ -2463,3 +2463,8 @@ html.skb-on .qn, html.skb-on .tabbar { display: none !important; }
 .dev-remove.soft:hover { background: var(--accent-soft); }
 .dev-all { width: 100%; margin-top: 8px; justify-content: center; }
 .dev-all.danger-text { color: var(--danger); }
+
+/* 3.0.36: backup */
+#btn-backup { align-self: flex-start; margin-top: 8px; }
+.backup-when { margin-top: 6px; }
+.backup-when.warn { color: var(--danger); }

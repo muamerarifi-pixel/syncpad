@@ -12,6 +12,7 @@ import { Markup } from './markup.js';
 import { Collage } from './collage.js';
 import { ZoomView } from './zoom.js';
 import * as De from './declutter.js';
+import { ZipWriter, namer } from './backup.js';
 import { NoteCanvas, renderStatic as renderCanvasStatic, fallback as canvasFallback, fromHtml as canvasFromHtml } from './canvas.js';
 import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
@@ -21,7 +22,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.35';
+const VERSION = '3.0.36';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -496,6 +497,8 @@ function wire() {
   }
   el.joinForm.addEventListener('submit', (e) => { e.preventDefault(); joinWithCode(); });
   setupPinLogin();
+  el.btnBackup.addEventListener('click', makeBackup);
+  setTimeout(backupReminder, 8000);
   el.joinCode.addEventListener('input', () => {
     const d = el.joinCode.value.replace(/\D/g, '').slice(0, 6);
     el.joinCode.value = d.length > 3 ? d.slice(0, 3) + ' ' + d.slice(3) : d;
@@ -4010,6 +4013,7 @@ function openSettings() {
   renderOpenWith();
   el.versionText.textContent = `SyncPad ${VERSION} · ${store.get('deviceName')}`;
   renderPinSettings();
+  renderBackup();
   loadDevices();
   renderNotif();
   const tc = trashedItems().length;
@@ -4126,6 +4130,102 @@ function applyTheme() {
   }
   updateManifest();
   requestAnimationFrame(syncThemeColor);
+}
+/* ---------- backup: download everything as one .zip ---------- */
+const BACKUP_KEY = 'sp-backup-at';
+const BACKUP_EVERY = 30 * 864e5;
+function lastBackup() { return Number(lsGet(BACKUP_KEY, 0)) || 0; }
+function renderBackup() {
+  const t = lastBackup();
+  el.backupText.textContent = t ? `Last backup on this device: ${new Date(t).toLocaleDateString()} (${ago(t)}).` : 'No backup made on this device yet.';
+  el.backupText.classList.toggle('warn', !t || Date.now() - t > BACKUP_EVERY);
+}
+function plainNote(n) {
+  if (n.data.text != null) return String(n.data.text);
+  const d = document.createElement('div');
+  d.innerHTML = noteHtml(n);
+  d.querySelectorAll('br').forEach((b) => b.replaceWith('\n'));
+  d.querySelectorAll('p,div,li,h1,h2,h3,h4,blockquote,pre,tr').forEach((b) => b.append('\n'));
+  return d.textContent.replace(/\n{3,}/g, '\n\n').trim();
+}
+async function makeBackup() {
+  if (ui.backingUp) return;
+  if (!navigator.onLine) { toast('Go online first, so every file can be included.'); return; }
+  ui.backingUp = true;
+  const btn = el.btnBackup, label = btn.querySelector('span');
+  const say = (t) => { label.textContent = t; };
+  btn.disabled = true;
+  try {
+    const zip = new ZipWriter(), nm = namer(), missing = [];
+    const live = (i) => i && !i.data.trashed;
+    const notes = store.list('note').filter(live).sort((a, b) => b.updated - a.updated || b.created - a.created);
+    const attach = store.list('file').filter((f) => live(f) && f.data.parent && !f.data.fx);
+    const drops = store.list().filter((i) => isDrop(i) && live(i) && !i.data.fx).sort((a, b) => a.created - b.created);
+    const total = notes.length + attach.length + drops.filter((d) => d.kind === 'file').length;
+    let done = 0;
+    const tick = () => say(`Preparing… ${Math.min(total, ++done)} of ${total}`);
+    const stamp = (ts) => new Date(ts).toLocaleString();
+    const fileInto = async (dir, f) => {
+      let blob = null;
+      try { blob = await files.blobOf(f); } catch {}
+      const name = String(f.data.name || 'file');
+      const dot = name.lastIndexOf('.');
+      const base = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+      if (!blob) { missing.push(dir + name); return; }
+      await zip.add(nm(dir, base, ext, 'file'), blob, f.created);
+    };
+    // notes
+    for (const n of notes) {
+      const body = plainNote(n);
+      const title = noteTitle(noteText(n)) || 'Untitled note';
+      const dir = n.data.archived ? 'Notes/Archive/' : 'Notes/';
+      const path = nm(dir, title, '.txt', 'Untitled note');
+      await zip.add(path, `${body}\n\n---\nCreated: ${stamp(n.created)}\nLast changed: ${stamp(n.updated || n.created)}\n`, n.updated || n.created);
+      for (const f of attach.filter((a) => a.data.parent === n.id)) { await fileInto(path.replace(/\.txt$/, '') + ' - files/', f); tick(); }
+      tick();
+    }
+    // drops, grouped by folder
+    const byDir = new Map();
+    for (const d of drops) {
+      const f = folderOf(d);
+      const dir = f ? `Drops/${nm('', f.data.name || 'Folder', '', 'Folder').replace(/ \(\d+\)$/, '')}/` : 'Drops/';
+      if (!byDir.has(dir)) byDir.set(dir, []);
+      byDir.get(dir).push(d);
+    }
+    for (const [dir, list] of byDir) {
+      const texts = list.filter((d) => d.kind === 'clip').map((d) => `${stamp(d.created)}\n${d.data.text || ''}`);
+      if (texts.length) await zip.add(nm(dir, 'Texts and links', '.txt'), texts.join('\n\n----------\n\n') + '\n', Date.now());
+      for (const f of list.filter((d) => d.kind === 'file')) { await fileInto(dir, f); tick(); }
+    }
+    if (missing.length) await zip.add('NOT INCLUDED.txt', `These could not be downloaded right now (try the backup again later):\n\n${missing.join('\n')}\n`);
+    await zip.add('README.txt', `SyncPad backup — ${stamp(Date.now())}\n\nNotes/  every note as a text file (archived notes in Notes/Archive)\nDrops/  your drops; files sit in their folders, texts and links are in "Texts and links.txt"\n\nKeep this file somewhere safe, like Google Drive or a USB stick.\n`);
+    const blob = zip.finish();
+    const d = new Date();
+    const fname = `SyncPad backup ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.zip`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 120_000);
+    try { localStorage.setItem(BACKUP_KEY, String(Date.now())); } catch {}
+    toast(missing.length ? `Backup saved, but ${missing.length} file${missing.length > 1 ? 's' : ''} could not be added (see “NOT INCLUDED.txt”).` : `Backup saved: ${fname}. Put it in Google Drive or on a USB stick.`, { duration: 7000 });
+  } catch (e) {
+    toast('Could not make the backup. Try again.');
+  } finally {
+    ui.backingUp = false; btn.disabled = false; say('Download everything');
+    if (el.dlgSettings.open) renderBackup();
+  }
+}
+function backupReminder() {
+  const hasStuff = store.list('note').some((n) => !n.data.trashed) || store.list().some((i) => isDrop(i) && !i.data.trashed);
+  if (!hasStuff) return;
+  let first = Number(lsGet('sp-backup-first', 0));
+  if (!first) { try { localStorage.setItem('sp-backup-first', String(Date.now())); } catch {} return; }
+  const since = Math.max(lastBackup(), first);
+  if (Date.now() - since < BACKUP_EVERY) return;
+  if (Date.now() - Number(lsGet('sp-backup-nag', 0)) < 3 * 864e5) return;
+  try { localStorage.setItem('sp-backup-nag', String(Date.now())); } catch {}
+  const t = lastBackup();
+  toast(t ? `Last backup was ${Math.floor((Date.now() - t) / 864e5)} days ago. Save a fresh copy?` : 'You have no backup yet. Save a copy of everything?', { action: 'Back up', onAction: makeBackup, duration: 12000 });
 }
 function renderStorage() {
   const i = sync.info;
