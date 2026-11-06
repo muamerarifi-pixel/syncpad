@@ -76,9 +76,6 @@ test('4. Status bar and theme color alignment across all 9 paper textures', asyn
   const themeJs = fs.readFileSync(path.join(ROOT, 'public/js/theme.js'), 'utf8');
   assert.ok(themeJs.includes('meta[name="theme-color"]'), 'theme.js should dynamically set theme-color before first paint');
   assert.ok(themeJs.includes('colorScheme'), 'theme.js should set root style.colorScheme');
-  assert.ok(themeJs.includes('vintage:'), 'theme.js should map vintage texture');
-  assert.ok(themeJs.includes('linen:'), 'theme.js should map linen texture');
-  assert.ok(themeJs.includes('cotton:'), 'theme.js should map cotton texture');
 
   const css = fs.readFileSync(path.join(ROOT, 'public/css/app.css'), 'utf8');
   assert.ok(css.includes('html {'), 'app.css should style html');
@@ -127,31 +124,9 @@ test('5. Pinch to zoom in notes list: logical mode progression from compact to l
   assert.ok(mainJs.includes('notesPane') || mainJs.includes("closest('.notes-pane')"), 'Pinch handler should attach to notes-pane container');
 });
 
-test('6. 9 Background textures in SyncPad with editor & canvas support', () => {
+test('6. Paper textures removed: the app background is always plain', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public/index.html'), 'utf8');
-  assert.ok(html.includes('id="set-bg-grid"'), 'set-bg-grid container should exist in settings');
-  const expectedBgs = ['classic', 'none', 'smooth', 'cotton', 'recycled', 'lined', 'linen', 'washi', 'vintage'];
-  for (const bg of expectedBgs) {
-    assert.ok(html.includes(`data-bg="${bg}"`), `data-bg="${bg}" should exist in settings grid`);
-  }
-
-  const css = fs.readFileSync(path.join(ROOT, 'public/css/app.css'), 'utf8');
-  for (const bg of expectedBgs) {
-    assert.ok(css.includes(`[data-bg="${bg}"]`), `CSS should have rules for [data-bg="${bg}"]`);
-  }
-  // Verify topbar & tabbar support for textures
-  assert.ok(css.includes('[data-bg="smooth"] .topbar'), 'smooth texture should style topbar');
-  assert.ok(css.includes('[data-bg="linen"] .topbar'), 'linen texture should style topbar');
-  assert.ok(css.includes('[data-bg="cotton"] .topbar'), 'cotton texture should style topbar');
-  assert.ok(css.includes('[data-bg="washi"] .topbar'), 'washi texture should style topbar');
-
-  // Verify editor and editor-pane background inheritance
-  assert.ok(css.includes('.editor-pane,'), 'editor-pane should inherit paper background');
-  assert.ok(css.includes('.editor[data-paper=""]'), 'empty data-paper editor should inherit app paper background');
-  assert.ok(css.includes('.cv-world[data-paper=""]'), 'empty data-paper canvas world should inherit app paper background');
-
-  const mainJs = fs.readFileSync(path.join(ROOT, 'public/js/main.js'), 'utf8');
-  assert.ok(mainJs.includes('delete el.editor.dataset.paper'), 'dataset.paper should be deleted when note has no custom paper');
-  assert.ok(mainJs.includes('function renderBgGrid()'), 'renderBgGrid function should exist');
-  assert.ok(mainJs.includes("dataset.bg = bg"), 'dataset.bg should be updated dynamically');
+  assert.ok(!html.includes('id="set-bg-grid"'), 'no paper texture picker in settings');
+  const theme = fs.readFileSync(path.join(ROOT, 'public/js/theme.js'), 'utf8');
+  assert.ok(theme.includes("removeItem('sp-bg')"), 'an old texture choice is cleared on start');
 });

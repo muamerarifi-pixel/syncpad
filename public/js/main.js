@@ -20,7 +20,7 @@ import { fold, terms, matches, snippet, pageOf, indexable, extractText, INDEX_VE
 import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 
-const VERSION = '3.0.2';
+const VERSION = '3.0.3';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -134,7 +134,6 @@ function updateManifest() {
   let bg = '';
   try {
     t = localStorage.getItem('sp-theme') || 'system';
-    bg = localStorage.getItem('sp-bg') || '';
   } catch {}
   const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   el.manifestLink.href = '/app.webmanifest?s=' + encodeURIComponent(linkCode()) + (dark ? '&theme=dark' : '') + (bg && bg !== 'none' ? '&bg=' + encodeURIComponent(bg) : '');
@@ -3964,7 +3963,7 @@ function applyTheme() {
   let bg = '';
   try {
     t = localStorage.getItem('sp-theme') || 'system';
-    bg = localStorage.getItem('sp-bg') || '';
+    localStorage.removeItem('sp-bg'); // paper textures are gone: the app background is always plain
   } catch {}
   const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
