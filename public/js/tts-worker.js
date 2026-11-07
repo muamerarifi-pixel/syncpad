@@ -5,13 +5,18 @@ import { KokoroTTS } from '/vendor/kokoro.web.js';
 let tts = null;
 let loading = null;
 
+async function hasGpu() {
+  try { return !!(self.navigator.gpu && await self.navigator.gpu.requestAdapter()); } catch { return false; }
+}
+
 function load() {
   if (tts) return Promise.resolve(tts);
   if (!loading) {
     const seen = new Map();
-    loading = KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
-      dtype: 'q8',
-      device: 'wasm',
+    loading = hasGpu().then((gpu) => KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
+      // the graphics chip is ~10x faster; without one, the small model on the processor
+      dtype: gpu ? 'fp32' : 'q8',
+      device: gpu ? 'webgpu' : 'wasm',
       progress_callback: (p) => {
         if (p.status === 'progress' && p.total) {
           seen.set(p.file, [p.loaded, p.total]);
@@ -20,7 +25,11 @@ function load() {
           postMessage({ type: 'progress', pct: Math.round((a / b) * 100) });
         }
       },
-    }).then((t) => { tts = t; postMessage({ type: 'ready' }); return t; })
+    }).then(async (t) => {
+      postMessage({ type: 'warming', gpu });
+      try { await t.generate('Hi.', { voice: 'af_heart' }); } catch {}   // first run compiles; do it before the real text
+      tts = t; postMessage({ type: 'ready', gpu }); return t;
+    }))
       .catch((e) => { loading = null; throw e; });
   }
   return loading;

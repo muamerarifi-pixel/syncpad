@@ -17,8 +17,9 @@ function getWorker() {
   worker = new Worker('/js/tts-worker.js', { type: 'module' });
   worker.onmessage = (e) => {
     const m = e.data;
-    if (m.type === 'progress') { state.pct = m.pct; status(`Getting the natural voice ready… ${m.pct}% (only the first time)`); }
-    else if (m.type === 'ready') { state.ready = true; status(''); }
+    if (m.type === 'progress') { state.pct = m.pct; if (m.pct < 100) status(`Downloading the natural voice… ${m.pct}% (only the first time)`); }
+    else if (m.type === 'warming') status('Starting the natural voice…');
+    else if (m.type === 'ready') { state.ready = true; state.gpu = m.gpu; if (state.playing) status('Preparing audio…'); }
     else if (waiting.has(m.id)) { const w = waiting.get(m.id); waiting.delete(m.id); m.type === 'error' ? w.reject(new Error(m.message)) : w.resolve(m); }
   };
   worker.onerror = () => { for (const w of waiting.values()) w.reject(new Error('voice failed')); waiting.clear(); };
@@ -38,7 +39,8 @@ function chunk(text) {
   const out = [];
   let cur = '';
   for (const p of parts) {
-    if ((cur + p).length > 220 && cur) { out.push(cur.trim()); cur = ''; }
+    const max = out.length ? 220 : 90;
+    if ((cur + p).length > max && cur) { out.push(cur.trim()); cur = ''; }
     if (p.length > 260) { for (const w of p.match(/.{1,240}(\s|$)/g) || [p]) out.push(w.trim()); continue; }
     cur += p;
   }
@@ -84,22 +86,36 @@ export function speak(text) {
   return true;
 }
 function useDevice() { return ls('sp-tts-voice', 'af_heart') === 'device' || !navigator.onLine && !state.ready || !('Worker' in window); }
+/** wait for a piece of audio; if the natural voice is far too slow here, say so and use the device voice */
+function within(promise, my) {
+  return new Promise((resolve, reject) => {
+    let waited = 0;
+    const iv = setInterval(() => {
+      if (my !== job) { clearInterval(iv); return; }
+      if (!state.ready) return;                 // still downloading: no limit
+      waited += 1;
+      if (waited === 2) status('Preparing audio…');
+      if (waited >= 30) { clearInterval(iv); reject(new Error('slow')); }
+    }, 1000);
+    promise.then((v) => { clearInterval(iv); resolve(v); }, (e) => { clearInterval(iv); reject(e); });
+  });
+}
 
 async function run(my) {
   if (useDevice()) return runDevice(my);
   ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
   if (ctx.state === 'suspended') ctx.resume();
-  if (!state.ready) status(state.pct ? `Getting the natural voice ready… ${state.pct}%` : 'Getting the natural voice ready…');
+  status(state.ready ? 'Preparing audio…' : state.pct && state.pct < 100 ? `Downloading the natural voice… ${state.pct}%` : 'Starting the natural voice…');
   let next = synth(state.chunks[state.at]);
   while (my === job && state.at < state.chunks.length) {
     let m;
-    try { m = await next; } catch {
+    try { m = await within(next, my); } catch (e) {
       if (my !== job) return;
-      status('Natural voice unavailable — using the device voice.');
+      status(e && e.message === 'slow' ? 'The natural voice is too slow on this device — using the device voice.' : 'Natural voice unavailable — using the device voice.');
       return runDevice(my);
     }
     if (my !== job) return;
-    status('');
+    status(state.gpu === false ? 'Natural voice (slower on this device)' : '');
     next = state.at + 1 < state.chunks.length ? synth(state.chunks[state.at + 1]) : null;
     await playPcm(m.pcm, m.rate, my);
     if (my !== job) return;
