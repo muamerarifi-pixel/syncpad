@@ -2566,3 +2566,10 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
 .photo-nav button:disabled { opacity: .3; cursor: default; }
 .pn-count { font: 700 13px var(--font); min-width: 46px; text-align: center; }
 .viewer-body.is-zoom { position: relative; }
+
+/* 3.0.48: phones open notes for reading; Edit / Done button */
+.editor { position: relative; }
+.editor.reading .fmt-bar { display: none !important; }
+.edit-toggle { position: absolute; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 30; display: inline-flex; align-items: center; gap: 8px; height: 50px; padding: 0 20px 0 16px; border-radius: 999px; border: 0; background: var(--accent); color: #fff; font: 700 16px var(--font); box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 40%, transparent); }
+.edit-toggle .ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; }
+.edit-toggle.done { background: var(--surface); color: var(--accent-text); border: 1.5px solid var(--accent); box-shadow: 0 6px 16px rgba(16, 24, 40, .14); }

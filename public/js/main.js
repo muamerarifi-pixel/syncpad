@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.47';
+const VERSION = '3.0.48';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2653,10 +2653,50 @@ function openNote(id, { focus = true } = {}) {
   } else if (!layers.some((l) => l.key === 'editor')) {
     pushLayer({ key: 'editor', close: () => closeEditor(true) });
   }
+  // on phones a note opens for reading: taps don't pop the keyboard until you press Edit
+  const nn = store.items.get(id);
+  ui.readMode = isTouch() && !!(nn && (nn.data.text || nn.data.html)) && !(nn.data.canvas);
   applyNotesList();
   renderEditor(true);
   renderNotesList();
   if (focus && !isTouch()) focusEditorEnd();
+}
+
+function renderEditToggle() {
+  let b = document.getElementById('edit-toggle');
+  if (!isTouch()) { if (b) b.hidden = true; return; }
+  if (!b) {
+    b = document.createElement('button');
+    b.id = 'edit-toggle';
+    b.className = 'edit-toggle';
+    b.addEventListener('pointerdown', (e) => e.preventDefault());
+    b.addEventListener('click', () => setReadMode(!ui.readMode));
+    el.editor.append(b);
+  }
+  const n = ui.noteId && (store.items.get(ui.noteId) || (ui.newNote && ui.newNote.id === ui.noteId ? ui.newNote : null));
+  b.hidden = !n || !!(n.data && n.data.canvas) || el.editor.classList.contains('parts-waiting');
+  b.innerHTML = ui.readMode
+    ? '<svg class="ic"><use href="#i-pen"/></svg><span>Edit</span>'
+    : '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Done</span>';
+  b.classList.toggle('done', !ui.readMode);
+}
+function setReadMode(on) {
+  ui.readMode = on;
+  const ed = el.editorText;
+  ed.contentEditable = on ? 'false' : 'true';
+  el.editor.classList.toggle('reading', on);
+  if (on) { saveNote.flush && saveNote.flush(); ed.blur(); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
+  else {
+    const sel = getSelection();
+    ed.focus({ preventScroll: true });
+    if (!sel.rangeCount || !ed.contains(sel.anchorNode)) {
+      // put the cursor at the first line you can see
+      const r = ed.getBoundingClientRect();
+      const pos = document.caretRangeFromPoint ? document.caretRangeFromPoint(r.left + 30, r.top + 40) : null;
+      if (pos && ed.contains(pos.startContainer)) { sel.removeAllRanges(); sel.addRange(pos); }
+    }
+  }
+  renderEditToggle();
 }
 
 function newNote(opts) {
@@ -2770,7 +2810,9 @@ function renderEditor(force) {
   el.btnPin.setAttribute('aria-label', n.data.pinned ? 'Unpin note' : 'Pin note');
   // a long note whose pieces haven't all arrived yet is read-only until they have
   const waiting = !isCanvas && !partsReady(n);
-  el.editorText.contentEditable = waiting ? 'false' : 'true';
+  el.editorText.contentEditable = waiting || ui.readMode ? 'false' : 'true';
+  el.editor.classList.toggle('reading', !!ui.readMode);
+  renderEditToggle();
   el.editor.classList.toggle('parts-waiting', waiting);
   renderRemindButton();
   requestAnimationFrame(syncThemeColor);
