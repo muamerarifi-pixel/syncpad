@@ -2479,3 +2479,37 @@ html.skb-on .qn, html.skb-on .tabbar { display: none !important; }
 .editor:not([data-paper]):not(.smooth) { background-image: var(--tx-white); }
 .editor:not([data-paper]):not(.smooth) .cv-world { background-image: var(--tx-white); }
 .note-item.tex, .note-item.tex:hover, .note-item.tex[aria-current="true"] { background-image: var(--tx-white) !important; }
+
+/* 3.0.38: soft colour wallpaper behind the whole app (Settings → Wallpaper) */
+html[data-wall="aurora"] {
+  --wall: radial-gradient(ellipse 70% 60% at 8% 12%, rgba(150, 230, 195, .34), transparent 70%),
+          radial-gradient(ellipse 65% 60% at 92% 8%, rgba(160, 200, 255, .34), transparent 70%),
+          radial-gradient(ellipse 75% 65% at 70% 100%, rgba(200, 175, 255, .32), transparent 70%);
+}
+html[data-wall="ocean"] {
+  --wall: radial-gradient(ellipse 70% 60% at 12% 6%, rgba(140, 225, 235, .34), transparent 70%),
+          radial-gradient(ellipse 65% 65% at 95% 50%, rgba(150, 180, 255, .32), transparent 70%),
+          radial-gradient(ellipse 75% 60% at 15% 100%, rgba(135, 220, 195, .32), transparent 70%);
+}
+html[data-theme="dark"][data-wall="aurora"] {
+  --wall: radial-gradient(ellipse 70% 60% at 8% 12%, rgba(40, 150, 110, .22), transparent 70%),
+          radial-gradient(ellipse 65% 60% at 92% 8%, rgba(50, 100, 200, .22), transparent 70%),
+          radial-gradient(ellipse 75% 65% at 70% 100%, rgba(110, 70, 200, .22), transparent 70%);
+}
+html[data-theme="dark"][data-wall="ocean"] {
+  --wall: radial-gradient(ellipse 70% 60% at 12% 6%, rgba(30, 140, 160, .22), transparent 70%),
+          radial-gradient(ellipse 65% 65% at 95% 50%, rgba(50, 80, 200, .22), transparent 70%),
+          radial-gradient(ellipse 75% 60% at 15% 100%, rgba(30, 140, 110, .22), transparent 70%);
+}
+html[data-wall] body { background: var(--wall), var(--bg); background-attachment: fixed; }
+html[data-wall] .topbar { background: color-mix(in srgb, var(--surface) 55%, transparent); box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 70%, transparent); }
+html[data-wall] .drops-side { background: color-mix(in srgb, var(--surface) 45%, transparent); border-color: color-mix(in srgb, var(--border) 60%, transparent); }
+html[data-wall] .notes-pane, html[data-wall] .notes-pane:has(.note-list.view-grid), html[data-wall] .notes-pane.list-pinching :is(.notes-head, .nf-chips, #tag-chips) { background: transparent; }
+html[data-wall] :is(.view, .drops-main, .app) { background-color: transparent; }
+.wall-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.wall-opt { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 1.5px solid var(--border); background: var(--surface); border-radius: 12px; padding: 8px 8px 7px; font: inherit; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; }
+.wall-opt[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.wall-prev { width: 100%; height: 46px; border-radius: 8px; border: 1px solid var(--border); background-color: var(--bg); }
+.wp-aurora { background-image: radial-gradient(circle at 10% 15%, rgba(150, 230, 195, .7), transparent 60%), radial-gradient(circle at 90% 10%, rgba(160, 200, 255, .7), transparent 60%), radial-gradient(circle at 70% 100%, rgba(200, 175, 255, .65), transparent 65%); }
+.wp-ocean { background-image: radial-gradient(circle at 12% 8%, rgba(140, 225, 235, .7), transparent 60%), radial-gradient(circle at 95% 55%, rgba(150, 180, 255, .65), transparent 60%), radial-gradient(circle at 15% 100%, rgba(135, 220, 195, .65), transparent 60%); }
+html[data-wall] .tabbar { background: color-mix(in srgb, var(--surface) 60%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }

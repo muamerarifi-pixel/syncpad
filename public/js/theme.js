@@ -7,6 +7,8 @@ try {
   // paper textures are gone: the app background is always plain
   localStorage.removeItem('sp-bg');
   delete document.documentElement.dataset.bg;
+  var w = localStorage.getItem('sp-wall') || 'aurora';
+  if (w !== 'none') document.documentElement.dataset.wall = w; else delete document.documentElement.dataset.wall;
   var color = dark ? '#16181e' : '#ffffff';
   var m = document.querySelector('meta[name="theme-color"]');
   if (m) { m.removeAttribute('media'); m.content = color; }

@@ -22,7 +22,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.37';
+const VERSION = '3.0.38';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -498,6 +498,7 @@ function wire() {
   el.joinForm.addEventListener('submit', (e) => { e.preventDefault(); joinWithCode(); });
   setupPinLogin();
   el.btnBackup.addEventListener('click', makeBackup);
+  el.setWall.addEventListener('click', (e) => { const b = e.target.closest('[data-wall-opt]'); if (b) setWall(b.dataset.wallOpt); });
   setTimeout(backupReminder, 8000);
   el.joinCode.addEventListener('input', () => {
     const d = el.joinCode.value.replace(/\D/g, '').slice(0, 6);
@@ -4005,6 +4006,7 @@ function renderOpenWith() {
 function openSettings() {
   el.setName.value = store.get('deviceName') || '';
   renderThemeSeg();
+  renderWallSeg();
   renderBgGrid();
   const st = store.items.get('settings');
   el.setAutodel.value = String((st && st.data.autodel) || 0);
@@ -4091,6 +4093,15 @@ async function unMain() {
   if (!ok) return;
   await fetch(`/api/s/${store.get('space')}/main`, { method: 'DELETE', headers: sync.headers() }).catch(() => null);
   loadDevices();
+}
+function renderWallSeg() {
+  const w = lsGet('sp-wall', 'aurora');
+  for (const b of $$('[data-wall-opt]', el.setWall)) b.setAttribute('aria-checked', String(b.dataset.wallOpt === w));
+}
+function setWall(w) {
+  try { localStorage.setItem('sp-wall', w); } catch {}
+  if (w === 'none') delete document.documentElement.dataset.wall; else document.documentElement.dataset.wall = w;
+  renderWallSeg();
 }
 function renderThemeSeg() {
   let t = 'system';
