@@ -2573,3 +2573,7 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
 .edit-toggle { position: absolute; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 30; display: inline-flex; align-items: center; gap: 8px; height: 50px; padding: 0 20px 0 16px; border-radius: 999px; border: 0; background: var(--accent); color: #fff; font: 700 16px var(--font); box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 40%, transparent); }
 .edit-toggle .ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; }
 .edit-toggle.done { background: var(--surface); color: var(--accent-text); border: 1.5px solid var(--accent); box-shadow: 0 6px 16px rgba(16, 24, 40, .14); }
+/* 3.0.49: Edit button smaller, above the word count, hides while you scroll; text gets room at the bottom */
+.edit-toggle { height: 44px; padding: 0 16px 0 13px; font-size: 15px; bottom: calc(44px + env(safe-area-inset-bottom)); right: 12px; transition: opacity .2s, transform .2s; }
+.edit-toggle.scrolling { opacity: 0; transform: translateY(12px); pointer-events: none; }
+.editor:has(.edit-toggle:not([hidden])) .editor-text { padding-bottom: 110px !important; }

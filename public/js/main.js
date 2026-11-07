@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.48';
+const VERSION = '3.0.49';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2633,7 +2633,13 @@ function restoreNotePos(id) {
   setTimeout(() => { go(); ui.restoringPos = false; }, 400);
 }
 let notePosT = 0;
-document.addEventListener('scroll', (e) => { if (e.target === el.editorText) { clearTimeout(notePosT); notePosT = setTimeout(saveNotePos, 250); } }, true);
+let editBtnT = 0;
+document.addEventListener('scroll', (e) => {
+  if (e.target !== el.editorText) return;
+  clearTimeout(notePosT); notePosT = setTimeout(saveNotePos, 250);
+  const b = document.getElementById('edit-toggle');
+  if (b && ui.readMode) { b.classList.add('scrolling'); clearTimeout(editBtnT); editBtnT = setTimeout(() => b.classList.remove('scrolling'), 700); }
+}, true);
 
 function openNote(id, { focus = true } = {}) {
   if (ui.selMode && ui.noteId !== id) setSelectMode(false);
