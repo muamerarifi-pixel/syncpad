@@ -14,7 +14,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '3.0.39';
+const VERSION = '3.0.40';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -76,9 +76,9 @@ function manifest(url) {
       color_scheme_dark: { theme_color: (bg && bgColors.dark[bg]) || bgColors.dark.none, background_color: (bg && bodyColors.dark[bg]) || bodyColors.dark.none },
       user_preferences: { color_scheme: { dark: { theme_color: (bg && bgColors.dark[bg]) || bgColors.dark.none, background_color: (bg && bodyColors.dark[bg]) || bodyColors.dark.none } } },
       icons: [
-        { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-        { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-        { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+        { src: '/icons/icon-192.png?v=2', sizes: '192x192', type: 'image/png' },
+        { src: '/icons/icon-512.png?v=2', sizes: '512x512', type: 'image/png' },
+        { src: '/icons/maskable-512.png?v=2', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
       ],
       // installed app on Windows / Mac / Linux: right-click a file → Open with → SyncPad
       file_handlers: [{

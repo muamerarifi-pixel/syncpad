@@ -2529,3 +2529,17 @@ html .tab:not([aria-selected="true"]), html .seg-btn:not([aria-pressed="true"]) 
 html .chip:not([aria-pressed="true"]) { background: var(--surface); border: 1px solid var(--border-strong); box-shadow: none; color: var(--text); }
 html .search { background: var(--surface); border: 1px solid var(--border-strong); box-shadow: none; }
 html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+
+/* 3.0.40: drop icon squares coloured by type (text green, links blue, files orange) */
+.ti[data-k="text"] { background: #dff5e9; color: #0b8a57; }
+.ti[data-k="link"] { background: #e1ebff; color: #2f5fd0; }
+.ti[data-k="file"], .ti[data-k=""], .ti[data-k="code"] { background: #ffeedd; color: #c56a12; }
+[data-theme="dark"] .ti[data-k="text"] { background: rgba(18, 160, 106, .2); color: #5fd6a2; }
+[data-theme="dark"] .ti[data-k="link"] { background: rgba(80, 130, 255, .2); color: #93b4ff; }
+[data-theme="dark"] :is(.ti[data-k="file"], .ti[data-k=""], .ti[data-k="code"]) { background: rgba(240, 140, 40, .2); color: #ffb366; }
+[data-theme="dark"] .ti[data-k="image"] { background: rgba(56, 160, 230, .2); color: #7cc4f2; }
+[data-theme="dark"] .ti[data-k="video"] { background: rgba(230, 70, 150, .2); color: #f08bc0; }
+[data-theme="dark"] .ti[data-k="pdf"] { background: rgba(230, 70, 70, .2); color: #f28b8b; }
+[data-theme="dark"] .ti[data-k="sheet"] { background: rgba(40, 170, 90, .2); color: #6fd69a; }
+[data-theme="dark"] :is(.ti[data-k="doc"], .ti[data-k="archive"], .ti[data-k="audio"], .ti[data-k="slides"]) { background: rgba(140, 120, 255, .2); color: #b6a8ff; }
+.logo img { border-radius: 9px; }

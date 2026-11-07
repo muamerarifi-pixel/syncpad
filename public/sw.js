@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v3.0.39';
+const VERSION = 'v3.0.40';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
@@ -26,7 +26,7 @@ const SHELL = [
   '/vendor/marked.esm.js',
   '/vendor/purify.min.js',
   '/vendor/qrcode.mjs',
-  '/icons/favicon.svg',
+  '/icons/favicon.svg?v=2',
   '/icons/icon-192.png'
 ];
 
