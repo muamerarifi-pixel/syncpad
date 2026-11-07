@@ -2513,3 +2513,19 @@ html[data-wall] :is(.view, .drops-main, .app) { background-color: transparent; }
 .wp-aurora { background-image: radial-gradient(circle at 10% 15%, rgba(150, 230, 195, .7), transparent 60%), radial-gradient(circle at 90% 10%, rgba(160, 200, 255, .7), transparent 60%), radial-gradient(circle at 70% 100%, rgba(200, 175, 255, .65), transparent 65%); }
 .wp-ocean { background-image: radial-gradient(circle at 12% 8%, rgba(140, 225, 235, .7), transparent 60%), radial-gradient(circle at 95% 55%, rgba(150, 180, 255, .65), transparent 60%), radial-gradient(circle at 15% 100%, rgba(135, 220, 195, .65), transparent 60%); }
 html[data-wall] .tabbar { background: color-mix(in srgb, var(--surface) 60%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+
+/* 3.0.39: clean white base (no grey), solid green selection, white outlined controls */
+html:not([data-theme="dark"]) { --bg: #fcfcfd; --surface-2: #f4f6f5; }
+html :is(.tab[aria-selected="true"], .seg-btn[aria-pressed="true"], .nav-item.on, .chip[aria-pressed="true"], .wall-opt[aria-checked="true"]) {
+  background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important;
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 45%, transparent) !important; font-weight: 600;
+}
+html :is(.tab[aria-selected="true"], .seg-btn[aria-pressed="true"], .nav-item.on, .chip[aria-pressed="true"]) :is(.ic, b, .cnt, .n, span) { color: #fff !important; opacity: 1; }
+html .wall-opt[aria-checked="true"] .wall-prev { border-color: rgba(255, 255, 255, .7); }
+html .tabbar-btn[aria-selected="true"] .ic { background: var(--accent) !important; color: #fff !important; }
+html .tabbar-btn[aria-selected="true"] { color: var(--accent-text) !important; font-weight: 700; }
+html :is(.tabs, .seg) { background: var(--surface); border: 1px solid var(--border-strong); box-shadow: none; }
+html .tab:not([aria-selected="true"]), html .seg-btn:not([aria-pressed="true"]) { background: transparent; }
+html .chip:not([aria-pressed="true"]) { background: var(--surface); border: 1px solid var(--border-strong); box-shadow: none; color: var(--text); }
+html .search { background: var(--surface); border: 1px solid var(--border-strong); box-shadow: none; }
+html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
