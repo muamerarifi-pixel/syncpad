@@ -22,7 +22,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.36';
+const VERSION = '3.0.37';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2192,7 +2192,7 @@ function noteHtml(n) {
 
 const NOTE_COLORS = [['red', '#e03131', 'Red'], ['orange', '#f08c00', 'Orange'], ['yellow', '#f5b700', 'Yellow'], ['green', '#2f9e44', 'Green'], ['blue', '#1c7ed6', 'Blue'], ['purple', '#7048e8', 'Purple'], ['pink', '#d6336c', 'Pink']];
 const NOTE_FONTS = [['', 'Outfit — modern (default)'], ['lora', 'Lora — elegant serif'], ['caveat', 'Caveat — handwriting'], ['system', 'System font']];
-const NOTE_PAPERS = [['', 'Plain', 'transparent'], ['sepia', 'Cream', '#f3ead6'], ['sepia-lined', 'Cream, lined', '#efe3c6'], ['lined', 'Notebook, lined', '#f4f6fb'],
+const NOTE_PAPERS = [['', 'White, textured', '#ffffff'], ['smooth', 'Plain (smooth)', 'transparent'], ['sepia', 'Cream', '#f3ead6'], ['sepia-lined', 'Cream, lined', '#efe3c6'], ['lined', 'Notebook, lined', '#f4f6fb'],
   ['grid', 'Squared (graph paper)', '#eef2f8'], ['dots', 'Dotted', '#f3f2ee'], ['recycled', 'Recycled', '#e8e2d5'], ['kraft', 'Kraft brown', '#d8c29d'],
   ['linen', 'Linen', '#f1ece3'], ['mint', 'Mint', '#e2f2e9'], ['night', 'Night (dark)', '#1b1e25']];
 const lsGet = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
@@ -2561,7 +2561,7 @@ function renderNotesList() {
     return;
   }
   el.noteList.innerHTML = list
-    .map((n) => { const m = noteMedia(n); const sel = ui.nselecting && ui.nsel.has(n.id); return `<button class="note-item${m.thumb ? ' has-thumb' : ''}${sel ? ' selected' : ''}" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}"${n.data.color ? ` data-color="${esc(n.data.color)}"` : ''}${isTouch() ? '' : ' draggable="true"'}>
+    .map((n) => { const m = noteMedia(n); const sel = ui.nselecting && ui.nsel.has(n.id); return `<button class="note-item${m.thumb ? ' has-thumb' : ''}${n.data.paper ? '' : ' tex'}${sel ? ' selected' : ''}" role="listitem" data-id="${n.id}" aria-current="${n.id === ui.noteId}"${n.data.color ? ` data-color="${esc(n.data.color)}"` : ''}${isTouch() ? '' : ' draggable="true"'}>
       ${ui.nselecting ? '<span class="ri-check ni-check" aria-hidden="true"><svg class="ic"><use href="#i-check"/></svg></span>' : ''}
       ${m.thumb ? `<img class="ni-thumb" src="${esc(m.thumb)}" alt="" loading="lazy" draggable="false">` : ''}
       <div class="t">${n.data.pinned ? '<svg class="ic"><use href="#i-pin"/></svg>' : ''}${n.data.canvas ? '<svg class="ic"><use href="#i-canvas"/></svg>' : ''}<span>${esc(noteTitle(noteText(n)))}</span></div>
@@ -2702,8 +2702,9 @@ function renderEditor(force) {
   const isCanvas = !!n.data.canvas;
   el.editor.classList.toggle('is-canvas', isCanvas);
   el.editor.dataset.font = n.data.font || '';
-  if (n.data.paper) el.editor.dataset.paper = n.data.paper;
+  if (n.data.paper && n.data.paper !== 'smooth') el.editor.dataset.paper = n.data.paper;
   else delete el.editor.dataset.paper;
+  el.editor.classList.toggle('smooth', n.data.paper === 'smooth');
   el.editor.dataset.color = n.data.color || '';
   el.noteCanvas.hidden = el.cvBar.hidden = !isCanvas;
   el.fmtBar.hidden = isCanvas;

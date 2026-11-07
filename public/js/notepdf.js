@@ -16,6 +16,7 @@ const FONTS = {
 // paper: [background, ink, rule colour, pattern]
 const PAPERS = {
   '': ['#ffffff', '#16181d', '', ''],
+  smooth: ['#ffffff', '#16181d', '', ''],
   sepia: ['#f4ecd8', '#3b2f20', '', ''],
   'sepia-lined': ['#f4ecd8', '#3b2f20', 'rgba(120,90,50,.28)', 'lined'],
   lined: ['#fdfdfb', '#1d2433', 'rgba(70,110,170,.25)', 'lined'],

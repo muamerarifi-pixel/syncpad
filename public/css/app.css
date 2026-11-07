@@ -2468,3 +2468,14 @@ html.skb-on .qn, html.skb-on .tabbar { display: none !important; }
 #btn-backup { align-self: flex-start; margin-top: 8px; }
 .backup-when { margin-top: 6px; }
 .backup-when.warn { color: var(--danger); }
+
+/* 3.0.37: default note paper is white with a fine grain ("Plain (smooth)" stays available) */
+:root {
+  --tx-white-l: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='a' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.18 0 0 0 0 0.18 0 0 0 0 0.2 0 0 0 .32 -.125'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23a)'/%3E%3C/svg%3E");
+  --tx-white-d: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='a' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.92 0 0 0 0 0.93 0 0 0 0 0.95 0 0 0 .2 -.06'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23a)'/%3E%3C/svg%3E");
+  --tx-white: var(--tx-white-l);
+}
+[data-theme="dark"] { --tx-white: var(--tx-white-d); }
+.editor:not([data-paper]):not(.smooth) { background-image: var(--tx-white); }
+.editor:not([data-paper]):not(.smooth) .cv-world { background-image: var(--tx-white); }
+.note-item.tex, .note-item.tex:hover, .note-item.tex[aria-current="true"] { background-image: var(--tx-white) !important; }
