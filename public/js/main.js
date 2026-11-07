@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.46';
+const VERSION = '3.0.47';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2610,6 +2610,31 @@ function noteMedia(n) {
 }
 const files_src = (id) => { try { return files.src(id); } catch { return null; } };
 
+/* remember where each note was scrolled to (per device) */
+const NOTE_POS = 'sp-note-pos';
+function notePosMap() { try { return JSON.parse(localStorage.getItem(NOTE_POS) || '{}'); } catch { return {}; } }
+function saveNotePos() {
+  const id = ui.noteId, ed = el.editorText;
+  if (!id || !ed || ui.restoringPos) return;
+  const m = notePosMap(), max = ed.scrollHeight - ed.clientHeight;
+  if (ed.scrollTop < 20 || max <= 0) delete m[id]; else m[id] = [Math.round(ed.scrollTop), ed.scrollTop / max, Date.now()];
+  const keys = Object.keys(m);
+  if (keys.length > 300) keys.sort((a, b) => m[a][2] - m[b][2]).slice(0, keys.length - 300).forEach((k) => delete m[k]);
+  try { localStorage.setItem(NOTE_POS, JSON.stringify(m)); } catch {}
+}
+function restoreNotePos(id) {
+  const p = notePosMap()[id];
+  if (!p) return;
+  const ed = el.editorText;
+  ui.restoringPos = true;
+  const go = () => { if (ui.noteId !== id) return; const max = ed.scrollHeight - ed.clientHeight; ed.scrollTop = Math.min(max, Math.max(0, Math.round(p[1] * max))); };
+  requestAnimationFrame(go);
+  setTimeout(go, 120);
+  setTimeout(() => { go(); ui.restoringPos = false; }, 400);
+}
+let notePosT = 0;
+document.addEventListener('scroll', (e) => { if (e.target === el.editorText) { clearTimeout(notePosT); notePosT = setTimeout(saveNotePos, 250); } }, true);
+
 function openNote(id, { focus = true } = {}) {
   if (ui.selMode && ui.noteId !== id) setSelectMode(false);
   if (ui.tab !== 'notes') setTab('notes');
@@ -2730,6 +2755,7 @@ function renderEditor(force) {
     if (ui.canvas) { ui.canvas.load({ items: [] }); applyZoom(); }
     setEditorHtml(noteHtml(n));
     ed.scrollTop = 0;
+    restoreNotePos(n.id);
     ui.dirty = false;
   } else if (!ui.dirty && !store.outbox.has(n.id)) {
     const html = noteHtml(n);
