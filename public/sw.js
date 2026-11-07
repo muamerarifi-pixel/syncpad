@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v3.0.44';
+const VERSION = 'v3.0.45';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
@@ -48,7 +48,7 @@ async function warmAssets() {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== SHELL_CACHE && k !== FILE_CACHE && k !== ASSET_CACHE && k !== 'sp-offline').map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== SHELL_CACHE && k !== FILE_CACHE && k !== ASSET_CACHE && k !== 'sp-offline' && k !== 'sp-tts' && k !== 'transformers-cache').map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
       .then(() => { warmAssets(); })
   );
@@ -57,6 +57,11 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
+  // natural-voice engine files: keep a copy so read-aloud also works offline
+  if (req.method === 'GET' && url.hostname === 'cdn.jsdelivr.net' && url.pathname.startsWith('/npm/@huggingface/transformers')) {
+    event.respondWith(caches.open('sp-tts').then(async (c) => (await c.match(req)) || fetch(req).then((r) => { if (r.ok) c.put(req, r.clone()); return r; })));
+    return;
+  }
   if (url.origin !== location.origin) return;
 
   // Android "Share to SyncPad"

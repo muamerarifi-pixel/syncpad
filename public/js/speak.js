@@ -87,7 +87,7 @@ export function speak(text) {
   run(++job);
   return true;
 }
-function useDevice() { return ls('sp-tts-voice', DEF_VOICE) === 'device' || !navigator.onLine && !state.ready || !('Worker' in window); }
+function useDevice() { return ls('sp-tts-voice', DEF_VOICE) === 'device' || !('Worker' in window); }
 /** wait for a piece of audio; if the natural voice is far too slow here, say so and use the device voice */
 function within(promise, my) {
   return new Promise((resolve, reject) => {
@@ -177,4 +177,4 @@ function finish() { state.playing = false; if (bar) bar.hidden = true; }
 export function stop() { halt(); finish(); state.chunks = []; }
 export function isSpeaking() { return state.playing; }
 /** Start downloading the voice early (when the user is online). */
-export function warmUp() { if (navigator.onLine && ls('sp-tts-voice', DEF_VOICE) !== 'device') getWorker().postMessage({ type: 'load' }); }
+export function warmUp() { if (ls('sp-tts-voice', DEF_VOICE) !== 'device') getWorker().postMessage({ type: 'load' }); }
