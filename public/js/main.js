@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.45';
+const VERSION = '3.0.46';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -3812,6 +3812,47 @@ function rangeFromPoint(x, y) {
 
 /* ═════════════════════════ viewer ═════════════════════════ */
 
+/* swipe (or arrows / ← →) between the photos of the same folder or note */
+function photoSiblings(it) {
+  const isImg = (f) => f.kind === 'file' && !f.data.trashed && !f.data.fx && fileKind(f.data.type, f.data.name) === 'image';
+  if (it.data.parent) return store.list('file').filter((f) => isImg(f) && f.data.parent === it.data.parent).sort((a, b) => a.created - b.created);
+  return dropItems().filter((f) => isImg(f) && (f.data.folder || '') === (it.data.folder || ''));
+}
+function stepPhoto(dir) {
+  const it = ui.viewing;
+  if (!it || !el.dlgViewer.open) return false;
+  const list = photoSiblings(it);
+  const i = list.findIndex((f) => f.id === it.id);
+  const next = list[i + dir];
+  if (i < 0 || !next) return false;
+  openFile(next);
+  return true;
+}
+function setupPhotoSwipe(it) {
+  const list = photoSiblings(it);
+  const i = list.findIndex((f) => f.id === it.id);
+  if (list.length < 2 || i < 0) return;
+  const nav = document.createElement('div');
+  nav.className = 'photo-nav';
+  nav.innerHTML = `<button class="pn-prev" aria-label="Previous photo" ${i ? '' : 'disabled'}>‹</button><span class="pn-count">${i + 1} / ${list.length}</span><button class="pn-next" aria-label="Next photo" ${i < list.length - 1 ? '' : 'disabled'}>›</button>`;
+  el.viewerBody.append(nav);
+  nav.querySelector('.pn-prev').onclick = () => stepPhoto(-1);
+  nav.querySelector('.pn-next').onclick = () => stepPhoto(1);
+  const stage = el.viewerBody.querySelector('.zoom-stage');
+  let sx = 0, sy = 0, st = 0, n = 0;
+  stage.addEventListener('touchstart', (e) => { n = e.touches.length; if (n === 1) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); } }, { passive: true });
+  stage.addEventListener('touchend', (e) => {
+    if (n !== 1 || e.touches.length || !ui.zoom || !ui.zoom.atFit()) return;
+    const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - st < 700) stepPhoto(dx < 0 ? 1 : -1);
+  }, { passive: true });
+}
+addEventListener('keydown', (e) => {
+  if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && el.dlgViewer && el.dlgViewer.open && !e.target.closest('input, textarea, [contenteditable="true"]')) {
+    if (stepPhoto(e.key === 'ArrowRight' ? 1 : -1)) e.preventDefault();
+  }
+});
+
 async function openFile(it) {
   const d = it.data;
   const kind = fileKind(d.type, d.name);
@@ -3844,10 +3885,11 @@ async function openFile(it) {
   if (ui.zoom) { ui.zoom.destroy(); ui.zoom = null; }
   el.viewerBody.innerHTML = html;
   el.viewerBody.classList.toggle('is-zoom', kind === 'image');
-  openDialog(el.dlgViewer);
+  if (!el.dlgViewer.open) openDialog(el.dlgViewer);
   if (kind === 'image') {
     const pct = el.viewerBody.querySelector('.zoom-pct');
     ui.zoom = new ZoomView(el.viewerBody.querySelector('.zoom-stage'), el.viewerBody.querySelector('img'), (label) => { pct.textContent = label; });
+    setupPhotoSwipe(it);
   }
   if (textual) {
     try {

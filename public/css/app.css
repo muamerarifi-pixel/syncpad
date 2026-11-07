@@ -2559,3 +2559,10 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
 .tts-status:empty { display: none; }
 .tts-voice { flex: none; max-width: 150px; height: 40px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: 600 13px var(--font); padding: 0 8px; }
 @media (max-width: 520px) { .tts-voice { max-width: 104px; } }
+
+/* 3.0.46: swipe between photos */
+.photo-nav { position: absolute; left: 50%; transform: translateX(-50%); top: 14px; z-index: 5; display: flex; align-items: center; gap: 6px; padding: 4px; border-radius: 999px; background: rgba(0, 0, 0, .55); color: #fff; }
+.photo-nav button { width: 38px; height: 38px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, .14); color: #fff; font-size: 26px; line-height: 1; cursor: pointer; }
+.photo-nav button:disabled { opacity: .3; cursor: default; }
+.pn-count { font: 700 13px var(--font); min-width: 46px; text-align: center; }
+.viewer-body.is-zoom { position: relative; }
