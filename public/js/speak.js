@@ -4,6 +4,8 @@ const VOICES = [
   ['bf_emma', 'Emma (UK, female)'], ['bm_george', 'George (UK, male)'], ['device', 'Device voice (offline)'],
 ];
 const SPEEDS = [0.8, 1, 1.2, 1.4, 1.7];
+// phones default to the device voice (the natural one is a big download and slow there); pick a natural voice to use it anyway
+const DEF_VOICE = typeof matchMedia === 'function' && matchMedia('(max-width: 760px)').matches ? 'device' : 'af_heart';
 const ls = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
 const lset = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
@@ -29,7 +31,7 @@ function synth(text) {
   const id = ++nextId;
   return new Promise((resolve, reject) => {
     waiting.set(id, { resolve, reject });
-    getWorker().postMessage({ id, type: 'say', text, voice: ls('sp-tts-voice', 'af_heart'), speed: Number(ls('sp-tts-speed', '1')) });
+    getWorker().postMessage({ id, type: 'say', text, voice: ls('sp-tts-voice', DEF_VOICE), speed: Number(ls('sp-tts-speed', '1')) });
   });
 }
 
@@ -61,7 +63,7 @@ function ensureBar() {
     <button class="tts-btn tts-stop" aria-label="Stop"><svg class="ic" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>`;
   document.body.append(bar);
   const v = bar.querySelector('.tts-voice');
-  v.value = ls('sp-tts-voice', 'af_heart');
+  v.value = ls('sp-tts-voice', DEF_VOICE);
   v.onchange = () => { lset('sp-tts-voice', v.value); restartFromCurrent(); };
   const sp = bar.querySelector('.tts-speed');
   const showSpeed = () => { sp.textContent = `${Number(ls('sp-tts-speed', '1'))}×`; };
@@ -85,7 +87,7 @@ export function speak(text) {
   run(++job);
   return true;
 }
-function useDevice() { return ls('sp-tts-voice', 'af_heart') === 'device' || !navigator.onLine && !state.ready || !('Worker' in window); }
+function useDevice() { return ls('sp-tts-voice', DEF_VOICE) === 'device' || !navigator.onLine && !state.ready || !('Worker' in window); }
 /** wait for a piece of audio; if the natural voice is far too slow here, say so and use the device voice */
 function within(promise, my) {
   return new Promise((resolve, reject) => {
@@ -175,4 +177,4 @@ function finish() { state.playing = false; if (bar) bar.hidden = true; }
 export function stop() { halt(); finish(); state.chunks = []; }
 export function isSpeaking() { return state.playing; }
 /** Start downloading the voice early (when the user is online). */
-export function warmUp() { if (navigator.onLine && ls('sp-tts-voice', 'af_heart') !== 'device') getWorker().postMessage({ type: 'load' }); }
+export function warmUp() { if (navigator.onLine && ls('sp-tts-voice', DEF_VOICE) !== 'device') getWorker().postMessage({ type: 'load' }); }
