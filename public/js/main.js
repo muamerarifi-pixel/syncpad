@@ -13,6 +13,7 @@ import { Collage } from './collage.js';
 import { ZoomView } from './zoom.js';
 import * as De from './declutter.js';
 import { ZipWriter, namer } from './backup.js';
+import { speak, warmUp as warmVoice } from './speak.js';
 import { NoteCanvas, renderStatic as renderCanvasStatic, fallback as canvasFallback, fromHtml as canvasFromHtml } from './canvas.js';
 import { ImageTools } from './noteimg.js';
 import { openExport } from './cvexport.js';
@@ -22,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.41';
+const VERSION = '3.0.42';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -498,6 +499,7 @@ function wire() {
   el.joinForm.addEventListener('submit', (e) => { e.preventDefault(); joinWithCode(); });
   setupPinLogin();
   el.btnBackup.addEventListener('click', makeBackup);
+  setupListen();
   el.setWall.addEventListener('click', (e) => { const b = e.target.closest('[data-wall-opt]'); if (b) setWall(b.dataset.wallOpt); });
   setTimeout(backupReminder, 8000);
   el.joinCode.addEventListener('input', () => {
@@ -4163,6 +4165,52 @@ function applyTheme() {
   updateManifest();
   requestAnimationFrame(syncThemeColor);
 }
+/* ---------- read aloud: selected text (or the whole note) ---------- */
+function setupListen() {
+  const pill = document.createElement('button');
+  pill.className = 'listen-pill';
+  pill.hidden = true;
+  pill.innerHTML = '<svg class="ic" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg><span>Listen</span>';
+  document.body.append(pill);
+  let selText = '';
+  const place = () => {
+    const sel = getSelection();
+    const t = sel && !sel.isCollapsed ? sel.toString().trim() : '';
+    const node = sel && sel.rangeCount ? sel.getRangeAt(0).commonAncestorContainer : null;
+    const host = node && (node.nodeType === 1 ? node : node.parentElement);
+    const ok = t.length > 1 && host && !host.closest('input, textarea, .tts-bar, .listen-pill, dialog:not(.dv)');
+    if (!ok) { pill.hidden = true; return; }
+    selText = t;
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    const touch = matchMedia('(pointer: coarse)').matches;
+    let top = touch ? r.bottom + 14 : r.top - 46;
+    if (top < 8) top = r.bottom + 14;
+    if (top > innerHeight - 60) top = Math.max(8, r.top - 50);
+    pill.style.top = `${Math.round(top)}px`;
+    pill.style.left = `${Math.round(Math.min(innerWidth - 120, Math.max(8, r.left + r.width / 2 - 52)))}px`;
+    if (pill.hidden) { pill.hidden = false; warmVoice(); }
+  };
+  let raf = 0;
+  document.addEventListener('selectionchange', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(place); });
+  addEventListener('scroll', () => { if (!pill.hidden) place(); }, true);
+  pill.addEventListener('pointerdown', (e) => e.preventDefault());
+  pill.addEventListener('click', () => { if (selText) speak(selText); pill.hidden = true; });
+  const tb = document.querySelector('[data-clip="paste"]');
+  if (tb) {
+    const b = document.createElement('button');
+    b.className = 'clip-btn';
+    b.title = 'Listen: reads the selected text aloud, or the whole note';
+    b.innerHTML = '<svg class="ic" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg><span>Listen</span>';
+    b.addEventListener('pointerdown', (e) => e.preventDefault());
+    b.addEventListener('click', () => {
+      const sel = getSelection();
+      const t = sel && !sel.isCollapsed && el.editorText.contains(sel.anchorNode) ? sel.toString() : el.editorText.innerText;
+      if (!speak(t)) toast('Nothing to read here yet.');
+    });
+    tb.after(b);
+  }
+}
+
 /* ---------- backup: download everything as one .zip ---------- */
 const BACKUP_KEY = 'sp-backup-at';
 const BACKUP_EVERY = 30 * 864e5;

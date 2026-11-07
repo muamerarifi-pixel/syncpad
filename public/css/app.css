@@ -2543,3 +2543,19 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
 [data-theme="dark"] .ti[data-k="sheet"] { background: rgba(40, 170, 90, .2); color: #6fd69a; }
 [data-theme="dark"] :is(.ti[data-k="doc"], .ti[data-k="archive"], .ti[data-k="audio"], .ti[data-k="slides"]) { background: rgba(140, 120, 255, .2); color: #b6a8ff; }
 .logo img { border-radius: 9px; }
+
+/* 3.0.42: read aloud */
+.listen-pill { position: fixed; z-index: 90; display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px 8px 11px; border-radius: 999px; border: 0; background: var(--accent); color: #fff; font: 700 14px var(--font); box-shadow: 0 6px 18px rgba(11, 138, 87, .35); cursor: pointer; }
+.listen-pill .ic, .tts-bar .ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.tts-bar { position: fixed; z-index: 95; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom)); width: min(620px, calc(100vw - 20px)); display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border-strong); box-shadow: 0 12px 34px rgba(16, 24, 40, .18); }
+@media (max-width: 760px) { .tts-bar { bottom: calc(76px + env(safe-area-inset-bottom)); } }
+.tts-btn { flex: none; min-width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: 700 14px var(--font); display: grid; place-items: center; cursor: pointer; }
+.tts-play { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tts-play .p-play { display: none; fill: currentColor; } .tts-bar.paused .tts-play .p-play { display: block; } .tts-bar.paused .tts-play .p-pause { display: none; }
+.tts-stop rect { fill: currentColor; stroke: none; }
+.tts-mid { flex: 1; min-width: 0; }
+.tts-title { font-weight: 650; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tts-status { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tts-status:empty { display: none; }
+.tts-voice { flex: none; max-width: 150px; height: 40px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: 600 13px var(--font); padding: 0 8px; }
+@media (max-width: 520px) { .tts-voice { max-width: 104px; } }
