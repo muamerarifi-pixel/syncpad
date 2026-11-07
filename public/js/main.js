@@ -22,7 +22,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.40';
+const VERSION = '3.0.41';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -3570,12 +3570,32 @@ function autoFormat(e) {
   else exec('formatBlock', kind);
 }
 
+/** done items sink to the bottom of their checklist (undone ones rise back), with a short slide */
+function sortChecklist(ul) {
+  if (!ul || !ul.isConnected || !ul.matches('ul[data-checklist]')) return;
+  const items = [...ul.children].filter((c) => c.tagName === 'LI');
+  const sorted = [...items.filter((li) => li.getAttribute('data-checked') !== 'true'), ...items.filter((li) => li.getAttribute('data-checked') === 'true')];
+  if (sorted.every((li, i) => li === items[i])) return;
+  const before = new Map(items.map((li) => [li, li.getBoundingClientRect().top]));
+  for (const li of sorted) ul.append(li);
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    for (const li of sorted) {
+      const dy = before.get(li) - li.getBoundingClientRect().top;
+      if (!dy) continue;
+      li.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    }
+  }
+  onEditorInput();
+}
+
 function onEditorClick(e) {
   const li = e.target.closest('ul[data-checklist] > li');
   if (li && e.target === li && e.clientX - li.getBoundingClientRect().left < 30 * getZoom()) {
     e.preventDefault();
     li.setAttribute('data-checked', li.getAttribute('data-checked') === 'true' ? 'false' : 'true');
     onEditorInput();
+    clearTimeout(ui.sortTaskT);
+    ui.sortTaskT = setTimeout(() => sortChecklist(li.parentElement), 380);
     return;
   }
   const f = e.target.closest('[data-file]');
