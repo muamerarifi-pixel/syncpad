@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.51';
+const VERSION = '3.0.52';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2752,6 +2752,8 @@ function openNoteItem() {
 }
 
 function closeEditor(fromLayer = false) {
+  try { const sel = getSelection(); if (sel && el.editorText.contains(sel.anchorNode)) sel.removeAllRanges(); } catch {}
+  if (ui.hideListen) ui.hideListen();
   saveNote.flush();
   const n = openNoteItem();
   if (n && store.items.has(n.id) && !noteText(n).trim() && !/data-file/.test(n.data.html || '') && !(n.data.canvas && n.data.canvas.items.length)) {
@@ -4309,9 +4311,10 @@ function setupListen() {
     const node = sel && sel.rangeCount ? sel.getRangeAt(0).commonAncestorContainer : null;
     const host = node && (node.nodeType === 1 ? node : node.parentElement);
     const ok = t.length > 1 && host && !host.closest('input, textarea, .tts-bar, .listen-pill, dialog:not(.dv)');
-    if (!ok) { pill.hidden = true; return; }
+    const r = ok ? sel.getRangeAt(0).getBoundingClientRect() : null;
+    // hide if the selected text is no longer on screen (note closed, list changed, scrolled away)
+    if (!ok || !host.isConnected || !host.getClientRects().length || !r || (!r.width && !r.height) || r.bottom < 0 || r.top > innerHeight) { pill.hidden = true; return; }
     selText = t;
-    const r = sel.getRangeAt(0).getBoundingClientRect();
     const touch = matchMedia('(pointer: coarse)').matches;
     let top = touch ? r.bottom + 14 : r.top - 46;
     if (top < 8) top = r.bottom + 14;
@@ -4324,6 +4327,9 @@ function setupListen() {
   document.addEventListener('selectionchange', () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(place); });
   addEventListener('scroll', () => { if (!pill.hidden) place(); }, true);
   pill.addEventListener('pointerdown', (e) => e.preventDefault());
+  // tapping anywhere else, or leaving the note, drops the button
+  document.addEventListener('pointerdown', (e) => { if (!pill.hidden && !pill.contains(e.target)) setTimeout(place, 60); }, true);
+  ui.hideListen = () => { pill.hidden = true; };
   pill.addEventListener('click', () => { if (selText) speak(selText); pill.hidden = true; });
   const tb = document.querySelector('[data-clip="paste"]');
   if (tb) {
