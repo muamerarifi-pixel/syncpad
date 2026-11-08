@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.50';
+const VERSION = '3.0.51';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2634,6 +2634,22 @@ function restoreNotePos(id) {
 }
 let notePosT = 0;
 let editBtnT = 0;
+/* phones: while only reading a note, swipe right to go back to the notes list */
+(() => {
+  let sx = 0, sy = 0, st = 0, ok = false;
+  document.addEventListener('touchstart', (e) => {
+    ok = e.touches.length === 1 && ui.readMode && isMobileLayout() && el.editor.contains(e.target) && !e.target.closest('.fmt-bar, .tts-bar, .edit-toggle, img, table, pre, .zoom-stage');
+    if (!ok) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now();
+  }, { passive: true, capture: true });
+  document.addEventListener('touchend', (e) => {
+    if (!ok || e.touches.length) return;
+    ok = false;
+    const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    const sel = getSelection();
+    if (dx > 90 && Math.abs(dy) < dx * 0.5 && Date.now() - st < 800 && (!sel || sel.isCollapsed) && ui.readMode) el.btnEditorBack.click();
+  }, { passive: true, capture: true });
+})();
 document.addEventListener('scroll', (e) => {
   if (e.target !== el.editorText) return;
   clearTimeout(notePosT); notePosT = setTimeout(saveNotePos, 250);
