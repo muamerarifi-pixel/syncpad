@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.53';
+const VERSION = '3.0.52';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2699,28 +2699,6 @@ function renderEditToggle() {
     ? '<svg class="ic"><use href="#i-pen"/></svg><span>Edit</span>'
     : '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Done</span>';
   b.classList.toggle('done', !ui.readMode);
-  let lb = document.getElementById('read-listen');
-  if (!lb) {
-    lb = document.createElement('button');
-    lb.id = 'read-listen';
-    lb.className = 'edit-toggle read-listen';
-    lb.innerHTML = '<svg class="ic" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg><span>Listen</span>';
-    lb.addEventListener('pointerdown', (e) => e.preventDefault());
-    lb.addEventListener('click', listenFromHere);
-    el.editor.append(lb);
-  }
-  lb.hidden = b.hidden || !ui.readMode;
-}
-/** read the selection, or the note from the first line on screen to the end */
-function listenFromHere() {
-  const ed = el.editorText, sel = getSelection();
-  if (sel && !sel.isCollapsed && ed.contains(sel.anchorNode) && sel.toString().trim()) { speak(sel.toString()); return; }
-  const top = ed.getBoundingClientRect().top;
-  const blocks = $$('p, li, h1, h2, h3, h4, blockquote, pre, td', ed).filter((b) => !b.querySelector('p, li'));
-  const first = blocks.find((b) => b.getBoundingClientRect().bottom > top + 8);
-  let text = ed.innerText;
-  if (first) { const i = blocks.indexOf(first); text = blocks.slice(i).map((b) => b.innerText).join('\n'); }
-  if (!speak(text)) toast('Nothing to read here yet.');
 }
 function setReadMode(on) {
   ui.readMode = on;
