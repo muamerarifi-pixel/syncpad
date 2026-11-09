@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.55';
+const VERSION = '3.0.56';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -256,7 +256,8 @@ function wire() {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isTouch()) { e.preventDefault(); sendText(); }
   });
   el.composer.addEventListener('submit', (e) => { e.preventDefault(); sendText(); });
-  el.btnUpload.addEventListener('click', () => el.fileInput.click());
+  if (el.btnAddFiles) el.btnAddFiles.addEventListener('click', () => el.fileInput.click());
+  if (el.btnUpload) el.btnUpload.addEventListener('click', () => el.fileInput.click());
   el.fileInput.addEventListener('change', () => { sendFiles([...el.fileInput.files]); el.fileInput.value = ''; });
   el.noteFileInput.addEventListener('change', () => { attachToNote([...el.noteFileInput.files]); el.noteFileInput.value = ''; });
 
@@ -747,6 +748,7 @@ function wire() {
     } else if (ui.tab === 'drops' && !$('dialog[open]') && !(e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]'))) {
       if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); setSelection(new Set(visibleDrops().map((i) => i.id))); }
       else if ((e.key === 'Delete' || e.key === 'Backspace') && ui.selecting && ui.selected.size) { e.preventDefault(); selAction('trash'); }
+      else if (mod && e.key.toLowerCase() === 'u') { e.preventDefault(); el.fileInput.click(); }
     }
   });
 
@@ -1058,7 +1060,7 @@ function renderDrops() {
       : ui.dtype !== 'all' ? `No ${esc(TYPES.find((x) => x[0] === ui.dtype)[1].toLowerCase())} here. <button class="more-link" data-act="all-types">Show all types</button>`
       : currentFolder() ? 'This folder is empty. Anything you send or drop while it’s open goes into it, or use “Move to folder” on any drop.'
       : inFolders ? 'All tidy — everything is in folders. New drops arrive here.'
-      : 'Nothing here yet.'}</p></div>`;
+      : 'Nothing here yet.'}</p>${!ui.query && ui.dtype === 'all' ? `<p class="row" style="margin-top:12px;justify-content:center;"><button class="btn btn-sm btn-primary" data-act="pick"><svg class="ic"><use href="#i-clip"/></svg><span>Add files</span></button></p>` : ''}</div>`;
     return;
   }
   const nodes = [];
@@ -1092,7 +1094,7 @@ function emptyDrops() {
     <h3>Send anything to your devices</h3>
     <p>${isTouch() ? 'Pick files or type a message below.' : 'Drop files anywhere, paste with Ctrl+V, or type a message below.'} It appears instantly on every connected device.</p>
     <div class="row">
-      <button class="btn btn-primary" data-act="pick"><svg class="ic"><use href="#i-clip"/></svg><span>Choose files</span></button>
+      <button class="btn btn-primary" data-act="pick"><svg class="ic"><use href="#i-clip"/></svg><span>Add files</span></button>
       ${alone ? `<button class="btn btn-soft" data-act="connect"><svg class="ic"><use href="#i-qr"/></svg><span>Connect a device</span></button>` : ''}
     </div>
     ${alone ? `<button class="btn btn-ghost signin-link" data-act="signin"><svg class="ic"><use href="#i-lock"/></svg><span>Already use SyncPad? Sign in with your password</span></button>` : ''}
@@ -1672,7 +1674,7 @@ function onFeedContext(e) {
   const it = card && store.items.get(card.dataset.id);
   if (!it) {
     openMenu(null, [
-      { icon: 'clip', label: 'Send files…', run: () => el.fileInput.click() },
+      { icon: 'clip', label: 'Add files…', run: () => el.fileInput.click() },
       { icon: 'doc', label: 'New document…', run: newDocument },
       { icon: 'folder', label: 'New folder…', run: async () => { const f = await createFolder(); if (f) setDropView('f:' + f.id); } },
       { icon: 'check', label: 'Select all', run: () => setSelection(new Set(visibleDrops().map((i) => i.id))) }
@@ -5435,7 +5437,7 @@ function newMenu(anchor) {
     { icon: 'pen', label: 'New note', run: () => newNote() },
     { icon: 'task', label: 'New checklist', run: () => { newNote(); setTimeout(() => { makeChecklist(); onEditorInput(); }, 40); } },
     { icon: 'canvas', label: 'New canvas — draw and place anything', run: () => newNote({ canvas: true }) },
-    { icon: 'upload', label: 'Upload files to all devices', run: () => el.fileInput.click() },
+    { icon: 'clip', label: 'Add files to all devices…', run: () => el.fileInput.click() },
     { icon: 'doc', label: 'New document (Word or PDF)', run: newDocument },
     { icon: 'book', label: 'Import e-book or document as a note…', run: () => el.importInput.click() }
   ]);

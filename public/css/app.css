@@ -2580,3 +2580,39 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
 
 .viewer-title { cursor: pointer; transition: opacity .15s; }
 .viewer-title:hover { opacity: .85; text-decoration: underline; text-underline-offset: 3px; }
+
+/* 3.0.56: prominent Add files button in the drops header */
+.btn-add-files {
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+  transition: background .15s, transform .1s;
+  flex: none;
+}
+.btn-add-files:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.btn-add-files:active {
+  transform: scale(.97);
+}
+.btn-add-files .ic {
+  width: 16px;
+  height: 16px;
+}
+@media (max-width: 480px) {
+  .btn-add-files {
+    padding: 0 10px;
+    font-size: 12.5px;
+    gap: 5px;
+  }
+}
