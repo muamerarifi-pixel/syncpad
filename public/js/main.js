@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.54';
+const VERSION = '3.0.55';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -575,6 +575,19 @@ function wire() {
     if (canEditDoc(it)) openDocEdit(it);
     else if (canEditPdf(it)) (ui.docSource ? editDocument(it, { kind: 'html', html: ui.docSource }) : openPdfEdit(it));
     else openMarkup(it);
+  });
+  el.viewerTitle.title = 'Click to rename';
+  el.viewerTitle.addEventListener('click', () => {
+    if (ui.viewing) renameDrop(ui.viewing);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'F2' && ui.tab === 'drops' && !e.target.closest('input, textarea, [contenteditable="true"]')) {
+      if (ui.selected && ui.selected.size === 1) {
+        const id = [...ui.selected][0];
+        const it = store.items.get(id);
+        if (it) { e.preventDefault(); renameDrop(it); }
+      }
+    }
   });
   el.dlgViewer.addEventListener('close', () => {
     if (ui.zoom) { ui.zoom.destroy(); ui.zoom = null; }
@@ -1312,6 +1325,7 @@ function dropMenu(anchor, it, at) {
     const url = singleUrl(it.data.text || '');
     m.push({ icon: 'copy', label: 'Copy text', run: async () => { await copyText(it.data.text); toast('Copied'); } });
     if (De.isAiText(it.data.text || '')) m.push({ icon: 'sparkle', label: 'Copy clean text', run: async () => { await copyText(De.plainText(it.data.text, declutterOpts() || {})); toast('Clean text copied'); } });
+    m.push({ icon: 'pen', label: url ? 'Rename link…' : 'Edit message…', run: () => renameDrop(it) });
     if (url) m.push({ icon: 'link', label: ytInfo(url) ? 'Play privately' : 'Open link', run: () => openUrl(url) });
     if (navigator.share && isTouch()) m.push({ icon: 'share', label: 'Share…', run: () => navigator.share(url ? { url } : { text: it.data.text }).catch(() => {}) });
     m.push({ icon: 'note', label: 'Save as note', run: () => saveClipAsNote(it) });
@@ -1320,6 +1334,10 @@ function dropMenu(anchor, it, at) {
     const kind = fileKind(it.data.type, it.data.name);
     if (p && p.state === 'err') m.push({ icon: 'upload', label: 'Try again', run: () => files.requeue(it.id) });
     m.push({ icon: 'eye', label: 'Open', run: () => openFile(it) });
+    if (canMarkup(it)) m.push({ icon: 'crop', label: 'Edit (crop / hide details)', run: () => openMarkup(it) });
+    if (canEditPdf(it)) m.push({ icon: 'pen', label: 'Edit text', run: () => openPdfEdit(it) });
+    if (canEditDoc(it)) m.push({ icon: 'pen', label: 'Edit document', run: () => openDocEdit(it) });
+    m.push({ icon: 'pen', label: 'Rename…', run: () => renameDrop(it) });
     m.push({ icon: 'download', label: 'Download', run: () => files.download(it) });
     if (files.canShare()) {
       files.prefetch(it);
@@ -1333,9 +1351,6 @@ function dropMenu(anchor, it, at) {
         catch { toast('Could not save it for offline use. Check your connection.'); }
       } });
     }
-    if (canMarkup(it)) m.splice(1, 0, { icon: 'crop', label: 'Edit (crop / hide details)', run: () => openMarkup(it) });
-    if (canEditPdf(it)) m.splice(1, 0, { icon: 'pen', label: 'Edit text', run: () => openPdfEdit(it) });
-    if (canEditDoc(it)) m.splice(1, 0, { icon: 'pen', label: 'Edit document', run: () => openDocEdit(it) });
     if (kind === 'image' && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
       m.push({ icon: 'copy', label: 'Copy image', run: () => files.copyImage(it).then(() => toast('Image copied')).catch(() => toast('Copy is not supported for this image.')) });
     }
@@ -1741,6 +1756,60 @@ async function renameFolder(id) {
   await store.save(f);
   sync.schedule();
 }
+
+async function renameDrop(it) {
+  if (!it) return;
+  if (it.kind === 'file') {
+    const cur = it.data.name || '';
+    const lastDot = cur.lastIndexOf('.');
+    const ext = lastDot > 0 ? cur.slice(lastDot) : '';
+    const res = await promptDialog('Rename file', 'File name', cur, { selectBase: true });
+    if (!res) return;
+    let next = res.trim();
+    if (!next || next === cur) return;
+    if (ext && !next.includes('.')) next += ext;
+    next = next.slice(0, 255);
+    it.data = { ...it.data, name: next };
+    it.updated = Date.now();
+    cards.delete(it.id);
+    await store.save(it);
+    sync.schedule();
+    renderDrops();
+    if (ui.viewing && ui.viewing.id === it.id) {
+      el.viewerTitle.textContent = next;
+    }
+    toast('File renamed');
+  } else if (it.kind === 'clip') {
+    const url = singleUrl(it.data.text || '');
+    if (url) {
+      const curTitle = (it.data.link && it.data.link.title) || '';
+      const res = await promptDialog('Rename link', 'Link title', curTitle || url);
+      if (!res) return;
+      const next = res.trim().slice(0, 200);
+      if (!next || next === curTitle) return;
+      it.data = { ...it.data, link: { ...(it.data.link || {}), title: next } };
+      it.updated = Date.now();
+      cards.delete(it.id);
+      await store.save(it);
+      sync.schedule();
+      renderDrops();
+      toast('Link renamed');
+    } else {
+      const cur = it.data.text || '';
+      const res = await promptDialog('Edit message', 'Message text', cur);
+      if (!res) return;
+      const next = res.trim();
+      if (!next || next === cur) return;
+      it.data = { ...it.data, text: next };
+      it.updated = Date.now();
+      cards.delete(it.id);
+      await store.save(it);
+      sync.schedule();
+      renderDrops();
+      toast('Message updated');
+    }
+  }
+}
 async function deleteFolder(id) {
   const f = store.items.get(id);
   if (!f) return;
@@ -1888,7 +1957,14 @@ function promptDialog(title, placeholder, value, opts = {}) {
       resolve(result);
     }, { once: true });
     openDialog(el.dlgPrompt);
-    setTimeout(() => { el.promptInput.focus(); el.promptInput.select(); }, 30);
+    setTimeout(() => {
+      el.promptInput.focus();
+      if (opts.selectBase && value && value.lastIndexOf('.') > 0) {
+        el.promptInput.setSelectionRange(0, value.lastIndexOf('.'));
+      } else {
+        el.promptInput.select();
+      }
+    }, 30);
   });
 }
 
