@@ -5,7 +5,7 @@ import {
 } from './util.js';
 import { Store, readV1Notes } from './store.js';
 import { Sync } from './sync.js';
-import { Files } from './files.js';
+import { Files, makePdfThumb } from './files.js';
 import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js';
 import qrcode from '/vendor/qrcode.mjs';
 import { Markup } from './markup.js';
@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.56';
+const VERSION = '3.0.57';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1043,6 +1043,72 @@ function typeMenu(anchor) {
   openMenu(anchor, TYPES.map(([t, l]) => ({ icon: { all: 'drops', media: 'image', files: 'file', links: 'link', text: 'note', pinned: 'pin' }[t], label: (ui.dtype === t ? '✓ ' : '') + l, run: () => setDropType(t) })));
 }
 
+/* ───────── PDF preview thumbnails ───────── */
+
+const pdfThumbQueue = new Set();
+let pdfThumbWorking = false;
+
+function queuePdfThumb(it) {
+  if (!it || it.kind !== 'file' || it.data.thumb || it.data.trashed) return;
+  if (fileKind(it.data.type, it.data.name) !== 'pdf') return;
+  if (it.data.size > 60 * 1024 * 1024) return;
+  if (pdfThumbQueue.has(it.id)) return;
+  pdfThumbQueue.add(it.id);
+  pumpPdfThumbs();
+}
+
+async function pumpPdfThumbs() {
+  if (pdfThumbWorking || !pdfThumbQueue.size) return;
+  pdfThumbWorking = true;
+  try {
+    const id = pdfThumbQueue.values().next().value;
+    pdfThumbQueue.delete(id);
+    const it = store.items.get(id);
+    if (!it || it.data.thumb || it.data.trashed) return;
+
+    let blob = files.mem.get(id) || (await files.cachedBlob(id).catch(() => null));
+    if (!blob) {
+      if (it.data.size > 35 * 1024 * 1024 || (navigator.connection && navigator.connection.saveData) || !navigator.onLine) {
+        return;
+      }
+      try {
+        blob = await files.blobOf(it);
+      } catch {
+        return;
+      }
+    }
+    if (!blob) return;
+
+    const res = await makePdfThumb(blob).catch((e) => {
+      console.warn('pdf thumb error', it.data.name, e);
+      return null;
+    });
+
+    if (res && res.thumb) {
+      const cur = store.items.get(id);
+      if (cur && !cur.data.thumb) {
+        cur.data = { ...cur.data, thumb: res.thumb, w: res.w, h: res.h };
+        cur.updated = Date.now();
+        await store.save(cur);
+        sync.schedule();
+        const card = cards.get(id);
+        if (card && card.node) {
+          const btn = card.node.querySelector('.ri-thumb, .tile-media');
+          if (btn) btn.innerHTML = thumbHTML(cur);
+        }
+        cards.delete(id);
+      }
+    }
+  } catch (err) {
+    console.warn('pumpPdfThumbs error', err);
+  } finally {
+    pdfThumbWorking = false;
+    if (pdfThumbQueue.size) {
+      setTimeout(pumpPdfThumbs, 150);
+    }
+  }
+}
+
 function renderDrops() {
   const all = dropItems();
   renderDropsNav(all);
@@ -1069,6 +1135,9 @@ function renderDrops() {
   let group = null;
   const custom = dropOrder() === 'custom' && !ui.query;
   for (const it of list) {
+    if (it.kind === 'file' && !it.data.thumb && fileKind(it.data.type, it.data.name) === 'pdf') {
+      queuePdfThumb(it);
+    }
     const d = custom ? 'My order' : dayLabel(it.created);
     if (d !== day) {
       day = d;
@@ -1145,7 +1214,7 @@ function thumbHTML(it) {
   }
   const d = it.data;
   const kind = fileKind(d.type, d.name);
-  if (d.thumb) return `<img src="${esc(d.thumb)}" alt="" draggable="false" decoding="async">${kind === 'video' ? '<span class="mini-play"><svg class="ic" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg></span>' : ''}`;
+  if (d.thumb) return `<img src="${esc(d.thumb)}" alt="" draggable="false" decoding="async" class="${kind === 'pdf' ? 'doc-thumb' : ''}">${kind === 'video' ? '<span class="mini-play"><svg class="ic" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg></span>' : kind === 'pdf' ? '<span class="mini-badge pdf-badge">PDF</span>' : ''}`;
   const ext = extOf(d.name);
   return `<span class="ti" data-k="${kind}">${ext && ext.length <= 4 && !['image', 'video', 'audio'].includes(kind) ? `<span class="ext">${esc(ext)}</span>` : `<svg class="ic"><use href="#i-${kindIcon(kind)}"/></svg>`}</span>`;
 }
@@ -6161,6 +6230,8 @@ async function indexDocText(it, blob) {
 /** quietly index documents that were added before 3.0 (or on devices without this version) */
 function indexBacklog() {
   if (ui.indexing) return;
+  const pdfTodo = store.list('file').filter((it) => !it.data.trashed && !it.data.thumb && fileKind(it.data.type, it.data.name) === 'pdf' && it.data.size < 60 * 1024 * 1024);
+  for (const p of pdfTodo) queuePdfThumb(p);
   const todo = store.list('file').filter((it) => !it.data.trashed && !it.data.fx && !files.progress.get(it.id) && indexable(it.data.type, it.data.name) && it.data.size < 60 * 1024 * 1024)
     .sort((a, b) => b.created - a.created);
   const it = todo.find((x) => !(ui.indexTried || (ui.indexTried = new Set())).has(x.id));

@@ -98,7 +98,7 @@ export class Files extends EventTarget {
       const data = { name, size: file.size, type: file.type || '', parent };
       if (folder && !parent) data.folder = folder;
       if (keep) data.keep = true;
-      try { Object.assign(data, (await withTimeout(makeThumb(file), 3000)) || {}); } catch {}
+      try { Object.assign(data, (await withTimeout(makeThumb(file), 5000)) || {}); } catch {}
       const item = { id, kind: 'file', rev: 0, created: at || now, updated: now, device: this.store.get('device'), data, local: { up: true } };
       this.mem.set(id, file);
       this.cacheCopy(id, file, data.type);
@@ -363,7 +363,74 @@ async function makeThumb(file) {
       URL.revokeObjectURL(url);
     }
   }
+  if (kind === 'pdf' && file.size < 60 * 1024 * 1024) {
+    try {
+      return await makePdfThumb(file);
+    } catch (e) {
+      console.warn('pdf thumb failed', e);
+    }
+  }
   return null;
+}
+
+export async function makePdfThumb(input) {
+  let bytes;
+  try {
+    if (input instanceof Uint8Array) {
+      bytes = input;
+    } else if (input instanceof ArrayBuffer) {
+      bytes = new Uint8Array(input);
+    } else if (input && typeof input.arrayBuffer === 'function') {
+      bytes = new Uint8Array(await input.arrayBuffer());
+    } else {
+      return null;
+    }
+  } catch (err) {
+    console.warn('makePdfThumb read bytes error', err);
+    return null;
+  }
+
+  const V = '/vendor/pdf/';
+  try {
+    const lib = await import(V + 'pdf.min.mjs');
+    if (!lib.GlobalWorkerOptions.workerSrc) {
+      lib.GlobalWorkerOptions.workerSrc = V + 'pdf.worker.min.mjs';
+    }
+    const task = lib.getDocument({
+      data: bytes,
+      isEvalSupported: false,
+      useWasm: false,
+      standardFontDataUrl: V + 'standard_fonts/',
+      verbosity: 0
+    });
+    const pdf = await task.promise;
+    try {
+      const page = await pdf.getPage(1);
+      const vp0 = page.getViewport({ scale: 1 });
+      const targetW = 440;
+      const scale = Math.min(2, targetW / Math.max(vp0.width, vp0.height));
+      const vp = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(vp.width));
+      canvas.height = Math.max(1, Math.round(vp.height));
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      page.cleanup();
+      let thumb = canvas.toDataURL('image/webp', 0.75);
+      if (!thumb.startsWith('data:image/webp') || thumb.length > 150000) {
+        thumb = canvas.toDataURL('image/jpeg', 0.72);
+      }
+      canvas.width = canvas.height = 0;
+      return { thumb, w: Math.round(vp0.width), h: Math.round(vp0.height) };
+    } finally {
+      task.destroy().catch(() => {});
+    }
+  } catch (err) {
+    console.warn('makePdfThumb render error', err);
+    return null;
+  }
 }
 
 function drawThumb(src, w, h) {
