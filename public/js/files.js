@@ -98,7 +98,7 @@ export class Files extends EventTarget {
       const data = { name, size: file.size, type: file.type || '', parent };
       if (folder && !parent) data.folder = folder;
       if (keep) data.keep = true;
-      try { Object.assign(data, (await withTimeout(makeThumb(file), 5000)) || {}); } catch {}
+      try { Object.assign(data, (await withTimeout(makeThumb(file), 8000)) || {}); } catch {}
       const item = { id, kind: 'file', rev: 0, created: at || now, updated: now, device: this.store.get('device'), data, local: { up: true } };
       this.mem.set(id, file);
       this.cacheCopy(id, file, data.type);
@@ -342,111 +342,17 @@ function waitForNetwork(ms) {
   });
 }
 
-async function makeThumb(file) {
-  const kind = fileKind(file.type, file.name);
-  if (kind === 'image' && file.size < 60 * 1024 * 1024) {
-    const bmp = await createImageBitmap(file);
-    const out = drawThumb(bmp, bmp.width, bmp.height);
-    bmp.close && bmp.close();
-    return out;
-  }
-  if (kind === 'video') {
-    const url = URL.createObjectURL(file);
-    try {
-      const v = document.createElement('video');
-      v.muted = true; v.playsInline = true; v.preload = 'metadata'; v.src = url;
-      await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = rej; });
-      v.currentTime = Math.min(1, (v.duration || 2) / 3);
-      await new Promise((res) => { v.onseeked = res; setTimeout(res, 1500); });
-      return drawThumb(v, v.videoWidth, v.videoHeight);
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-  if (kind === 'pdf' && file.size < 60 * 1024 * 1024) {
-    try {
-      return await makePdfThumb(file);
-    } catch (e) {
-      console.warn('pdf thumb failed', e);
-    }
-  }
-  return null;
+export async function makeFileThumb(input, meta) {
+  const { makeFileThumb: gen } = await import('./thumb.js');
+  return gen(input, meta);
 }
 
 export async function makePdfThumb(input) {
-  let bytes;
-  try {
-    if (input instanceof Uint8Array) {
-      bytes = input;
-    } else if (input instanceof ArrayBuffer) {
-      bytes = new Uint8Array(input);
-    } else if (input && typeof input.arrayBuffer === 'function') {
-      bytes = new Uint8Array(await input.arrayBuffer());
-    } else {
-      return null;
-    }
-  } catch (err) {
-    console.warn('makePdfThumb read bytes error', err);
-    return null;
-  }
-
-  const V = '/vendor/pdf/';
-  try {
-    const lib = await import(V + 'pdf.min.mjs');
-    if (!lib.GlobalWorkerOptions.workerSrc) {
-      lib.GlobalWorkerOptions.workerSrc = V + 'pdf.worker.min.mjs';
-    }
-    const task = lib.getDocument({
-      data: bytes,
-      isEvalSupported: false,
-      useWasm: false,
-      standardFontDataUrl: V + 'standard_fonts/',
-      verbosity: 0
-    });
-    const pdf = await task.promise;
-    try {
-      const page = await pdf.getPage(1);
-      const vp0 = page.getViewport({ scale: 1 });
-      const targetW = 440;
-      const scale = Math.min(2, targetW / Math.max(vp0.width, vp0.height));
-      const vp = page.getViewport({ scale });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(vp.width));
-      canvas.height = Math.max(1, Math.round(vp.height));
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      await page.render({ canvasContext: ctx, viewport: vp }).promise;
-      page.cleanup();
-      let thumb = canvas.toDataURL('image/webp', 0.75);
-      if (!thumb.startsWith('data:image/webp') || thumb.length > 150000) {
-        thumb = canvas.toDataURL('image/jpeg', 0.72);
-      }
-      canvas.width = canvas.height = 0;
-      return { thumb, w: Math.round(vp0.width), h: Math.round(vp0.height) };
-    } finally {
-      task.destroy().catch(() => {});
-    }
-  } catch (err) {
-    console.warn('makePdfThumb render error', err);
-    return null;
-  }
+  const { renderPdfThumb } = await import('./thumb.js');
+  const res = await renderPdfThumb(input);
+  return res && !res.failed ? res : null;
 }
 
-function drawThumb(src, w, h) {
-  if (!w || !h) return null;
-  const scale = Math.min(1, 440 / Math.max(w, h));
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.round(w * scale));
-  c.height = Math.max(1, Math.round(h * scale));
-  const ctx = c.getContext('2d');
-  ctx.drawImage(src, 0, 0, c.width, c.height);
-  let thumb = c.toDataURL('image/webp', 0.72);
-  if (!thumb.startsWith('data:image/webp') || thumb.length > 150000) {
-    ctx.globalCompositeOperation = 'destination-over';
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, c.width, c.height);
-    thumb = c.toDataURL('image/jpeg', 0.7);
-  }
-  return { thumb, w, h };
+async function makeThumb(file) {
+  return makeFileThumb(file, { name: file.name, type: file.type, size: file.size });
 }

@@ -2617,11 +2617,12 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
   }
 }
 
-/* 3.0.57: PDF preview thumbnails */
+/* 3.0.58: Universal preview thumbnails across all file types */
 .tile-media img.doc-thumb, .ri-thumb img.doc-thumb {
   object-fit: cover;
   object-position: top center;
   background: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .06);
 }
 
 .mini-badge {
@@ -2635,18 +2636,25 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
   pointer-events: none;
   box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
   text-transform: uppercase;
-}
-.pdf-badge {
-  background: #e03131;
+  background: #475569;
   color: #ffffff;
 }
-.tile-media .pdf-badge {
+.pdf-badge, .mini-badge.kind-pdf { background: #e03131; color: #ffffff; }
+.mini-badge.kind-doc { background: #1d4ed8; color: #ffffff; }
+.mini-badge.kind-sheet { background: #15803d; color: #ffffff; }
+.mini-badge.kind-slides { background: #c2410c; color: #ffffff; }
+.mini-badge.kind-code { background: #334155; color: #ffffff; }
+.mini-badge.kind-audio { background: #b45309; color: #ffffff; }
+.mini-badge.kind-archive { background: #6d28d9; color: #ffffff; }
+.mini-badge.kind-other { background: #475569; color: #ffffff; }
+
+.tile-media .mini-badge {
   bottom: 8px;
   right: 8px;
   padding: 3px 7px;
   font-size: 11px;
 }
-.ri-thumb .pdf-badge {
+.ri-thumb .mini-badge {
   bottom: 2px;
   right: 2px;
   font-size: 8px;

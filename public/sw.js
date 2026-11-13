@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v3.0.57';
+const VERSION = 'v3.0.58';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
@@ -13,6 +13,7 @@ const SHELL = [
   '/js/store.js',
   '/js/sync.js',
   '/js/files.js',
+  '/js/thumb.js',
   '/js/markup.js',
   '/js/collage.js',
   '/js/zoom.js',

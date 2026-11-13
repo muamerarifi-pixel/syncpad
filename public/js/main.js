@@ -5,7 +5,7 @@ import {
 } from './util.js';
 import { Store, readV1Notes } from './store.js';
 import { Sync } from './sync.js';
-import { Files, makePdfThumb } from './files.js';
+import { Files, makeFileThumb } from './files.js';
 import { sanitizeNote, sanitizePaste, markdownToHtml, textToHtml } from './md.js';
 import qrcode from '/vendor/qrcode.mjs';
 import { Markup } from './markup.js';
@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.57';
+const VERSION = '3.0.58';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -771,7 +771,7 @@ function wire() {
     }
   });
   addEventListener('pagehide', () => saveNote.flush());
-  addEventListener('online', renderStatus);
+  addEventListener('online', () => { renderStatus(); retryFileThumbs(); });
   // a join link opened while SyncPad is already open in this tab
   addEventListener('hashchange', () => {
     const k = parseLink(readParams().join);
@@ -1043,46 +1043,69 @@ function typeMenu(anchor) {
   openMenu(anchor, TYPES.map(([t, l]) => ({ icon: { all: 'drops', media: 'image', files: 'file', links: 'link', text: 'note', pinned: 'pin' }[t], label: (ui.dtype === t ? '✓ ' : '') + l, run: () => setDropType(t) })));
 }
 
-/* ───────── PDF preview thumbnails ───────── */
+/* ───────── Universal file preview thumbnails ───────── */
 
-const pdfThumbQueue = new Set();
-let pdfThumbWorking = false;
+const fileThumbQueue = new Set();
+const fileThumbTried = new Set();
+let fileThumbWorking = false;
 
-function queuePdfThumb(it) {
-  if (!it || it.kind !== 'file' || it.data.thumb || it.data.trashed) return;
-  if (fileKind(it.data.type, it.data.name) !== 'pdf') return;
-  if (it.data.size > 60 * 1024 * 1024) return;
-  if (pdfThumbQueue.has(it.id)) return;
-  pdfThumbQueue.add(it.id);
-  pumpPdfThumbs();
+function needsBlobForThumb(type, name, size) {
+  const k = fileKind(type, name);
+  const e = extOf(name);
+  if (['image', 'video', 'pdf', 'doc', 'sheet', 'slides', 'code', 'audio'].includes(k)) return true;
+  if (k === 'archive') return /^(zip|jar|apk|ipa|cbz|xpi|tar)$/.test(e);
+  if (/^(ttf|otf|woff2?)$/.test(e)) return true;
+  return (size || 0) <= 5 * 1024 * 1024;
 }
 
-async function pumpPdfThumbs() {
-  if (pdfThumbWorking || !pdfThumbQueue.size) return;
-  pdfThumbWorking = true;
+function queueFileThumb(it) {
+  if (!it || it.kind !== 'file' || it.data.thumb || it.data.trashed) return;
+  if (fileThumbTried.has(it.id) || fileThumbQueue.has(it.id)) return;
+  fileThumbQueue.add(it.id);
+  pumpFileThumbs();
+}
+
+function retryFileThumbs() {
+  if (!fileThumbTried.size) return;
+  fileThumbTried.clear();
+  if (ui.mode === 'drops') renderDrops();
+  indexBacklog();
+}
+
+async function pumpFileThumbs() {
+  if (fileThumbWorking || !fileThumbQueue.size) return;
+  fileThumbWorking = true;
   try {
-    const id = pdfThumbQueue.values().next().value;
-    pdfThumbQueue.delete(id);
+    const id = fileThumbQueue.values().next().value;
+    fileThumbQueue.delete(id);
+    fileThumbTried.add(id);
     const it = store.items.get(id);
     if (!it || it.data.thumb || it.data.trashed) return;
 
+    const had = files.mem.has(id);
     let blob = files.mem.get(id) || (await files.cachedBlob(id).catch(() => null));
-    if (!blob) {
-      if (it.data.size > 35 * 1024 * 1024 || (navigator.connection && navigator.connection.saveData) || !navigator.onLine) {
-        return;
-      }
-      try {
-        blob = await files.blobOf(it);
-      } catch {
-        return;
-      }
-    }
-    if (!blob) return;
+    const needBlob = needsBlobForThumb(it.data.type, it.data.name, it.data.size);
 
-    const res = await makePdfThumb(blob).catch((e) => {
-      console.warn('pdf thumb error', it.data.name, e);
-      return null;
-    });
+    if (!blob && needBlob) {
+      if (it.data.size <= 35 * 1024 * 1024 && !(navigator.connection && navigator.connection.saveData) && navigator.onLine) {
+        try {
+          blob = await files.blobOf(it);
+        } catch {
+          blob = null;
+        }
+      }
+      if (!blob) return;
+    }
+
+    let res = null;
+    try {
+      res = await makeFileThumb(blob, it.data).catch((e) => {
+        console.warn('file thumb error', it.data.name, e);
+        return null;
+      });
+    } finally {
+      if (!had) files.mem.delete(id);
+    }
 
     if (res && res.thumb) {
       const cur = store.items.get(id);
@@ -1100,11 +1123,11 @@ async function pumpPdfThumbs() {
       }
     }
   } catch (err) {
-    console.warn('pumpPdfThumbs error', err);
+    console.warn('pumpFileThumbs error', err);
   } finally {
-    pdfThumbWorking = false;
-    if (pdfThumbQueue.size) {
-      setTimeout(pumpPdfThumbs, 150);
+    fileThumbWorking = false;
+    if (fileThumbQueue.size) {
+      setTimeout(pumpFileThumbs, 80);
     }
   }
 }
@@ -1135,8 +1158,8 @@ function renderDrops() {
   let group = null;
   const custom = dropOrder() === 'custom' && !ui.query;
   for (const it of list) {
-    if (it.kind === 'file' && !it.data.thumb && fileKind(it.data.type, it.data.name) === 'pdf') {
-      queuePdfThumb(it);
+    if (it.kind === 'file' && !it.data.thumb) {
+      queueFileThumb(it);
     }
     const d = custom ? 'My order' : dayLabel(it.created);
     if (d !== day) {
@@ -1187,7 +1210,7 @@ function cardNode(it) {
   const prog = files.progress.get(it.id);
   const f = folderOf(it);
   const sig = [ui.namesVer || 0, ui.layout, ui.selecting ? 1 : 0, ui.selected.has(it.id) ? 1 : 0, f ? f.data.name : '', ui.dloc,
-    it.kind === 'file' && files.isOffline(it.id) ? 'off' : '', it.rev, it.updated, it.data.keep ? 1 : 0,
+    it.kind === 'file' && files.isOffline(it.id) ? 'off' : '', it.data.thumb ? it.data.thumb.length : 0, it.rev, it.updated, it.data.keep ? 1 : 0,
     prog ? prog.state + (prog.err || '') : '', ui.expanded.has(it.id) ? 1 : 0, ui.query].join('|');
   const c = cards.get(it.id);
   if (c && c.sig === sig) {
@@ -1214,7 +1237,16 @@ function thumbHTML(it) {
   }
   const d = it.data;
   const kind = fileKind(d.type, d.name);
-  if (d.thumb) return `<img src="${esc(d.thumb)}" alt="" draggable="false" decoding="async" class="${kind === 'pdf' ? 'doc-thumb' : ''}">${kind === 'video' ? '<span class="mini-play"><svg class="ic" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg></span>' : kind === 'pdf' ? '<span class="mini-badge pdf-badge">PDF</span>' : ''}`;
+  if (d.thumb) {
+    const ext = extOf(d.name);
+    const badge = kind === 'pdf' ? 'PDF' : ext ? ext.slice(0, 6).toUpperCase() : 'FILE';
+    const overlay = kind === 'video'
+      ? '<span class="mini-play"><svg class="ic" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></svg></span>'
+      : kind === 'image'
+        ? ''
+        : `<span class="mini-badge kind-${kind}${kind === 'pdf' ? ' pdf-badge' : ''}">${esc(badge)}</span>`;
+    return `<img src="${esc(d.thumb)}" alt="" draggable="false" decoding="async" class="${kind !== 'image' && kind !== 'video' ? 'doc-thumb' : ''}">${overlay}`;
+  }
   const ext = extOf(d.name);
   return `<span class="ti" data-k="${kind}">${ext && ext.length <= 4 && !['image', 'video', 'audio'].includes(kind) ? `<span class="ext">${esc(ext)}</span>` : `<svg class="ic"><use href="#i-${kindIcon(kind)}"/></svg>`}</span>`;
 }
@@ -6230,8 +6262,8 @@ async function indexDocText(it, blob) {
 /** quietly index documents that were added before 3.0 (or on devices without this version) */
 function indexBacklog() {
   if (ui.indexing) return;
-  const pdfTodo = store.list('file').filter((it) => !it.data.trashed && !it.data.thumb && fileKind(it.data.type, it.data.name) === 'pdf' && it.data.size < 60 * 1024 * 1024);
-  for (const p of pdfTodo) queuePdfThumb(p);
+  const thumbTodo = store.list('file').filter((it) => !it.data.trashed && !it.data.thumb);
+  for (const f of thumbTodo) queueFileThumb(f);
   const todo = store.list('file').filter((it) => !it.data.trashed && !it.data.fx && !files.progress.get(it.id) && indexable(it.data.type, it.data.name) && it.data.size < 60 * 1024 * 1024)
     .sort((a, b) => b.created - a.created);
   const it = todo.find((x) => !(ui.indexTried || (ui.indexTried = new Set())).has(x.id));
