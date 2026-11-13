@@ -2661,3 +2661,191 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
   padding: 1px 3.5px;
   border-radius: 3.5px;
 }
+
+/* 3.0.59: fast, responsive motion system across all transitions */
+:root {
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-spring: cubic-bezier(.22, 1.15, .36, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --dur-xs: 95ms;
+  --dur-sm: 140ms;
+  --dur-md: 185ms;
+}
+@keyframes spFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes spFadeOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes spBackdropIn { from { opacity: 0; backdrop-filter: blur(0px); } to { opacity: 1; backdrop-filter: blur(2px); } }
+@keyframes spBackdropOut { from { opacity: 1; backdrop-filter: blur(2px); } to { opacity: 0; backdrop-filter: blur(0px); } }
+@keyframes spViewRight { from { opacity: 0; transform: translate3d(20px, 0, 0) scale(.996); } to { opacity: 1; transform: none; } }
+@keyframes spViewLeft { from { opacity: 0; transform: translate3d(-20px, 0, 0) scale(.996); } to { opacity: 1; transform: none; } }
+@keyframes spFeedSwap { from { opacity: 0; transform: translate3d(0, 7px, 0) scale(.995); } to { opacity: 1; transform: none; } }
+@keyframes spTitleNudge { from { opacity: .4; transform: translate3d(0, -4px, 0); } to { opacity: 1; transform: none; } }
+@keyframes spPanelIn { from { opacity: 0; transform: translate3d(0, 6px, 0) scale(.994); } to { opacity: 1; transform: none; } }
+@keyframes spSwapSoft { from { opacity: .4; transform: translate3d(0, 5px, 0); } to { opacity: 1; transform: none; } }
+@keyframes spSideIn { from { opacity: 0; transform: translate3d(-18px, 0, 0); } to { opacity: 1; transform: none; } }
+@keyframes spSideOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translate3d(-18px, 0, 0); } }
+@keyframes spSlideInRight { from { opacity: 0; transform: translate3d(28px, 0, 0); } to { opacity: 1; transform: none; } }
+@keyframes spSlideOutRight { from { opacity: 1; transform: none; } to { opacity: 0; transform: translate3d(32px, 0, 0); } }
+@keyframes spSheetIn { from { opacity: 0; transform: translate3d(0, 12px, 0) scale(.965); } to { opacity: 1; transform: none; } }
+@keyframes spSheetOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translate3d(0, 8px, 0) scale(.972); } }
+@keyframes spSheetUp { from { opacity: .35; transform: translate3d(0, 34px, 0); } to { opacity: 1; transform: none; } }
+@keyframes spSheetDown { from { opacity: 1; transform: none; } to { opacity: 0; transform: translate3d(0, 30px, 0); } }
+@keyframes spViewerIn { from { opacity: 0; transform: scale(.976); } to { opacity: 1; transform: none; } }
+@keyframes spViewerOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(.984); } }
+@keyframes spMediaIn { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes spMenuIn { from { opacity: 0; transform: translate3d(0, -4px, 0) scale(.955); } to { opacity: 1; transform: none; } }
+@keyframes spMenuOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(.96); } }
+@keyframes spBarUp { from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes spBarDown { from { opacity: 1; transform: none; } to { opacity: 0; transform: translate3d(0, 12px, 0) scale(.97); } }
+@keyframes spNselUp { from { opacity: 0; transform: translate3d(-50%, 14px, 0) scale(.97); } to { opacity: 1; transform: translate3d(-50%, 0, 0); } }
+@keyframes spNselDown { from { opacity: 1; transform: translate3d(-50%, 0, 0); } to { opacity: 0; transform: translate3d(-50%, 12px, 0) scale(.97); } }
+@keyframes spToastIn { from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes spToastOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translate3d(0, 8px, 0) scale(.96); } }
+@keyframes spCardPop { from { opacity: 0; transform: scale(.94) translate3d(0, 8px, 0); } to { opacity: 1; transform: none; } }
+@keyframes spDropDown { from { opacity: 0; transform: translate3d(0, -8px, 0); } to { opacity: 1; transform: none; } }
+@keyframes spTabBounce { 0% { transform: scale(.88); } 65% { transform: scale(1.08); } 100% { transform: none; } }
+
+/* Interactive tactile micro-transitions */
+.btn, .icon-btn, .tab, .seg-btn, .chip, .nav-item, .tabbar-btn, .tabbar-btn .ic,
+.send-btn, .fab, .btn-add-files, .wall-opt, .pe-t, .mk-tool, .edit-toggle, .key {
+  transition: background var(--dur-sm) var(--ease-out),
+              color var(--dur-sm) var(--ease-out),
+              border-color var(--dur-sm) var(--ease-out),
+              box-shadow var(--dur-sm) var(--ease-out),
+              opacity var(--dur-sm) var(--ease-out),
+              transform var(--dur-xs) var(--ease-out);
+}
+.tab:active, .seg-btn:active, .chip:active, .nav-item:active,
+.tabbar-btn:active .ic, .wall-opt:active, .pe-t:not(:disabled):active,
+.mk-tool:active, .fab:active, .edit-toggle:active { transform: scale(.965); }
+.ri:not(.rd-held):not(.rd-ghost), .tile:not(.rd-held):not(.rd-ghost) {
+  transition: background var(--dur-sm) var(--ease-out),
+              border-color var(--dur-sm) var(--ease-out),
+              box-shadow var(--dur-sm) var(--ease-out),
+              transform var(--dur-xs) var(--ease-out);
+}
+@media (hover: hover) {
+  .tile:not(.rd-held):not(.rd-ghost):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 3px 6px rgba(16, 24, 40, .07), 0 8px 20px rgba(16, 24, 40, .09);
+  }
+}
+.tile:not(.rd-held):not(.rd-ghost):active,
+.note-item:not(.rd-held):not(.rd-ghost):active { transform: scale(.985); }
+.ri:not(.rd-held):not(.rd-ghost):active { transform: scale(.994); }
+
+/* Tab view switching (button click + swipe unified fast motion) */
+.view.view-enter-right, .view.swipe-from-right { animation: spViewRight var(--dur-md) var(--ease-out); }
+.view.view-enter-left, .view.swipe-from-left { animation: spViewLeft var(--dur-md) var(--ease-out); }
+:is(.tab, .tabbar-btn)[aria-selected="true"] .ic { animation: spTabBounce 200ms var(--ease-spring); }
+
+/* Drops folder / type / layout cross-reveal & new drop entrance */
+.feed-inner.view-swap { animation: spFeedSwap var(--dur-sm) var(--ease-out); }
+.note-list.view-swap { animation: spFeedSwap var(--dur-sm) var(--ease-out); }
+.dh-title h2.is-swapping { animation: spTitleNudge var(--dur-sm) var(--ease-out); }
+.drop.fresh, .tile.fresh { animation: spPanelIn var(--dur-md) var(--ease-out); }
+
+/* Composer & selection bars */
+.select-bar:not([hidden]):not(.is-leaving),
+.composer.is-entering { animation: spBarUp var(--dur-sm) var(--ease-out); }
+.select-bar.is-leaving { pointer-events: none; animation: spBarDown 115ms var(--ease-in) forwards; }
+
+.nsel-bar:not([hidden]):not(.is-leaving) { animation: spNselUp var(--dur-sm) var(--ease-out); }
+.nsel-bar.is-leaving { pointer-events: none; animation: spNselDown 120ms var(--ease-in) forwards; }
+@media (min-width: 861px) {
+  .nsel-bar:not([hidden]):not(.is-leaving) { animation: spBarUp var(--dur-sm) var(--ease-out); }
+  .nsel-bar.is-leaving { animation: spBarDown 120ms var(--ease-in) forwards; }
+}
+
+/* Notes workspace: panel enter/exit, note swap, canvas/text switch, sidebar slide, present mode */
+.editor-pane.pane-in,
+.notes-pane.pane-in { animation: spPanelIn var(--dur-md) var(--ease-out); }
+.editor-empty:not([hidden]) { animation: spCardPop var(--dur-md) var(--ease-out); }
+.editor.note-swap :is(.editor-text, .note-canvas),
+.editor-bar.bar-swap { animation: spSwapSoft var(--dur-sm) var(--ease-out); }
+.conflict-bar:not([hidden]) { animation: spDropDown var(--dur-sm) var(--ease-out); }
+.edit-toggle:not([hidden]):not(.scrolling) { animation: spCardPop var(--dur-sm) var(--ease-spring); }
+
+@media (min-width: 861px) {
+  .app.note-open.show-sidebar:not(.sidebar-leaving) .notes-pane { animation: spSideIn var(--dur-md) var(--ease-out); }
+  .app.note-open.sidebar-leaving .notes-pane {
+    display: flex !important; width: 320px; flex: none; pointer-events: none;
+    animation: spSideOut 125ms var(--ease-in) forwards;
+  }
+}
+
+@media (max-width: 860px) {
+  .app.editing .editor-pane { display: flex; animation: spSlideInRight var(--dur-md) var(--ease-out); }
+  .app.editor-leaving .editor-pane {
+    display: flex; pointer-events: none;
+    animation: spSlideOutRight 145ms var(--ease-in) forwards;
+  }
+  .app.editor-leaving :is(.qn, .fab) { opacity: 0 !important; pointer-events: none; transform: translateY(16px) scale(.96); }
+  .app.searching .search { animation: spDropDown var(--dur-sm) var(--ease-out); }
+}
+
+.app.presenting:not(.present-leaving) .editor-pane { animation: spViewerIn var(--dur-md) var(--ease-out); }
+.app.present-leaving .editor-pane {
+  position: fixed; inset: 0; z-index: 50; display: flex !important; pointer-events: none;
+  animation: spViewerOut 130ms var(--ease-in) forwards;
+}
+.present-bar {
+  transform: translate3d(0, 8px, 0) scale(.96);
+  transition: opacity var(--dur-sm) var(--ease-out), transform var(--dur-sm) var(--ease-out);
+}
+.present-bar.show { transform: none; }
+
+/* Drag & drop overlay */
+.drop-overlay:not([hidden]):not(.is-leaving) { animation: spFadeIn var(--dur-sm) var(--ease-out); }
+.drop-overlay:not([hidden]):not(.is-leaving) .drop-card { animation: spCardPop var(--dur-md) var(--ease-spring); }
+.drop-overlay.is-leaving { pointer-events: none; animation: spFadeOut 120ms var(--ease-in) forwards; }
+.drop-overlay.is-leaving .drop-card { animation: spSheetOut 120ms var(--ease-in) forwards; }
+
+/* Dialogs: modal sheets, full-screen viewers & editors (enter + exit) */
+.sheet[open]:not(.closing) { animation: spSheetIn var(--dur-md) var(--ease-out); }
+.sheet[open]:not(.closing)::backdrop { animation: spBackdropIn var(--dur-sm) var(--ease-out); }
+.sheet.closing { pointer-events: none; animation: spSheetOut 130ms var(--ease-in) forwards; }
+.sheet.closing::backdrop { animation: spBackdropOut 130ms var(--ease-in) forwards; }
+@media (max-width: 860px) {
+  .sheet[open]:not(.closing) { animation: spSheetUp var(--dur-md) var(--ease-out); }
+  .sheet.closing { animation: spSheetDown 135ms var(--ease-in) forwards; }
+}
+
+:is(.viewer, .docedit, .pdfedit)[open]:not(.closing) { animation: spViewerIn var(--dur-md) var(--ease-out); }
+:is(.viewer, .docedit, .pdfedit)[open]:not(.closing)::backdrop { animation: spFadeIn var(--dur-sm) var(--ease-out); }
+:is(.viewer, .docedit, .pdfedit).closing { pointer-events: none; animation: spViewerOut 130ms var(--ease-in) forwards; }
+:is(.viewer, .docedit, .pdfedit).closing::backdrop { animation: spFadeOut 130ms var(--ease-in) forwards; }
+.viewer[open]:not(.closing) .viewer-body > :is(img, video, .zoom-stage, .dv-host, .text-view, .audio-box) {
+  animation: spMediaIn var(--dur-md) var(--ease-out);
+}
+
+/* Context menu, link bubble, listen pill, TTS bar, toasts */
+.menu:not([hidden]):not(.is-leaving) { transform-origin: top center; animation: spMenuIn 125ms var(--ease-out); }
+.menu.is-leaving { pointer-events: none; animation: spMenuOut 105ms var(--ease-in) forwards; }
+.menu.as-sheet:not([hidden]):not(.is-leaving) { animation: spSheetUp var(--dur-md) var(--ease-out); }
+.menu.as-sheet.is-leaving { animation: spSheetDown 125ms var(--ease-in) forwards; }
+.menu button { transition: background var(--dur-xs) var(--ease-out), transform var(--dur-xs) var(--ease-out); }
+.menu button:active { transform: scale(.985); }
+
+.link-bubble:not([hidden]):not(.is-leaving) { animation: spMenuIn 125ms var(--ease-out); }
+.link-bubble.is-leaving { pointer-events: none; animation: spMenuOut 100ms var(--ease-in) forwards; }
+.listen-pill:not([hidden]):not(.is-leaving) { animation: spCardPop 140ms var(--ease-spring); }
+.tts-bar:not([hidden]):not(.is-leaving) { animation: spNselUp var(--dur-sm) var(--ease-out); }
+
+.toast { animation: spToastIn 170ms var(--ease-out); }
+.toast.is-leaving { pointer-events: none; animation: spToastOut 135ms var(--ease-in) forwards; }
+
+/* PIN lock screen & YouTube floating player */
+.lock:not([hidden]):not(.is-leaving) { animation: spFadeIn var(--dur-sm) var(--ease-out); }
+.lock:not([hidden]):not(.is-leaving) .lock-box { animation: spSheetIn var(--dur-md) var(--ease-out); }
+.lock.is-leaving { pointer-events: none; animation: spFadeOut 140ms var(--ease-in) forwards; }
+.lock.is-leaving .lock-box { animation: spSheetOut 140ms var(--ease-in) forwards; }
+.pin-dots span { transition: background 110ms var(--ease-out), border-color 110ms var(--ease-out), transform 145ms var(--ease-spring); }
+.pin-dots span.on { transform: scale(1.16); }
+
+.yt-float:not([hidden]) .yt-shade { animation: spFadeIn var(--dur-sm) var(--ease-out); }
+.yt-float:not([hidden]):not(.mini) .yt-card { animation: spFadeIn var(--dur-md) var(--ease-out); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

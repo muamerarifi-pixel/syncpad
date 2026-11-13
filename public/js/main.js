@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.58';
+const VERSION = '3.0.59';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -63,6 +63,7 @@ const cards = new Map(); // id -> {sig, node}
 async function boot() {
   for (const n of $$('[id]')) el[n.id.replace(/-(\w)/g, (_, c) => c.toUpperCase())] = n;
   el.app = $('#app');
+  el.notesPane = $('.notes-pane');
 
   await store.open();
   if (!store.get('device')) await store.set('device', rid(16));
@@ -193,7 +194,7 @@ function wire() {
   el.btnConnect.addEventListener('click', openConnect);
   el.btnSettings.addEventListener('click', openSettings);
   el.btnLock.addEventListener('click', lockNow);
-  el.btnOpenTrash.addEventListener('click', async () => { el.dlgSettings.close(); await sleepMs(80); openTrash(); });
+  el.btnOpenTrash.addEventListener('click', async () => { await el.dlgSettings.close(); openTrash(); });
   el.trashList.addEventListener('click', onTrashClick);
   el.btnEmptyTrash.addEventListener('click', emptyTrash);
   el.historyList.addEventListener('click', (e) => { const b = e.target.closest('[data-hid]'); if (b) showVersion(b.dataset.hid); });
@@ -209,7 +210,7 @@ function wire() {
     const b = e.target.closest('[data-remove]');
     if (b) removeDevice(b.dataset.remove, b.dataset.name);
   });
-  el.btnSettingsConnect.addEventListener('click', async () => { el.dlgSettings.close(); await sleepMs(80); openConnect(); });
+  el.btnSettingsConnect.addEventListener('click', async () => { await el.dlgSettings.close(); openConnect(); });
 
   // text zoom (note editor)
   el.btnZoomIn.addEventListener('click', () => (canvasOpen() ? ui.canvas.zoomStep(1) : stepZoom(1)));
@@ -221,15 +222,13 @@ function wire() {
   // PIN lock
   el.keypad.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) pinKey(b.dataset.k); });
   el.lockNext.addEventListener('click', pinNext);
-  el.btnPinSet.addEventListener('click', async () => { el.dlgSettings.close(); await sleepMs(80); showLock('new'); });
+  el.btnPinSet.addEventListener('click', async () => { await el.dlgSettings.close(); showLock('new'); });
   el.btnPinChange.addEventListener('click', async () => {
-    el.dlgSettings.close();
-    await sleepMs(80);
+    await el.dlgSettings.close();
     if (await showLock('verify')) showLock('new');
   });
   el.btnPinRemove.addEventListener('click', async () => {
-    el.dlgSettings.close();
-    await sleepMs(80);
+    await el.dlgSettings.close();
     if (await showLock('verify')) {
       localStorage.removeItem('sp-pin');
       localStorage.removeItem('sp-pin-try');
@@ -365,6 +364,7 @@ function wire() {
     if (!c) return;
     ui.tag = ui.tag === c.dataset.tag ? null : c.dataset.tag;
     renderNotesList();
+    triggerAnim(el.noteList, 'view-swap', ['view-swap'], 160);
   });
   el.btnNewNote.addEventListener('click', () => newNote());
   el.btnNewMore.addEventListener('click', () => newMenu(el.btnNewMore));
@@ -448,7 +448,7 @@ function wire() {
   setupTabSwipe();
   fitToKeyboard();
   setupPasteChip();
-  el.btnShowList.addEventListener('click', () => toggleNotesList(false));
+  el.btnShowList.addEventListener('click', () => toggleNotesList(true));
   el.btnPresent.addEventListener('click', startPresent);
   applyNotesList();
   setupNoteListPinch();
@@ -490,13 +490,7 @@ function wire() {
   el.fmtBar.addEventListener('pointerdown', (e) => { if (e.target.closest('[data-clip]')) e.preventDefault(); });
 
   // dialogs
-  for (const d of $$('dialog')) {
-    d.addEventListener('click', (e) => {
-      if (e.target.closest('[data-close]')) d.close();
-      else if (e.target === d && d.classList.contains('sheet')) d.close(); // backdrop
-    });
-    d.addEventListener('close', () => closeLayer(d));
-  }
+  for (const d of $$('dialog')) setupAnimatedDialog(d);
   el.joinForm.addEventListener('submit', (e) => { e.preventDefault(); joinWithCode(); });
   setupPinLogin();
   el.btnBackup.addEventListener('click', makeBackup);
@@ -635,15 +629,15 @@ function wire() {
     if (!k || (k === 'text' && e.target.closest && e.target.closest('textarea, input, [contenteditable="true"]'))) return;
     e.preventDefault();
     depth++;
-    el.dropOverlay.hidden = false;
+    setAnimatedVisible(el.dropOverlay, true, 140);
   });
   addEventListener('dragover', (e) => {
     const k = dragKind(e);
     if (!k) return;
-    if (k === 'text' && e.target.closest && e.target.closest('textarea, input, [contenteditable="true"]')) { el.dropOverlay.hidden = true; return; }
+    if (k === 'text' && e.target.closest && e.target.closest('textarea, input, [contenteditable="true"]')) { setAnimatedVisible(el.dropOverlay, false, 120); return; }
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
-    el.dropOverlay.hidden = false;
+    setAnimatedVisible(el.dropOverlay, true, 140);
     const fd = e.target.closest && e.target.closest('[data-folder-drop]');
     const fdName = fd && store.items.get(fd.dataset.folderDrop) && store.items.get(fd.dataset.folderDrop).data.name;
     el.dropOverlayTitle.textContent = overNoteEditor(e.target) ? 'Drop to attach to this note'
@@ -653,12 +647,12 @@ function wire() {
   addEventListener('dragleave', (e) => {
     if (!dragKind(e)) return;
     depth = Math.max(0, depth - 1);
-    if (depth === 0 || !e.relatedTarget) el.dropOverlay.hidden = true;
+    if (depth === 0 || !e.relatedTarget) setAnimatedVisible(el.dropOverlay, false, 120);
   });
   addEventListener('drop', (e) => {
     const k = dragKind(e);
     depth = 0;
-    el.dropOverlay.hidden = true;
+    setAnimatedVisible(el.dropOverlay, false, 120);
     if (!k) return;
     if (k === 'text' && e.target.closest && e.target.closest('textarea, input, [contenteditable="true"]')) return;
     e.preventDefault();
@@ -754,7 +748,11 @@ function wire() {
 
   // history: Android back closes sheets / the editor instead of leaving the app
   addEventListener('popstate', () => {
-    if (ui.skipPop) { ui.skipPop = false; return; }
+    if (ui.skipPop > 0) {
+      ui.skipPop--;
+      if (ui.skipPop === 0 && ui.skipPopWaiters) for (const fn of ui.skipPopWaiters.splice(0)) fn();
+      return;
+    }
     const top = layers.pop();
     if (!top) return;
     ui.fromPop = true;
@@ -779,27 +777,146 @@ function wire() {
     if (k && k.space !== store.get('space')) whenUnlocked(() => offerJoin(k));
   });
   addEventListener('offline', renderStatus);
-  addEventListener('resize', debounce(() => { if (!isMobileLayout()) el.app.classList.remove('editing'); }, 150));
+  addEventListener('resize', debounce(() => {
+    if (!isMobileLayout()) {
+      el.app.classList.remove('editing', 'editor-leaving');
+      if (ui.editorLeaveT) { clearTimeout(ui.editorLeaveT); ui.editorLeaveT = 0; renderEditor(true); }
+    }
+  }, 150));
   setInterval(() => { if (document.visibilityState === 'visible') renderDrops(); }, 60000);
 }
 
-/* ═════════════════════════ layers (dialogs, editor) + history ═════════════════════════ */
+/* ═════════════════════════ layers (dialogs, editor) + motion ═════════════════════════ */
+
+const reducedMotion = () => !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+function triggerAnim(node, cls, clearClasses = [cls], ms = 180) {
+  if (!node || reducedMotion()) return;
+  clearTimeout(node._animT);
+  node.classList.remove(...clearClasses);
+  void node.offsetWidth;
+  node.classList.add(cls);
+  node._animT = setTimeout(() => { node.classList.remove(cls); node._animT = 0; }, ms);
+}
+
+function setAnimatedVisible(node, show, ms = 125) {
+  if (!node) return;
+  clearTimeout(node._hideT);
+  node._hideT = 0;
+  if (show) {
+    const wasHidden = node.hidden || node.classList.contains('is-leaving');
+    node.classList.remove('is-leaving');
+    node.hidden = false;
+    if (wasHidden && !reducedMotion()) {
+      clearTimeout(node._enterT);
+      node.classList.add('is-entering');
+      node._enterT = setTimeout(() => node.classList.remove('is-entering'), ms + 40);
+    }
+    return;
+  }
+  if (node.hidden || node.classList.contains('is-leaving')) return;
+  if (reducedMotion()) { node.hidden = true; return; }
+  clearTimeout(node._enterT);
+  node.classList.remove('is-entering');
+  node.classList.add('is-leaving');
+  node._hideT = setTimeout(() => {
+    node.classList.remove('is-leaving');
+    node.hidden = true;
+    node._hideT = 0;
+  }, ms);
+}
 
 const layers = [];
-function pushLayer(layer) {
+function pushLayer(layer, replace = false) {
   layers.push(layer);
-  history.pushState({ layer: layers.length }, '');
+  if (replace) history.replaceState({ layer: layers.length }, '');
+  else history.pushState({ layer: layers.length }, '');
 }
-function closeLayer(key) {
+function closeLayer(key, skipBack = false) {
   const i = layers.findIndex((l) => l.key === key);
   if (i === -1) return;
   layers.splice(i, 1);
-  if (!ui.fromPop) { ui.skipPop = true; history.back(); }
+  if (!ui.fromPop && !skipBack && history.state && typeof history.state.layer === 'number') {
+    ui.skipPop = (ui.skipPop || 0) + 1;
+    history.back();
+  }
 }
+
+function waitSkipPop() {
+  if (!ui.skipPop) return Promise.resolve();
+  return new Promise((r) => {
+    const done = () => { clearTimeout(t); r(); };
+    const t = setTimeout(done, 60);
+    (ui.skipPopWaiters ||= []).push(done);
+  });
+}
+
+function setupAnimatedDialog(d) {
+  const rawClose = d.close.bind(d);
+  d._rawClose = rawClose;
+  d._finishClose = () => {
+    clearTimeout(d._closeT);
+    d._closeT = 0;
+    d.classList.remove('closing');
+    if (d.open) rawClose();
+  };
+  d.close = () => closeDialog(d);
+  d.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close]')) d.close();
+    else if (e.target === d && d.classList.contains('sheet')) d.close(); // backdrop
+  });
+  d.addEventListener('cancel', (e) => {
+    if (reducedMotion()) return;
+    if (d._cancelGuard && !d._cancelGuard()) { e.preventDefault(); return; }
+    e.preventDefault();
+    closeDialog(d);
+  });
+  d.addEventListener('close', () => {
+    clearTimeout(d._closeT);
+    d._closeT = 0;
+    d.classList.remove('closing');
+    closeLayer(d, !!d._reopening);
+    if (d._closeWaiters) {
+      const ws = d._closeWaiters.splice(0);
+      if (ws.length) waitSkipPop().then(() => { for (const w of ws) w(); });
+    }
+  });
+}
+
+function closeDialog(d, immediate = false) {
+  if (!d) return Promise.resolve();
+  if (!d.open) {
+    d.classList.remove('closing');
+    clearTimeout(d._closeT);
+    d._closeT = 0;
+    return Promise.resolve();
+  }
+  if (immediate || reducedMotion() || !d._rawClose) {
+    if (d._finishClose) d._finishClose();
+    else d.close();
+    return Promise.resolve();
+  }
+  if (d.classList.contains('closing')) {
+    return new Promise((r) => (d._closeWaiters ||= []).push(r));
+  }
+  d.classList.add('closing');
+  for (const m of $$('video, audio', d)) try { m.pause(); } catch {}
+  return new Promise((resolve) => {
+    (d._closeWaiters ||= []).push(resolve);
+    d._closeT = setTimeout(() => { if (d._finishClose) d._finishClose(); }, 135);
+  });
+}
+
 function openDialog(d) {
+  let replace = false;
+  if (d.classList.contains('closing') && d._finishClose) {
+    replace = layers.some((l) => l.key === d);
+    d._reopening = true;
+    try { d._finishClose(); } finally { d._reopening = false; }
+  }
   if (d.open) return;
   d.showModal();
-  pushLayer({ key: d, close: () => d.close() });
+  pushLayer({ key: d, close: () => d.close() }, replace);
 }
 
 /* ═════════════════════════ rendering ═════════════════════════ */
@@ -859,7 +976,8 @@ function onStoreChange({ ids, remote }) {
   if (kinds.some((it) => it && it.kind === 'file')) { clearTimeout(ui.indexT); ui.indexT = setTimeout(indexBacklog, 4000); }
 }
 
-function setTab(tab) {
+function setTab(tab, { animate = true, dir } = {}) {
+  const prev = ui.tab;
   ui.tab = tab;
   el.app.dataset.tab = tab;
   renderTabs();
@@ -871,6 +989,11 @@ function setTab(tab) {
     renderNotesList(); // the list (or grid) first; a note opens only when you pick one
   }
   renderNoteSelectBar();
+  if (animate && prev && prev !== tab) {
+    const goRight = dir ? dir < 0 : tab === 'notes';
+    const v = tab === 'notes' ? el.viewNotes : el.viewDrops;
+    triggerAnim(v, goRight ? 'view-enter-right' : 'view-enter-left', ['view-enter-right', 'view-enter-left', 'swipe-from-right', 'swipe-from-left'], 200);
+  }
 }
 function renderTabs() {
   for (const b of $$('[data-tab]')) if (b.tagName === 'BUTTON') b.setAttribute('aria-selected', String(b.dataset.tab === ui.tab));
@@ -984,23 +1107,32 @@ function viewTitle() {
   return f ? store.items.get(f).data.name || 'Folder' : 'Home';
 }
 function setDropView(loc) {
+  const changed = ui.dloc !== loc;
   ui.dloc = loc;
   try { localStorage.setItem('sp-dloc', loc); } catch {}
   exitSelect();
   el.feed.scrollTop = 0;
   renderDrops();
+  if (changed) {
+    triggerAnim(el.feedInner, 'view-swap', ['view-swap'], 160);
+    triggerAnim(el.dhTitle, 'is-swapping', ['is-swapping'], 150);
+  }
 }
 function setDropType(type) {
+  const changed = ui.dtype !== type;
   ui.dtype = type;
   try { localStorage.setItem('sp-dtype', type); } catch {}
   exitSelect();
   renderDrops();
+  if (changed) triggerAnim(el.feedInner, 'view-swap', ['view-swap'], 160);
 }
 function setLayout(l) {
+  const changed = ui.layout !== l;
   ui.layout = l;
   try { localStorage.setItem('sp-layout', l); } catch {}
   cards.clear();
   renderDrops();
+  if (changed) triggerAnim(el.feedInner, 'view-swap', ['view-swap'], 160);
 }
 
 function renderDropsNav(all) {
@@ -1988,8 +2120,25 @@ function toggleSelect(id) {
   renderDrops();
 }
 function renderSelectBar() {
-  el.selectBar.hidden = !ui.selecting;
-  el.composer.hidden = ui.selecting;
+  clearTimeout(ui.compRevealT);
+  ui.compRevealT = 0;
+  const wasSel = !el.selectBar.hidden && !el.selectBar.classList.contains('is-leaving');
+  if (ui.selecting) {
+    el.composer.classList.remove('is-entering');
+    el.composer.hidden = true;
+    setAnimatedVisible(el.selectBar, true, 130);
+  } else if (wasSel && !reducedMotion()) {
+    setAnimatedVisible(el.selectBar, false, 115);
+    ui.compRevealT = setTimeout(() => {
+      ui.compRevealT = 0;
+      if (ui.selecting) return;
+      el.composer.hidden = false;
+      triggerAnim(el.composer, 'is-entering', ['is-entering'], 150);
+    }, 115);
+  } else {
+    setAnimatedVisible(el.selectBar, false, 0);
+    el.composer.hidden = false;
+  }
   el.btnSelect.textContent = ui.selecting ? 'Done' : 'Select';
   const n = ui.selected.size;
   el.selCount.textContent = n ? `${n} selected` : 'Tap items to select';
@@ -2340,13 +2489,13 @@ function showLinkBubble(a) {
   const open = b.querySelector('.lb-open');
   open.href = a.href;
   b.querySelector('.lb-url').textContent = a.href.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '').slice(0, 48) + ' ↗';
-  b.hidden = false;
+  setAnimatedVisible(b, true, 125);
   const r = a.getBoundingClientRect();
   const bw = b.offsetWidth;
   b.style.left = Math.max(8, Math.min(innerWidth - bw - 8, r.left)) + 'px';
   b.style.top = (r.bottom + 6 + b.offsetHeight > innerHeight ? r.top - b.offsetHeight - 6 : r.bottom + 6) + 'px';
 }
-function hideLinkBubble() { if (ui.linkBubble) ui.linkBubble.hidden = true; }
+function hideLinkBubble() { setAnimatedVisible(ui.linkBubble, false, 105); }
 
 async function sendFiles(list, folder) {
   if (!list.length) return;
@@ -2444,8 +2593,11 @@ function onFolderChipClick(e) {
   const c = e.target.closest('[data-nf]');
   if (!c) return;
   if (c.dataset.nf === '+new') { newNoteFolder(); return; }
-  ui.nfolder = c.dataset.nf === 'all' ? null : c.dataset.nf;
+  const next = c.dataset.nf === 'all' ? null : c.dataset.nf;
+  const changed = ui.nfolder !== next;
+  ui.nfolder = next;
   renderNotesList();
+  if (changed) triggerAnim(el.noteList, 'view-swap', ['view-swap'], 160);
 }
 function onFolderChipContext(e) {
   const c = e.target.closest('[data-nf]');
@@ -2463,7 +2615,7 @@ function notesViewMenu(anchor) {
   const size = lsGet('sp-nsize', 'm');
   const sort = lsGet('sp-nsort', 'edited');
   const it = (on, label, run) => ({ html: `<svg class="ic"><use href="#i-${on ? 'check' : 'box'}"/></svg><span>${label}</span>`, run });
-  const set = (k, v) => () => { lsSet(k, v); renderNotesList(); };
+  const set = (k, v) => () => { lsSet(k, v); renderNotesList(); triggerAnim(el.noteList, 'view-swap', ['view-swap'], 160); };
   openMenu(anchor, [
     it(view === 'list', 'List', set('sp-nview', 'list')),
     it(view === 'grid', 'Grid', set('sp-nview', 'grid')),
@@ -2526,12 +2678,7 @@ function tabSwipeBlocked(target, dir) {
 }
 function swipeToTab(next, dir) {
   if (next === ui.tab) return;
-  setTab(next);
-  const v = next === 'notes' ? el.viewNotes : el.viewDrops;
-  v.classList.remove('swipe-from-left', 'swipe-from-right');
-  void v.offsetWidth;
-  v.classList.add(dir < 0 ? 'swipe-from-right' : 'swipe-from-left');
-  setTimeout(() => v.classList.remove('swipe-from-left', 'swipe-from-right'), 260);
+  setTab(next, { dir });
 }
 function setupTabSwipe() {
   const views = $('.views');
@@ -2835,9 +2982,16 @@ document.addEventListener('scroll', (e) => {
 }, true);
 
 function openNote(id, { focus = true } = {}) {
+  clearTimeout(ui.editorLeaveT);
+  ui.editorLeaveT = 0;
+  clearTimeout(ui.sideLeaveT);
+  ui.sideLeaveT = 0;
+  el.app.classList.remove('editor-leaving', 'sidebar-leaving');
   if (ui.selMode && ui.noteId !== id) setSelectMode(false);
   if (ui.tab !== 'notes') setTab('notes');
   if (ui.noteId && ui.noteId !== id) saveNote.flush();
+  const prevId = ui.noteId;
+  const wasOpen = !!prevId;
   if (ui.noteId !== id) { currentZoom = Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], zoomForNote(id))); applyZoomStyles(); }
   ui.noteId = id;
   ui.noteEdits = 0;
@@ -2858,6 +3012,10 @@ function openNote(id, { focus = true } = {}) {
   applyNotesList();
   renderEditor(true);
   renderNotesList();
+  if (!isMobileLayout()) {
+    if (!wasOpen) triggerAnim(el.editorPane, 'pane-in', ['pane-in'], 190);
+    else if (prevId !== id) triggerAnim(el.editor, 'note-swap', ['note-swap'], 160);
+  }
   if (focus && !isTouch()) focusEditorEnd();
 }
 
@@ -2938,16 +3096,32 @@ function closeEditor(fromLayer = false) {
   if (n && store.items.has(n.id) && !noteText(n).trim() && !/data-file/.test(n.data.html || '') && !(n.data.canvas && n.data.canvas.items.length)) {
     store.remove(n).then(() => sync.schedule()); // leaving an empty note removes it
   }
-  if (isMobileLayout()) {
-    el.app.classList.remove('editing');
-  }
-  el.app.classList.remove('show-sidebar');
+  const wasOpen = !!ui.noteId;
+  const mobileClosing = isMobileLayout() && el.app.classList.contains('editing');
+  clearTimeout(ui.sideLeaveT);
+  ui.sideLeaveT = 0;
+  clearTimeout(ui.editorLeaveT);
+  ui.editorLeaveT = 0;
+  el.app.classList.remove('show-sidebar', 'sidebar-leaving');
   if (!fromLayer) closeLayer('editor');
   ui.noteId = null;
   ui.newNote = null;
-  renderEditor(true);
   renderNotesList();
   applyNotesList();
+  if (mobileClosing && !reducedMotion()) {
+    el.app.classList.remove('editing');
+    el.app.classList.add('editor-leaving');
+    ui.editorLeaveT = setTimeout(() => {
+      ui.editorLeaveT = 0;
+      el.app.classList.remove('editor-leaving');
+      renderEditor(true);
+      requestAnimationFrame(syncThemeColor);
+    }, 145);
+    return;
+  }
+  el.app.classList.remove('editing', 'editor-leaving');
+  renderEditor(true);
+  if (wasOpen && !isMobileLayout()) triggerAnim(el.notesPane, 'pane-in', ['pane-in'], 180);
   requestAnimationFrame(syncThemeColor);
 }
 
@@ -2960,16 +3134,25 @@ function renderEditor(force) {
   }
   el.app.classList.toggle('note-open', !!n);
   if (!n) {
+    ui.wasEditorId = null;
+    ui.wasEditorCanvas = null;
     el.editor.hidden = true;
     el.editorEmpty.hidden = false;
     if (ui.canvas) ui.canvas.layout();
     return;
   }
+  const prevId = ui.wasEditorId;
+  const prevCanvas = ui.wasEditorCanvas;
+  const isCanvas = !!n.data.canvas;
+  ui.wasEditorId = n.id;
+  ui.wasEditorCanvas = isCanvas;
   el.editor.hidden = false;
   el.editorEmpty.hidden = true;
   const ed = el.editorText;
-  const isCanvas = !!n.data.canvas;
   el.editor.classList.toggle('is-canvas', isCanvas);
+  if (prevId === n.id && prevCanvas != null && prevCanvas !== isCanvas) {
+    triggerAnim(el.editor, 'note-swap', ['note-swap'], 160);
+  }
   el.editor.dataset.font = n.data.font || '';
   if (n.data.paper && n.data.paper !== 'smooth') el.editor.dataset.paper = n.data.paper;
   else delete el.editor.dataset.paper;
@@ -3255,14 +3438,33 @@ function applyNotesList() {
 function toggleNotesList(show) {
   const now = el.app.classList.contains('show-sidebar');
   const next = show == null ? !now : show;
-  el.app.classList.toggle('show-sidebar', next);
+  clearTimeout(ui.sideLeaveT);
+  ui.sideLeaveT = 0;
+  if (next) {
+    el.app.classList.remove('sidebar-leaving');
+    el.app.classList.add('show-sidebar');
+    applyNotesList();
+    return;
+  }
+  el.app.classList.remove('show-sidebar');
   applyNotesList();
+  if (now && el.app.classList.contains('note-open') && !isMobileLayout() && !reducedMotion()) {
+    el.app.classList.add('sidebar-leaving');
+    ui.sideLeaveT = setTimeout(() => {
+      ui.sideLeaveT = 0;
+      el.app.classList.remove('sidebar-leaving');
+      if (ui.canvas) ui.canvas.layout();
+    }, 130);
+  }
 }
 function startPresent() {
   const n = openNoteItem();
   if (!n || ui.presenting) return;
   closeMenu();
   saveNote.flush();
+  clearTimeout(ui.presentLeaveT);
+  ui.presentLeaveT = 0;
+  el.app.classList.remove('present-leaving');
   ui.presenting = true;
   if (ui.imgTools) ui.imgTools.select(null);
   for (const t of $$('.toast', el.toasts)) t.remove();
@@ -3307,10 +3509,19 @@ function startPresent() {
 function stopPresent(fromLayer = false) {
   if (!ui.presenting) return;
   ui.presenting = false;
+  clearTimeout(ui.presentLeaveT);
   el.app.classList.remove('presenting', 'idle');
+  if (!reducedMotion()) {
+    el.app.classList.add('present-leaving');
+    ui.presentLeaveT = setTimeout(() => {
+      ui.presentLeaveT = 0;
+      el.app.classList.remove('present-leaving');
+      if (ui.canvas) requestAnimationFrame(() => ui.canvas.layout());
+    }, 135);
+  }
   requestAnimationFrame(syncThemeColor);
   const bar = $('.present-bar');
-  if (bar) bar.hidden = true;
+  if (bar) { bar.classList.remove('show'); bar.hidden = true; }
   clearTimeout(ui.presentIdle);
   if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
   ui.presentFs = false;
@@ -4960,13 +5171,13 @@ async function savePin(pin) {
 /** mode: unlock | verify (current PIN) | new | confirm. Resolves true/false. */
 function showLock(mode) {
   return new Promise((resolve) => {
-    for (const d of $$('dialog[open]')) d.close();
-    closeMenu();
+    for (const d of $$('dialog[open]')) closeDialog(d, true);
+    closeMenu(true);
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     lk.mode = mode;
     lk.digits = '';
     lk.done = resolve;
-    el.lock.hidden = false;
+    setAnimatedVisible(el.lock, true, 150);
     el.app.inert = true;
     renderLock();
   });
@@ -5046,7 +5257,7 @@ function endLock(ok) {
   lk.done = null;
   lk.digits = '';
   lk.first = '';
-  el.lock.hidden = true;
+  setAnimatedVisible(el.lock, false, 145);
   el.app.inert = false;
   document.documentElement.classList.remove('locked', 'privacy');
   if (done) done(ok);
@@ -5409,6 +5620,11 @@ function overNoteEditor(target) {
 
 function openMenu(anchor, items, opts = {}) {
   const m = el.menu;
+  const wasOpen = !m.hidden;
+  clearTimeout(ui.menuCloseT);
+  ui.menuCloseT = 0;
+  m.classList.remove('is-leaving');
+  if (ui.menuOutside) { document.removeEventListener('pointerdown', ui.menuOutside, true); ui.menuOutside = null; }
   ui.menuKeepFocus = !!opts.keepFocus;
   m.innerHTML = opts.content || items
     .map((it, i) => `<button role="menuitem" data-i="${i}" class="${it.danger ? 'danger' : ''}">${it.html || `<svg class="ic"><use href="#i-${it.icon}"/></svg><span>${esc(it.label)}</span>`}</button>`)
@@ -5423,20 +5639,31 @@ function openMenu(anchor, items, opts = {}) {
       const at = opts.at || { x: innerWidth / 2, y: innerHeight / 3 };
       let left = at.x + 2;
       let top = at.y + 2;
-      if (left + mw > innerWidth - 8) left = Math.max(8, at.x - mw - 2);
-      if (top + mh > innerHeight - 8) top = Math.max(8, at.y - mh - 2);
+      const flipX = left + mw > innerWidth - 8;
+      const flipY = top + mh > innerHeight - 8;
+      if (flipX) left = Math.max(8, at.x - mw - 2);
+      if (flipY) top = Math.max(8, at.y - mh - 2);
       m.style.top = top + 'px';
       m.style.left = left + 'px';
+      m.style.transformOrigin = `${flipY ? 'bottom' : 'top'} ${flipX ? 'right' : 'left'}`;
     } else {
       const r = anchor.getBoundingClientRect();
       let top = r.bottom + 6;
-      if (top + mh > innerHeight - 8) top = Math.max(8, r.top - mh - 6);
+      const flipY = top + mh > innerHeight - 8;
+      if (flipY) top = Math.max(8, r.top - mh - 6);
       m.style.top = top + 'px';
       m.style.left = Math.max(8, Math.min(innerWidth - mw - 8, r.right - mw)) + 'px';
+      m.style.transformOrigin = `${flipY ? 'bottom' : 'top'} right`;
     }
   } else {
     m.style.left = '';
     m.style.top = '';
+    m.style.transformOrigin = 'bottom center';
+  }
+  if (wasOpen && !reducedMotion()) {
+    m.style.animation = 'none';
+    void m.offsetWidth;
+    m.style.animation = '';
   }
   m.onclick = (e) => {
     const b = e.target.closest(opts.content ? 'button' : 'button[data-i]');
@@ -5454,22 +5681,43 @@ function openMenu(anchor, items, opts = {}) {
   setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
   if (!opts.keepFocus) m.querySelector('button').focus({ preventScroll: true });
 }
-function closeMenu() {
-  el.menu.hidden = true;
+function closeMenu(immediate = false) {
+  const m = el.menu;
   if (ui.ctxNode) { ui.ctxNode.classList.remove('ctx'); ui.ctxNode = null; }
-  if (ui.menuOutside) document.removeEventListener('pointerdown', ui.menuOutside, true);
-  ui.menuOutside = null;
+  if (ui.menuOutside) { document.removeEventListener('pointerdown', ui.menuOutside, true); ui.menuOutside = null; }
+  if (m.hidden) return;
+  if (immediate || reducedMotion()) {
+    clearTimeout(ui.menuCloseT);
+    ui.menuCloseT = 0;
+    m.classList.remove('is-leaving');
+    m.hidden = true;
+    return;
+  }
+  if (m.classList.contains('is-leaving')) return;
+  m.classList.add('is-leaving');
+  clearTimeout(ui.menuCloseT);
+  ui.menuCloseT = setTimeout(() => {
+    m.classList.remove('is-leaving');
+    m.hidden = true;
+    ui.menuCloseT = 0;
+  }, 110);
 }
 
 function toast(msg, { action, onAction, duration = 3500 } = {}) {
   const t = document.createElement('div');
   t.className = 'toast';
   t.innerHTML = `<span>${esc(msg)}</span>${action ? `<button>${esc(action)}</button>` : ''}`;
-  const remove = () => t.remove();
+  const remove = () => {
+    clearTimeout(t._autoT);
+    if (!t.isConnected || t.classList.contains('is-leaving')) return;
+    if (reducedMotion()) { t.remove(); return; }
+    t.classList.add('is-leaving');
+    setTimeout(() => t.remove(), 140);
+  };
   if (action) t.querySelector('button').onclick = () => { remove(); onAction && onAction(); };
   el.toasts.appendChild(t);
   while (el.toasts.children.length > 3) el.toasts.firstElementChild.remove();
-  setTimeout(remove, duration);
+  t._autoT = setTimeout(remove, duration);
 }
 
 function confirmDialog(title, text, okLabel = 'OK', danger = false) {
@@ -5566,7 +5814,7 @@ function toggleNoteSel(id) {
 }
 function renderNoteSelectBar() {
   const on = ui.nselecting && ui.tab === 'notes';
-  el.nselBar.hidden = !on;
+  setAnimatedVisible(el.nselBar, on, 120);
   el.app.classList.toggle('nsel-on', on);
   el.btnNselect.textContent = ui.nselecting ? 'Done' : 'Select';
   const n = ui.nsel.size;

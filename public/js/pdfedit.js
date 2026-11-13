@@ -147,10 +147,10 @@ export class PdfEditor {
     $('#pe-cancel', dialog).addEventListener('click', () => {
       if (!this.dirty() || confirm('Discard your changes to this PDF?')) dialog.close();
     });
-    dialog.addEventListener('cancel', (e) => {
-      if (this.ed || this.ted || this.sel || this.tool !== 'select') { e.preventDefault(); this.escape(); return; }
-      if (this.dirty() && !confirm('Discard your changes to this PDF?')) e.preventDefault();
-    });
+    dialog._cancelGuard = () => {
+      if (this.ed || this.ted || this.sel || this.tool !== 'select') { this.escape(); return false; }
+      return !this.dirty() || confirm('Discard your changes to this PDF?');
+    };
     dialog.addEventListener('close', () => this.finish(null));
     this.btnUndo.addEventListener('click', () => this.undo());
     this.btnSave.addEventListener('click', () => this.save());

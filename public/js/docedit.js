@@ -68,7 +68,7 @@ export class DocEditor {
     this.resolve = null;
 
     $('#de-cancel', dialog).addEventListener('click', () => { if (!this.dirty || confirm('Close without saving?')) dialog.close(); });
-    dialog.addEventListener('cancel', (e) => { if (this.dirty && !confirm('Close without saving?')) e.preventDefault(); });
+    dialog._cancelGuard = () => !this.dirty || confirm('Close without saving?');
     dialog.addEventListener('close', () => this.finish(null));
     this.btnSave.addEventListener('click', () => this.save());
     this.page.addEventListener('input', () => { this.dirty = true; this.sync(); });

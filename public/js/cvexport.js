@@ -185,7 +185,12 @@ export function openExport({ data, title, paper, font, loadImage, sanitize, save
     addEventListener('pointermove', move);
     addEventListener('pointerup', up);
   });
-  const close = () => { dlg.close(); dlg.remove(); };
+  const close = () => {
+    if (dlg.classList.contains('closing')) return;
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) { dlg.close(); dlg.remove(); return; }
+    dlg.classList.add('closing');
+    setTimeout(() => { if (dlg.open) dlg.close(); dlg.remove(); }, 135);
+  };
   dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
   dlg.addEventListener('click', async (e) => {
     const b = e.target.closest('button');

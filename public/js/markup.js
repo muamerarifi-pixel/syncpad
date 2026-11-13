@@ -105,9 +105,7 @@ export class Markup {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); this.undo(); }
       else if (e.key === 'Enter' && this.tool === 'crop') { e.preventDefault(); this.applyCrop(); this.setTool('box'); }
     });
-    dialog.addEventListener('cancel', (e) => {
-      if (this.dirty() && !confirm('Discard your changes to this photo?')) e.preventDefault();
-    });
+    dialog._cancelGuard = () => !this.dirty() || confirm('Discard your changes to this photo?');
     dialog.addEventListener('close', () => this.finish(null));
 
     const c = this.canvas;
