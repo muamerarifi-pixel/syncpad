@@ -15,7 +15,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 import { proxyYoutubeDownload } from './src/ytdl.js';
 
-const VERSION = '3.0.76';
+const VERSION = '3.0.77';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -168,6 +168,9 @@ export default {
       if (p === '/api/ytdl') {
         if (!KEY_RE.test(url.searchParams.get('s') || '')) return json({ error: 'forbidden' }, 403);
         return proxyYoutubeDownload(request, url);
+      }
+      if (p === '/api/quran') {
+        return proxyQuranRequest(request, url);
       }
 
       const m = p.match(ROUTE);
@@ -1123,4 +1126,29 @@ function serveType(type, download) {
   const inlineOk = /^(image\/(png|jpe?g|gif|webp|avif|bmp|svg\+xml|x-icon)|video\/[\w.+-]+|audio\/[\w.+-]+|application\/pdf|text\/plain)$/.test(t);
   if (download || !inlineOk) return { type: download && valid ? t : 'application/octet-stream', disposition: 'attachment' };
   return { type: t === 'text/plain' ? 'text/plain; charset=utf-8' : t, disposition: 'inline' };
+}
+
+const QURAN_HOST_RE = /^([a-z0-9-]+\.)?(mp3quran\.net|quranicaudio\.com|quran\.com|qurancdn\.com)$/i;
+async function proxyQuranRequest(request, url) {
+  const raw = url.searchParams.get('u') || '';
+  let target;
+  try { target = new URL(raw); } catch { return json({ error: 'bad url' }, 400); }
+  if (target.protocol !== 'https:' || !QURAN_HOST_RE.test(target.hostname)) {
+    return json({ error: 'forbidden' }, 403);
+  }
+  const fHeaders = new Headers();
+  const range = request.headers.get('range');
+  if (range) fHeaders.set('range', range);
+  const upstream = await fetch(target.href, {
+    method: request.method === 'HEAD' ? 'HEAD' : 'GET',
+    headers: fHeaders,
+    redirect: 'follow'
+  });
+  const outHeaders = new Headers();
+  for (const k of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'cache-control']) {
+    const v = upstream.headers.get(k);
+    if (v) outHeaders.set(k, v);
+  }
+  if (!outHeaders.has('cache-control')) outHeaders.set('cache-control', 'public, max-age=86400');
+  return new Response(upstream.body, { status: upstream.status, headers: outHeaders });
 }

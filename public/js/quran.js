@@ -253,17 +253,44 @@ export function hasSurah(reciter, surahNum) {
   return reciter._surahSet.has(surahNum);
 }
 
+function proxiedUrl(u) {
+  return typeof location !== 'undefined' && /^https?:$/.test(location.protocol)
+    ? `/api/quran?u=${encodeURIComponent(u)}`
+    : u;
+}
+
+async function fetchQuranJson(url) {
+  const urls = typeof location !== 'undefined' && /^https?:$/.test(location.protocol)
+    ? [proxiedUrl(url), url]
+    : [url];
+  let lastErr;
+  for (const u of urls) {
+    try {
+      const r = await fetch(u);
+      if (r.ok) return await r.json();
+      lastErr = new Error(`HTTP ${r.status}`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('Fetch failed');
+}
+
 export function resolveSurahAudioUrls(reciter, surahNum) {
   const urls = [];
+  const push = (u) => {
+    const p = proxiedUrl(u);
+    if (!urls.includes(p)) urls.push(p);
+    if (p !== u && !urls.includes(u)) urls.push(u);
+  };
   const n = Number(surahNum);
   const pad3 = String(n).padStart(3, '0');
   const srv = normalizeServer(reciter && reciter.server);
-  if (srv) urls.push(`${srv}${pad3}.mp3`);
+  if (srv) push(`${srv}${pad3}.mp3`);
   if (reciter && reciter.qdcServer) {
     const qSrv = normalizeServer(reciter.qdcServer);
     const file = reciter.qdcPad ? `${pad3}.mp3` : `${n}.mp3`;
-    const u = `${qSrv}${file}`;
-    if (!urls.includes(u)) urls.push(u);
+    push(`${qSrv}${file}`);
   }
   return urls;
 }
@@ -271,11 +298,9 @@ export function resolveSurahAudioUrls(reciter, surahNum) {
 export async function resolveFallbackAudioUrl(reciter, surahNum) {
   if (!reciter || !reciter.qdcId) return '';
   try {
-    const r = await fetch(`https://api.quran.com/api/v4/chapter_recitations/${reciter.qdcId}/${surahNum}`);
-    if (!r.ok) return '';
-    const j = await r.json();
+    const j = await fetchQuranJson(`https://api.quran.com/api/v4/chapter_recitations/${reciter.qdcId}/${surahNum}`);
     const u = j && j.audio_file && j.audio_file.audio_url;
-    return typeof u === 'string' && u.startsWith('https://') ? u : '';
+    return typeof u === 'string' && u.startsWith('https://') ? proxiedUrl(u) : '';
   } catch {
     return '';
   }
@@ -286,9 +311,7 @@ export async function fetchAllReciters() {
   if (allRecitersPromise) return allRecitersPromise;
   allRecitersPromise = (async () => {
     try {
-      const r = await fetch('https://www.mp3quran.net/api/v3/reciters?language=eng');
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const j = await r.json();
+      const j = await fetchQuranJson('https://www.mp3quran.net/api/v3/reciters?language=eng');
       const byServer = new Set(CURATED_RECITERS.map((x) => normalizeServer(x.server)));
       const merged = CURATED_RECITERS.map((x) => ({ ...x, popular: true }));
       const extra = [];
