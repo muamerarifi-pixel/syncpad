@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.79';
+const VERSION = '3.0.80';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -460,15 +460,12 @@ function wire() {
   el.editorText.addEventListener('blur', () => saveNote.flush());
   el.editorText.addEventListener('keydown', onEditorKey);
   el.editorText.addEventListener('click', onEditorClick);
-  el.editorText.addEventListener('contextmenu', (e) => {
-    if (ui.lastPointer === 'touch' || e.shiftKey || !openNoteItem()) return;
+  el.editor.addEventListener('contextmenu', (e) => {
+    const n = openNoteItem();
+    if (e.defaultPrevented || ui.lastPointer === 'touch' || e.shiftKey || !n) return;
+    if (e.target.closest('.editor-bar, .fmt-bar, .cv-bar, .conflict-bar')) return;
     e.preventDefault();
-    saveSel();
-    noteMenu(el.btnNoteMore, { x: e.clientX, y: e.clientY });
-  });
-  el.noteCanvas.addEventListener('contextmenu', (e) => {
-    if (e.defaultPrevented || ui.lastPointer === 'touch' || e.shiftKey || !openNoteItem()) return;
-    e.preventDefault();
+    if (!n.data.canvas) saveSel();
     noteMenu(el.btnNoteMore, { x: e.clientX, y: e.clientY });
   });
   ui.imgTools = new ImageTools({
@@ -3900,7 +3897,10 @@ const saveNote = debounce(async () => {
   let html;
   try { html = sanitizeNote(el.editorText.innerHTML); } catch { return; }
   ui.dirty = false;
-  const text = (el.editorText.innerText || '').replace(/ /g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  const text = (el.editorText.querySelector('.audio-pending')
+    ? textOf(html)
+    : (el.editorText.innerText || '')
+  ).replace(/ /g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   const exists = store.items.has(n.id);
   if (n.data.parts && !partsReady(n)) { renderSaveState(); return; } // never save half of a long note
   if (exists && html === (n.data.parts ? ui.loadedHtml : n.data.html)) { renderSaveState(); return; }

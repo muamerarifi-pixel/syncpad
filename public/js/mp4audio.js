@@ -331,8 +331,10 @@ async function fetchRangeSlice(url, start, end, totalSize) {
   const clampedEnd = totalSize ? Math.min(end, totalSize - 1) : end;
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(new Error('Chunk download timed out')), 25_000);
     try {
-      const res = await fetch(url, { headers: { Range: `bytes=${start}-${clampedEnd}` } });
+      const res = await fetch(url, { headers: { Range: `bytes=${start}-${clampedEnd}` }, signal: ac.signal });
       if (!res.ok && res.status !== 206) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.reason || `HTTP ${res.status}`);
@@ -341,6 +343,8 @@ async function fetchRangeSlice(url, start, end, totalSize) {
     } catch (e) {
       lastErr = e;
       await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastErr || new Error('Chunk download failed');
@@ -633,6 +637,18 @@ export async function downloadMp4AsAudio({ streamUrl, totalSize, wantMp3, loadLa
 }
 
 export async function downloadRangeBlob({ streamUrl, totalSize = 0, mime = 'audio/mp4', onProgress }) {
+  if (!totalSize) {
+    const hc = new AbortController();
+    const ht = setTimeout(() => hc.abort(), 6_000);
+    try {
+      const hr = await fetch(streamUrl, { method: 'HEAD', signal: hc.signal });
+      const hLen = Number(hr.headers.get('content-length') || 0);
+      const ar = (hr.headers.get('accept-ranges') || '').toLowerCase();
+      if (hr.ok && hLen > RANGE_CHUNK * 1.5 && ar.includes('bytes')) totalSize = hLen;
+    } catch {} finally {
+      clearTimeout(ht);
+    }
+  }
   if (totalSize > 0) {
     const parts = [];
     const ranges = [];
@@ -662,30 +678,42 @@ export async function downloadRangeBlob({ streamUrl, totalSize = 0, mime = 'audi
   }
 
   onProgress?.('Downloading audio…', 0);
-  const res = await fetch(streamUrl);
-  if (!res.ok) {
-    const j = await res.json().catch(() => ({}));
-    throw new Error(j.reason || `HTTP ${res.status}`);
-  }
-  const len = Number(res.headers.get('content-length') || 0);
-  if (!res.body || !res.body.getReader) {
-    const buf = await res.arrayBuffer();
-    onProgress?.('Downloading audio… 100%', 100);
-    return new Blob([buf], { type: res.headers.get('content-type') || mime });
-  }
-  const reader = res.body.getReader();
-  const parts = [];
-  let loaded = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value && value.byteLength) {
-      parts.push(value);
-      loaded += value.byteLength;
-      const pct = len > 0 ? Math.min(99, Math.round((loaded / len) * 100)) : 0;
-      const mb = (loaded / (1024 * 1024)).toFixed(1);
-      onProgress?.(len > 0 ? `Downloading audio… ${pct}%` : `Downloading audio… ${mb} MB`, pct);
+  const ac = new AbortController();
+  let stallTimer = setTimeout(() => ac.abort(new Error('Audio download stalled')), 25_000);
+  const bumpStall = () => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => ac.abort(new Error('Audio download stalled')), 25_000);
+  };
+  try {
+    const res = await fetch(streamUrl, { signal: ac.signal });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j.reason || `HTTP ${res.status}`);
     }
+    bumpStall();
+    const len = Number(res.headers.get('content-length') || 0);
+    if (!res.body || !res.body.getReader) {
+      const buf = await res.arrayBuffer();
+      onProgress?.('Downloading audio… 100%', 100);
+      return new Blob([buf], { type: res.headers.get('content-type') || mime });
+    }
+    const reader = res.body.getReader();
+    const parts = [];
+    let loaded = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bumpStall();
+      if (value && value.byteLength) {
+        parts.push(value);
+        loaded += value.byteLength;
+        const pct = len > 0 ? Math.min(99, Math.round((loaded / len) * 100)) : 0;
+        const mb = (loaded / (1024 * 1024)).toFixed(1);
+        onProgress?.(len > 0 ? `Downloading audio… ${pct}%` : `Downloading audio… ${mb} MB`, pct);
+      }
+    }
+    return new Blob(parts, { type: res.headers.get('content-type') || mime });
+  } finally {
+    clearTimeout(stallTimer);
   }
-  return new Blob(parts, { type: res.headers.get('content-type') || mime });
 }
