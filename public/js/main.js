@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.77';
+const VERSION = '3.0.78';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -7344,14 +7344,23 @@ async function decodeAndEncodeMp3Blob(buf) {
   return new Blob(chunks, { type: 'audio/mpeg' });
 }
 function placeAfterAnchor(anchorEl, node) {
-  if (!anchorEl || !anchorEl.isConnected || !el.editorText.contains(anchorEl)) {
-    el.editorText.appendChild(node);
-    if (!node.nextSibling) { const q = document.createElement('p'); q.innerHTML = '<br>'; node.after(q); }
+  for (const stray of $$('.editor > .audio-card, .editor > .audio-pending')) stray.remove();
+  if (!anchorEl || anchorEl === el.editorText || !anchorEl.isConnected || !el.editorText.contains(anchorEl)) {
+    const last = el.editorText.lastElementChild;
+    if (last && last.tagName === 'P' && !last.textContent.trim() && !last.querySelector('img, hr, [data-file]')) {
+      last.before(node);
+    } else {
+      el.editorText.appendChild(node);
+      const q = document.createElement('p');
+      q.innerHTML = '<br>';
+      node.after(q);
+    }
     return;
   }
-  let target = anchorEl.closest('a.link-card');
+  let target = anchorEl.closest && anchorEl.closest('a.link-card');
   if (!target) {
-    const blk = topBlock(anchorEl) || anchorEl;
+    const blk = topBlock(anchorEl);
+    if (!blk || blk === el.editorText) return placeAfterAnchor(null, node);
     target = (blk.nextElementSibling && blk.nextElementSibling.classList && blk.nextElementSibling.classList.contains('link-card'))
       ? blk.nextElementSibling
       : blk;
@@ -7505,10 +7514,9 @@ async function downloadQuranToNote({ surahNum, surahNameEn, surahNameAr, reciter
   if (targetNoteId && ui.tab === 'notes' && ui.noteId === targetNoteId) {
     applyLinkTitleToNote(displayTitle, '');
   }
-  const anchorEl = (ui.savedRange && el.editorText.contains(ui.savedRange.commonAncestorContainer))
-    ? (ui.savedRange.commonAncestorContainer.nodeType === 1
-      ? ui.savedRange.commonAncestorContainer
-      : ui.savedRange.commonAncestorContainer.parentElement)
+  const anc = ui.savedRange && ui.savedRange.commonAncestorContainer;
+  const anchorEl = (anc && anc !== el.editorText && el.editorText.contains(anc))
+    ? (anc.nodeType === 1 ? anc : anc.parentElement)
     : null;
   const task = createNoteAudioTask({
     targetNoteId,
