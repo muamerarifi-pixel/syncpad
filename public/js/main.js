@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.78';
+const VERSION = '3.0.79';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -460,6 +460,17 @@ function wire() {
   el.editorText.addEventListener('blur', () => saveNote.flush());
   el.editorText.addEventListener('keydown', onEditorKey);
   el.editorText.addEventListener('click', onEditorClick);
+  el.editorText.addEventListener('contextmenu', (e) => {
+    if (ui.lastPointer === 'touch' || e.shiftKey || !openNoteItem()) return;
+    e.preventDefault();
+    saveSel();
+    noteMenu(el.btnNoteMore, { x: e.clientX, y: e.clientY });
+  });
+  el.noteCanvas.addEventListener('contextmenu', (e) => {
+    if (e.defaultPrevented || ui.lastPointer === 'touch' || e.shiftKey || !openNoteItem()) return;
+    e.preventDefault();
+    noteMenu(el.btnNoteMore, { x: e.clientX, y: e.clientY });
+  });
   ui.imgTools = new ImageTools({
     editor: el.editorText,
     onChange: onEditorInput,
@@ -4352,21 +4363,21 @@ function resolveConflict(keep) {
   }
 }
 
-function noteMenu(anchor) {
+function noteMenu(anchor, at) {
   const n = openNoteItem();
   if (!n) return;
   const text = () => (n.data.canvas ? n.data.text || '' : el.editorText.innerText || '').trim();
   const m = [
     { icon: 'download', label: 'Save as PDF (keeps the layout)', run: () => saveNotesPdf([n]) },
-    { icon: 'bell', label: n.data.remind ? `Reminder: ${remindLabel(n)}…` : 'Remind me…', run: () => remindMenu(anchor, [n]) },
+    { icon: 'bell', label: n.data.remind ? `Reminder: ${remindLabel(n)}…` : 'Remind me…', run: () => remindMenu(anchor, [n], at) },
     { icon: 'copy', label: 'Copy text', run: async () => { await copyText(text()); toast('Copied'); } },
     { icon: 'drops', label: 'Send as a drop', run: () => { sendClip(text()); toast('Sent to Drops'); } },
     { icon: 'present', label: 'Present (full screen)', run: startPresent },
-    { icon: 'folder', label: 'Move to folder…', run: () => folderPick(n, anchor) },
+    { icon: 'folder', label: 'Move to folder…', run: () => folderPick(n, anchor, at) },
     ...(store.items.has(n.id) ? [{ icon: 'archive', label: n.data.archived ? 'Unarchive' : 'Archive', run: () => archiveNote(n, !n.data.archived) }] : []),
-    { icon: 'marker', label: 'Colour…', run: () => colorPick(n, anchor) },
-    { icon: 'text', label: 'Font…', run: () => fontPick(n, anchor) },
-    { icon: 'file', label: 'Paper…', run: () => paperPick(n, anchor) },
+    { icon: 'marker', label: 'Colour…', run: () => colorPick(n, anchor, at) },
+    { icon: 'text', label: 'Font…', run: () => fontPick(n, anchor, at) },
+    { icon: 'file', label: 'Paper…', run: () => paperPick(n, anchor, at) },
     ...(n.data.canvas ? [{ icon: 'download', label: 'Save as PNG or PDF…', run: exportCanvas }] : []),
     { icon: 'pen', label: 'New note', run: () => newNote() },
     n.data.canvas
@@ -4382,7 +4393,7 @@ function noteMenu(anchor) {
   if (store.items.has(n.id)) m.splice(2, 0, { icon: 'history', label: 'Version history', run: openHistory });
   if (navigator.share && isTouch()) m.push({ icon: 'share', label: 'Share…', run: () => navigator.share({ text: text() }).catch(() => {}) });
   if (store.items.has(n.id)) m.push({ icon: 'trash', label: 'Move to Trash', danger: true, run: () => deleteWithUndo(n, 'Note') });
-  openMenu(anchor, m);
+  openMenu(anchor, m, at ? { at } : {});
 }
 
 function downloadNote() {
@@ -6786,7 +6797,7 @@ function remindLabel(n) {
   const t = remindNext(n) || Number(n.data.remind);
   return fmtWhen(t) + (n.data.repeat ? ' ↻' : '');
 }
-function remindMenu(anchor, notes) {
+function remindMenu(anchor, notes, pos) {
   const now = new Date();
   const at = (h, addDays = 0) => { const d = new Date(); d.setDate(d.getDate() + addDays); d.setHours(h, 0, 0, 0); return d.getTime(); };
   const inHour = Math.ceil((Date.now() + 3_600_000) / 300_000) * 300_000;
@@ -6804,6 +6815,7 @@ function remindMenu(anchor, notes) {
       <button class="btn btn-primary btn-sm" data-rm="pick">Set</button></div>` +
     (notes.some((n) => n.data.remind) ? '<button data-rm="off" class="danger"><svg class="ic"><use href="#i-x"/></svg><span>Remove reminder</span></button>' : '');
   openMenu(anchor, null, {
+    ...(pos ? { at: pos } : {}),
     content: html,
     onClick: (b) => {
       const v = b.dataset.rm;
