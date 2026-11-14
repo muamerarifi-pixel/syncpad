@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.85';
+const VERSION = '3.0.86';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -111,6 +111,7 @@ async function boot() {
   takeShared(params.shared);
   initLaunchQueue();
   if (params.note && store.items.get(params.note)) whenUnlocked(() => openNote(params.note));
+  whenUnlocked(() => bgAudio.restoreLast());
   scheduleLocalReminders();
   setTimeout(indexBacklog, 6000);
   syncThemeColor();
@@ -216,7 +217,10 @@ function wire() {
   });
   files.addEventListener('offline', () => { scheduleRender(true, false); bgAudio.syncUI(); });
   store.addEventListener('deleted', (e) => {
-    if (bgAudio.fileId && Array.isArray(e.detail) && e.detail.includes(bgAudio.fileId)) bgAudio.stop();
+    if (Array.isArray(e.detail)) {
+      for (const did of e.detail) bgAudio.clearPos(did);
+      if (bgAudio.fileId && e.detail.includes(bgAudio.fileId)) bgAudio.stop();
+    }
   });
   sync.addEventListener('rejected', (e) => toast(e.detail.err === 'too_big' ? 'That note is too large to sync.' : 'Something could not be synced.'));
   files.addEventListener('progress', (e) => updateProgress(e.detail.id));
@@ -833,13 +837,15 @@ function wire() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       saveNote.flush();
+      bgAudio.saveCurrentPos(true);
       onVisibilityForLock(false);
     } else {
       onVisibilityForLock(true);
       clearUnseen();
     }
   });
-  addEventListener('pagehide', () => saveNote.flush());
+  addEventListener('pagehide', () => { saveNote.flush(); bgAudio.saveCurrentPos(true); });
+  addEventListener('beforeunload', () => bgAudio.saveCurrentPos(true));
   addEventListener('online', () => { renderStatus(); retryFileThumbs(); });
   // a join link opened while SyncPad is already open in this tab
   addEventListener('hashchange', () => {
@@ -3475,6 +3481,8 @@ function fmtAudioTime(s) {
   const pad = (v) => String(v).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
 }
+const AUDIO_POS = 'sp-audio-pos';
+const AUDIO_LAST = 'sp-audio-last';
 const bgAudio = {
   el: null,
   fileId: '',
@@ -3487,6 +3495,137 @@ const bgAudio = {
   streamArtist: '',
   streamQueue: [],
   scrubbing: false,
+  _pendingSeek: null,
+  _pendingDur: 0,
+  _seekRetries: 0,
+  _wantPlay: false,
+  _lastSaveAt: 0,
+  _posCache: null,
+  posMap() {
+    if (this._posCache) return this._posCache;
+    try {
+      const m = JSON.parse(localStorage.getItem(AUDIO_POS) || '{}');
+      this._posCache = m && typeof m === 'object' ? m : {};
+    } catch { this._posCache = {}; }
+    return this._posCache;
+  },
+  _writePosMap(m) {
+    this._posCache = m;
+    const keys = Object.keys(m);
+    if (keys.length > 300) keys.sort((a, b) => (m[a][2] || 0) - (m[b][2] || 0)).slice(0, keys.length - 300).forEach((k) => delete m[k]);
+    try { localStorage.setItem(AUDIO_POS, JSON.stringify(m)); } catch {}
+  },
+  getSavedPos(id) {
+    if (!id) return null;
+    const e = this.posMap()[id];
+    if (!Array.isArray(e)) return null;
+    const pos = Number(e[0]);
+    const dur = Number(e[1]) || 0;
+    if (!Number.isFinite(pos) || pos < 1) return null;
+    if (dur > 10 && pos >= dur - 2) return null;
+    return { pos, dur };
+  },
+  savePos(id, pos, dur = 0) {
+    if (!id || !Number.isFinite(pos)) return;
+    const m = this.posMap();
+    const d = Number.isFinite(dur) && dur > 0 ? dur : (Array.isArray(m[id]) ? Number(m[id][1]) || 0 : 0);
+    if (pos < 1 || (d > 10 && pos >= d - 2)) {
+      if (!(id in m)) return;
+      delete m[id];
+    } else {
+      m[id] = [Math.round(pos * 10) / 10, d > 0 ? Math.round(d * 10) / 10 : 0, Date.now()];
+    }
+    this._writePosMap(m);
+  },
+  clearPos(id) {
+    if (!id) return;
+    const m = this.posMap();
+    if (!(id in m)) return;
+    delete m[id];
+    this._writePosMap(m);
+  },
+  saveCurrentPos(force = false) {
+    if (!this.fileId || !this.el) return;
+    if (this._pendingSeek != null) {
+      if (force && this._pendingSeek >= 1) {
+        const dur = Number.isFinite(this.el.duration) && this.el.duration > 0 ? this.el.duration : this._pendingDur;
+        this.savePos(this.fileId, this._pendingSeek, dur);
+      }
+      return;
+    }
+    if (!force) {
+      const now = Date.now();
+      if (now - this._lastSaveAt < 1200) return;
+      this._lastSaveAt = now;
+    }
+    const cur = Number.isFinite(this.el.currentTime) ? this.el.currentTime : 0;
+    const dur = Number.isFinite(this.el.duration) && this.el.duration > 0 ? this.el.duration : this._pendingDur;
+    this.savePos(this.fileId, cur, dur);
+  },
+  saveLast() {
+    if (!this.fileId) return;
+    try {
+      localStorage.setItem(AUDIO_LAST, JSON.stringify({
+        space: store.get('space') || '',
+        fileId: this.fileId,
+        noteId: this.noteId || '',
+        title: this.title || '',
+        ext: this.ext || 'AUDIO',
+        isStream: !!this.isStream,
+        streamUrl: this.streamUrl || '',
+        streamSub: this.streamSub || '',
+        streamArtist: this.streamArtist || '',
+        streamQueue: Array.isArray(this.streamQueue) ? this.streamQueue : [],
+        t: Date.now()
+      }));
+    } catch {}
+  },
+  clearLast() {
+    try { localStorage.removeItem(AUDIO_LAST); } catch {}
+  },
+  restoreLast() {
+    if (this.fileId) return;
+    let last = null;
+    try { last = JSON.parse(localStorage.getItem(AUDIO_LAST) || 'null'); } catch {}
+    if (!last || !last.fileId || last.space !== (store.get('space') || '')) return;
+    if (!last.isStream && !store.items.get(last.fileId)) { this.clearLast(); return; }
+    const saved = this.getSavedPos(last.fileId);
+    if (!saved) return;
+    this.isStream = !!last.isStream;
+    this.streamUrl = last.streamUrl || '';
+    this.streamSub = last.streamSub || '';
+    this.streamArtist = last.streamArtist || '';
+    this.streamQueue = Array.isArray(last.streamQueue) ? last.streamQueue : [];
+    this.fileId = last.fileId;
+    this.noteId = last.noteId || '';
+    this.title = last.title || 'Audio';
+    this.ext = last.ext || 'AUDIO';
+    this._wantPlay = false;
+    this._pendingSeek = saved.pos;
+    this._pendingDur = saved.dur || 0;
+    this._seekRetries = 0;
+    const a = this.ensureEl();
+    a.src = this.isStream ? this.streamUrl : files.src(this.fileId);
+    a.load();
+    this.syncSession();
+    this.syncUI();
+  },
+  _applyPendingSeek(fromCanPlay = false) {
+    if (!this.el || this._pendingSeek == null || this.el.readyState < 1) return;
+    const d = this.el.duration;
+    if (Number.isFinite(d) && d > 0) this._pendingDur = d;
+    const target = (Number.isFinite(d) && d > 0)
+      ? Math.max(0, Math.min(Math.max(0, d - 0.5), this._pendingSeek))
+      : Math.max(0, this._pendingSeek);
+    if (Math.abs((this.el.currentTime || 0) - target) > 1.2) {
+      try { this.el.currentTime = target; } catch {}
+      this._seekRetries++;
+    } else if (fromCanPlay || !this.el.seeking) {
+      this._pendingSeek = null;
+      this._pendingDur = 0;
+      this._seekRetries = 0;
+    }
+  },
   ensureEl() {
     if (this.el) return this.el;
     const a = document.createElement('audio');
@@ -3495,43 +3634,102 @@ const bgAudio = {
     a.setAttribute('x-webkit-airplay', 'allow');
     a.style.cssText = 'position:fixed;width:0;height:0;opacity:0;pointer-events:none;';
     document.body.append(a);
-    a.addEventListener('play', () => { this.syncSession(); this.syncUI(); });
-    a.addEventListener('pause', () => { this.syncSession(); this.syncUI(); });
-    a.addEventListener('ended', () => { this.syncSession(); this.syncUI(); });
-    a.addEventListener('loadedmetadata', () => { this.syncSession(); this.syncUI(); });
+    a.addEventListener('play', () => {
+      this._wantPlay = true;
+      if (this._pendingSeek != null) this._applyPendingSeek();
+      this.saveLast();
+      this.syncSession();
+      this.syncUI();
+    });
+    a.addEventListener('pause', () => {
+      this._wantPlay = false;
+      this.saveCurrentPos(true);
+      this.syncSession();
+      this.syncUI();
+    });
+    a.addEventListener('ended', () => {
+      this._wantPlay = false;
+      this._pendingSeek = null;
+      this._pendingDur = 0;
+      this._seekRetries = 0;
+      this.clearPos(this.fileId);
+      this.clearLast();
+      this.syncSession();
+      this.syncUI();
+    });
+    a.addEventListener('loadedmetadata', () => {
+      if (this._pendingSeek != null) this._applyPendingSeek();
+      this.saveCurrentPos(true);
+      this.syncSession();
+      this.syncUI();
+    });
+    a.addEventListener('canplay', () => {
+      if (this._pendingSeek != null) this._applyPendingSeek(true);
+      this.syncUI();
+    });
     a.addEventListener('durationchange', () => { this.syncSession(); this.syncUI(); });
-    a.addEventListener('seeked', () => { this.syncPosition(); this.syncUI(); });
-    a.addEventListener('timeupdate', () => { this.syncPosition(); this.syncUI(true); });
+    a.addEventListener('seeked', () => {
+      if (this._pendingSeek != null && Math.abs((a.currentTime || 0) - this._pendingSeek) <= 2) {
+        this._pendingSeek = null;
+        this._pendingDur = 0;
+        this._seekRetries = 0;
+      }
+      this.saveCurrentPos(true);
+      this.syncPosition();
+      this.syncUI();
+    });
+    a.addEventListener('timeupdate', () => {
+      if (this._pendingSeek != null) {
+        const cur = a.currentTime || 0;
+        if (Math.abs(cur - this._pendingSeek) <= 2 || cur > this._pendingSeek) {
+          this._pendingSeek = null;
+          this._pendingDur = 0;
+          this._seekRetries = 0;
+        } else if (a.readyState >= 2 && !a.seeking && this._seekRetries < 3) {
+          this._applyPendingSeek(true);
+        }
+      }
+      this.saveCurrentPos(false);
+      this.syncPosition();
+      this.syncUI(true);
+    });
     a.addEventListener('error', () => {
       if (!a.getAttribute('src')) return;
       if (this.isStream && this.streamQueue && this.streamQueue.length) {
+        const prevPos = this._pendingSeek != null ? this._pendingSeek : (this.getSavedPos(this.fileId) || {}).pos;
         const nextUrl = this.streamQueue.shift();
         this.streamUrl = nextUrl;
         this.fileId = 'stream:' + nextUrl;
+        if (prevPos >= 1) this._pendingSeek = prevPos;
         a.src = nextUrl;
         a.load();
-        this.play();
+        if (this._wantPlay) this.play();
         this.syncUI();
         return;
       }
-      toast('Could not play this audio file.');
+      if (this._wantPlay) toast('Could not play this audio file.');
+      this._wantPlay = false;
       this.syncUI();
     });
     this.el = a;
     return a;
   },
-  playFile(id, noteId = null) {
+  playFile(id, noteId = null, startAt = null) {
     const it = store.items.get(id);
     if (!it) return;
     const a = this.ensureEl();
     const resolvedNote = noteId || (it.data && it.data.parent) || '';
     if (this.fileId === id && a.getAttribute('src')) {
       if (resolvedNote && !this.noteId) this.noteId = resolvedNote;
+      if (startAt != null) this.seekTo(startAt);
       this.play();
       return;
     }
+    if (this.fileId && this.fileId !== id) this.saveCurrentPos(true);
     const fullName = (it.data && it.data.name) || 'Audio';
     const extMatch = fullName.match(/\.([A-Za-z0-9]{2,5})$/);
+    const saved = this.getSavedPos(id);
+    const target = startAt != null ? Math.max(0, startAt) : (saved ? saved.pos : null);
     this.isStream = false;
     this.streamUrl = '';
     this.streamSub = '';
@@ -3541,8 +3739,12 @@ const bgAudio = {
     this.noteId = resolvedNote;
     this.title = fullName.replace(/\.(mp3|m4a|webm|ogg|wav|aac|flac)$/i, '');
     this.ext = extMatch ? extMatch[1].toUpperCase() : 'AUDIO';
+    this._pendingSeek = target != null && target >= 1 ? target : null;
+    this._pendingDur = saved && saved.dur ? saved.dur : 0;
+    this._seekRetries = 0;
     a.src = files.src(id);
     a.load();
+    this.saveLast();
     this.play();
     this.syncSession();
     this.syncUI();
@@ -3557,17 +3759,24 @@ const bgAudio = {
       return;
     }
     const primary = list[0];
+    const nextId = 'stream:' + primary;
+    if (this.fileId && this.fileId !== nextId) this.saveCurrentPos(true);
+    const saved = this.getSavedPos(nextId);
     this.isStream = true;
     this.streamUrl = primary;
     this.streamSub = sub || 'Streaming preview';
     this.streamArtist = artist || 'SyncPad';
     this.streamQueue = list.slice(1);
-    this.fileId = 'stream:' + primary;
+    this.fileId = nextId;
     this.noteId = noteId || '';
     this.title = title || 'Audio';
     this.ext = 'MP3';
+    this._pendingSeek = saved ? saved.pos : null;
+    this._pendingDur = saved && saved.dur ? saved.dur : 0;
+    this._seekRetries = 0;
     a.src = primary;
     a.load();
+    this.saveLast();
     this.play();
     this.syncSession();
     this.syncUI();
@@ -3586,25 +3795,54 @@ const bgAudio = {
   },
   play() {
     if (!this.el || !this.fileId) return;
+    this._wantPlay = true;
+    if (this.el.error || !this.el.getAttribute('src')) {
+      if (this._pendingSeek == null) {
+        const saved = this.getSavedPos(this.fileId);
+        if (saved) { this._pendingSeek = saved.pos; this._pendingDur = saved.dur || 0; }
+      }
+      this.el.src = this.isStream ? this.streamUrl : files.src(this.fileId);
+      this.el.load();
+    } else if (this._pendingSeek != null && this.el.readyState >= 1) {
+      this._applyPendingSeek();
+    }
     const p = this.el.play();
     if (p && typeof p.catch === 'function') p.catch(() => {});
   },
   pause() {
+    this._wantPlay = false;
     if (this.el && !this.el.paused) this.el.pause();
+    else this.saveCurrentPos(true);
   },
   seekTo(sec) {
     if (!this.el || !this.fileId) return;
-    const d = this.el.duration;
-    const next = Number.isFinite(d) && d > 0 ? Math.max(0, Math.min(d, sec)) : Math.max(0, sec);
-    try { this.el.currentTime = next; } catch {}
+    const d = Number.isFinite(this.el.duration) && this.el.duration > 0 ? this.el.duration : this._pendingDur;
+    const next = d > 0 ? Math.max(0, Math.min(d, sec)) : Math.max(0, sec);
+    if (this.el.readyState < 1) {
+      this._pendingSeek = next >= 1 ? next : null;
+      this.savePos(this.fileId, next, d);
+    } else {
+      this._pendingSeek = null;
+      this._pendingDur = 0;
+      this._seekRetries = 0;
+      try { this.el.currentTime = next; } catch {}
+      this.savePos(this.fileId, next, d);
+    }
     this.syncPosition();
     this.syncUI();
   },
   seekBy(delta) {
     if (!this.el || !this.fileId) return;
-    this.seekTo((this.el.currentTime || 0) + delta);
+    const base = (this._pendingSeek != null && (this.el.currentTime || 0) < 1) ? this._pendingSeek : (this.el.currentTime || 0);
+    this.seekTo(base + delta);
   },
   stop() {
+    this.saveCurrentPos(true);
+    this.clearLast();
+    this._wantPlay = false;
+    this._pendingSeek = null;
+    this._pendingDur = 0;
+    this._seekRetries = 0;
     this.fileId = '';
     this.noteId = '';
     this.title = '';
@@ -3707,7 +3945,7 @@ const bgAudio = {
     seek.addEventListener('pointercancel', endScrub);
     seek.addEventListener('change', endScrub);
     seek.addEventListener('input', () => {
-      const d = this.el && this.el.duration;
+      const d = Number.isFinite(this.el && this.el.duration) && this.el.duration > 0 ? this.el.duration : this._pendingDur;
       if (!Number.isFinite(d) || d <= 0) return;
       const pct = Number(seek.value) / 10;
       seek.style.setProperty('--p', `${pct}%`);
@@ -3720,10 +3958,12 @@ const bgAudio = {
     if (!card) return;
     const id = card.dataset.file;
     if (this.fileId !== id) {
-      this.playFile(id, openNoteItem() && openNoteItem().id);
+      const saved = this.getSavedPos(id);
+      const target = saved && saved.dur > 0 ? (Number(rangeEl.value) / 1000) * saved.dur : null;
+      this.playFile(id, openNoteItem() && openNoteItem().id, target);
       return;
     }
-    const d = this.el && this.el.duration;
+    const d = Number.isFinite(this.el && this.el.duration) && this.el.duration > 0 ? this.el.duration : this._pendingDur;
     if (!Number.isFinite(d) || d <= 0) return;
     const pct = Number(rangeEl.value) / 10;
     rangeEl.style.setProperty('--p', `${pct}%`);
@@ -3732,8 +3972,9 @@ const bgAudio = {
   syncUI(timeOnly = false) {
     const a = this.el;
     const playing = !!(a && !a.paused && this.fileId);
-    const cur = (a && Number.isFinite(a.currentTime)) ? a.currentTime : 0;
-    const dur = (a && Number.isFinite(a.duration) && a.duration > 0) ? a.duration : 0;
+    const curRaw = (a && Number.isFinite(a.currentTime)) ? a.currentTime : 0;
+    const cur = (this._pendingSeek != null && curRaw < 1) ? this._pendingSeek : curRaw;
+    const dur = (a && Number.isFinite(a.duration) && a.duration > 0) ? a.duration : (this._pendingDur || 0);
     const ratio = dur > 0 ? Math.max(0, Math.min(1, cur / dur)) : 0;
     const pct = (ratio * 100).toFixed(2);
     const timeLabel = dur > 0 ? `${fmtAudioTime(cur)} / ${fmtAudioTime(dur)}` : fmtAudioTime(cur);
@@ -3778,20 +4019,27 @@ const bgAudio = {
 
     if (el.editorText) {
       for (const card of $$('div.audio-card[data-file]', el.editorText)) {
-        const active = this.fileId && card.dataset.file === this.fileId;
-        card.classList.toggle('is-active', !!active);
+        const cid = card.dataset.file;
+        const active = !!(this.fileId && cid === this.fileId);
+        const saved = active ? null : this.getSavedPos(cid);
+        const cCur = active ? cur : (saved ? saved.pos : 0);
+        const cDur = active ? dur : (saved ? saved.dur : 0);
+        const cRatio = cDur > 0 ? Math.max(0, Math.min(1, cCur / cDur)) : 0;
+        const cPct = (cRatio * 100).toFixed(2);
+        const cLabel = active ? timeLabel : (saved ? (cDur > 0 ? `${fmtAudioTime(cCur)} / ${fmtAudioTime(cDur)}` : fmtAudioTime(cCur)) : '0:00');
+        card.classList.toggle('is-active', active);
         card.classList.toggle('is-playing', !!(active && playing));
         const u = card.querySelector('.ac-play use');
         if (u) u.setAttribute('href', active && playing ? '#i-pause' : '#i-play');
         const pb = card.querySelector('.ac-play');
         if (pb) pb.setAttribute('aria-label', active && playing ? 'Pause audio' : 'Play audio');
         const tm = card.querySelector('.ac-time');
-        if (tm) tm.textContent = active ? timeLabel : '0:00';
+        if (tm) tm.textContent = cLabel;
         const sk = card.querySelector('.ac-seek');
         if (sk && !this.scrubbing) {
-          sk.value = active ? String(Math.round(ratio * 1000)) : '0';
-          sk.style.setProperty('--p', active ? `${pct}%` : '0%');
-          sk.disabled = !active || dur <= 0;
+          sk.value = String(Math.round(cRatio * 1000));
+          sk.style.setProperty('--p', `${cPct}%`);
+          sk.disabled = cDur <= 0;
         }
       }
     }
@@ -4746,7 +4994,10 @@ function onEditorClick(e) {
       e.preventDefault();
       if (it) {
         if (bgAudio.fileId === id) bgAudio.seekBy(-15);
-        else bgAudio.playFile(id, openNoteItem() && openNoteItem().id);
+        else {
+          const saved = bgAudio.getSavedPos(id);
+          bgAudio.playFile(id, openNoteItem() && openNoteItem().id, saved ? Math.max(0, saved.pos - 15) : 0);
+        }
       }
       return;
     }
@@ -4754,7 +5005,12 @@ function onEditorClick(e) {
       e.preventDefault();
       if (it) {
         if (bgAudio.fileId === id) bgAudio.seekBy(15);
-        else bgAudio.playFile(id, openNoteItem() && openNoteItem().id);
+        else {
+          const saved = bgAudio.getSavedPos(id);
+          const base = saved ? saved.pos : 0;
+          const next = saved && saved.dur > 0 ? Math.min(saved.dur, base + 15) : base + 15;
+          bgAudio.playFile(id, openNoteItem() && openNoteItem().id, next);
+        }
       }
       return;
     }
