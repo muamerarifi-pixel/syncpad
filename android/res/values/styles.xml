@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SyncPad" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:windowBackground">@color/sp_bg</item>
+        <item name="android:statusBarColor">@color/sp_bar</item>
+        <item name="android:navigationBarColor">@color/sp_bar</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+    <color name="sp_bg">#fcfcfd</color>
+    <color name="sp_bar">#ffffff</color>
+</resources>

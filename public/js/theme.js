@@ -16,5 +16,8 @@ try {
   if (cs) cs.content = dark ? 'dark' : 'light';
   var sb = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
   if (sb) sb.content = dark ? 'black-translucent' : 'default';
+  if (window.SyncPadAndroid && window.SyncPadAndroid.setTheme) {
+    window.SyncPadAndroid.setTheme(dark, color, dark ? '#0e1014' : '#fcfcfd');
+  }
   if (localStorage.getItem('sp-pin')) document.documentElement.classList.add('locked');
 } catch (e) {}

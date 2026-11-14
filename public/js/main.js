@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.60';
+const VERSION = '3.0.61';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -4686,6 +4686,9 @@ function applyTheme() {
   if (csMeta) csMeta.content = scheme;
   const sbMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
   if (sbMeta) sbMeta.content = dark ? 'black-translucent' : 'default';
+  if (window.SyncPadAndroid?.setTheme) {
+    window.SyncPadAndroid.setTheme(dark, col, dark ? '#0e1014' : '#fcfcfd');
+  }
   updateManifest();
   requestAnimationFrame(syncThemeColor);
 }
@@ -6532,6 +6535,11 @@ function syncThemeColor() {
   const src = el.app.classList.contains('presenting') ? el.editor : $('.topbar');
   const c = solidColor(src) || solidColor(document.body);
   if (c) for (const m of document.querySelectorAll('meta[name="theme-color"]')) if (m.content !== c) m.content = c;
+  if (window.SyncPadAndroid?.setTheme) {
+    const isDark = document.documentElement.dataset.theme === 'dark';
+    const bg = solidColor(document.body) || (isDark ? '#0e1014' : '#fcfcfd');
+    window.SyncPadAndroid.setTheme(isDark, c || (isDark ? '#16181e' : '#ffffff'), bg);
+  }
 }
 /** an element's background as plain #rrggbb (status bars don't understand transparency or color-mix) */
 function solidColor(node) {

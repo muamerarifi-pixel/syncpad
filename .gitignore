@@ -23,3 +23,7 @@ Thumbs.db
 .idea/
 test/shots/
 .tmpui/
+android/build/
+android/*.jks
+android/*.keystore
+android/*.idsig
