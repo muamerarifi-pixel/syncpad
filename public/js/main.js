@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.74';
+const VERSION = '3.0.75';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -3752,6 +3752,7 @@ function hydrateAudioCard(card) {
   const dispTitle = fullName.replace(/\.(mp3|m4a|webm|ogg|wav|aac|flac)$/i, '');
   const sizeTxt = it && it.data && it.data.size ? fmtBytes(it.data.size) : '';
   const off = files.isOffline(id);
+  card.classList.add('audio-card');
   card.setAttribute('contenteditable', 'false');
   card.innerHTML =
     `<div class="ac-head">` +
@@ -3781,7 +3782,7 @@ function hydrateAudioCard(card) {
 function hydrateFiles(root) {
   for (const img of $$('img[data-file]', root)) if (!img.getAttribute('src')) img.src = files.src(img.dataset.file);
   for (const a of $$('a[data-file]', root)) { a.setAttribute('contenteditable', 'false'); a.removeAttribute('href'); }
-  for (const card of $$('div.audio-card[data-file]', root)) hydrateAudioCard(card);
+  for (const card of $$('div[data-file]', root)) hydrateAudioCard(card);
   for (const a of $$('a.link-card', root)) {
     a.setAttribute('contenteditable', 'false');
     if (ytInfo(a.href)) {
