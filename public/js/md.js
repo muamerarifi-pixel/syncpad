@@ -26,9 +26,10 @@ function P() {
         if (kept.length) data.attrValue = kept.join('; ');
         else data.keepAttr = false;
       } else if (data.attrName === 'class') {
-        if (!/^(?:file-chip|link-card|link-card has-fav|lc-img|lc-fav-wrap|lc-fav|lc-t|lc-d|lc-acts|lc-act|kp)$/.test(data.attrValue)) data.keepAttr = false;
+        if (!/^(?:file-chip|audio-card|link-card|link-card has-fav|lc-img|lc-fav-wrap|lc-fav|lc-t|lc-d|lc-acts|lc-act|kp)$/.test(data.attrValue)) data.keepAttr = false;
       } else if (data.attrName === 'contenteditable') {
-        if (node.tagName === 'A' && (node.hasAttribute('data-file') || /\blink-card\b/.test(node.getAttribute('class') || ''))) data.attrValue = 'false';
+        if ((node.tagName === 'A' && (node.hasAttribute('data-file') || /\blink-card\b/.test(node.getAttribute('class') || ''))) ||
+            (node.tagName === 'DIV' && /\baudio-card\b/.test(node.getAttribute('class') || ''))) data.attrValue = 'false';
         else data.keepAttr = false;
       }
     });
@@ -38,6 +39,15 @@ function P() {
         node.setAttribute('rel', 'noopener noreferrer');
       }
       if (node.tagName === 'IMG' && node.hasAttribute('data-file')) node.removeAttribute('src');
+      if (node.tagName === 'DIV' && /\baudio-card\b/.test(node.getAttribute('class') || '')) {
+        node.setAttribute('contenteditable', 'false');
+        node.textContent = '';
+      }
+    });
+    p.addHook('uponSanitizeElement', (node) => {
+      if (node && node.nodeType === 1 && /\baudio-pending\b/.test(node.getAttribute('class') || '')) {
+        node.parentNode && node.parentNode.removeChild(node);
+      }
     });
   }
   return p;
@@ -46,7 +56,7 @@ function P() {
 const BASE = {
   ALLOWED_TAGS: ['p', 'div', 'br', 'span', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'a', 'img', 'h1', 'h2', 'h3',
     'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'hr', 'mark', 'font', 'sub', 'sup', 'table', 'thead', 'tbody', 'tr', 'th', 'td'],
-  ALLOWED_ATTR: ['href', 'src', 'data-file', 'data-checklist', 'data-checked', 'data-align', 'data-yt-dl', 'alt', 'style', 'size', 'color', 'class', 'contenteditable', 'target', 'rel', 'loading'],
+  ALLOWED_ATTR: ['href', 'src', 'data-file', 'data-name', 'data-checklist', 'data-checked', 'data-align', 'data-yt-dl', 'alt', 'style', 'size', 'color', 'class', 'contenteditable', 'target', 'rel', 'loading'],
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|blob|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 };
 

@@ -631,3 +631,61 @@ export async function downloadMp4AsAudio({ streamUrl, totalSize, wantMp3, loadLa
     blob: m4aBlob
   };
 }
+
+export async function downloadRangeBlob({ streamUrl, totalSize = 0, mime = 'audio/mp4', onProgress }) {
+  if (totalSize > 0) {
+    const parts = [];
+    const ranges = [];
+    for (let s = 0; s < totalSize; s += RANGE_CHUNK) {
+      ranges.push([s, Math.min(totalSize - 1, s + RANGE_CHUNK - 1)]);
+    }
+    let doneBytes = 0;
+    const inflight = [];
+    let idx = 0;
+    const enqueue = () => {
+      while (inflight.length < 2 && idx < ranges.length) {
+        const [s, e] = ranges[idx++];
+        inflight.push({ s, e, promise: fetchRangeSlice(streamUrl, s, e, totalSize) });
+      }
+    };
+    enqueue();
+    while (inflight.length) {
+      const item = inflight.shift();
+      enqueue();
+      const slice = await item.promise;
+      parts.push(slice);
+      doneBytes += slice.byteLength;
+      const pct = Math.min(99, Math.round((doneBytes / totalSize) * 100));
+      onProgress?.(`Downloading audio… ${pct}%`, pct);
+    }
+    return new Blob(parts, { type: mime });
+  }
+
+  onProgress?.('Downloading audio…', 0);
+  const res = await fetch(streamUrl);
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    throw new Error(j.reason || `HTTP ${res.status}`);
+  }
+  const len = Number(res.headers.get('content-length') || 0);
+  if (!res.body || !res.body.getReader) {
+    const buf = await res.arrayBuffer();
+    onProgress?.('Downloading audio… 100%', 100);
+    return new Blob([buf], { type: res.headers.get('content-type') || mime });
+  }
+  const reader = res.body.getReader();
+  const parts = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value && value.byteLength) {
+      parts.push(value);
+      loaded += value.byteLength;
+      const pct = len > 0 ? Math.min(99, Math.round((loaded / len) * 100)) : 0;
+      const mb = (loaded / (1024 * 1024)).toFixed(1);
+      onProgress?.(len > 0 ? `Downloading audio… ${pct}%` : `Downloading audio… ${mb} MB`, pct);
+    }
+  }
+  return new Blob(parts, { type: res.headers.get('content-type') || mime });
+}

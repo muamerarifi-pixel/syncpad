@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.72';
+const VERSION = '3.0.73';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -3148,7 +3148,7 @@ function layoutNoteGrid() {
 function noteMedia(n) {
   const html = n.data.html || '';
   const imgs = [...html.matchAll(/<img\b[^>]*data-file="([^"]+)"/g)].map((x) => x[1]);
-  const files = (html.match(/<a\b[^>]*data-file="/g) || []).length;
+  const files = (html.match(/<(?:a|div)\b[^>]*data-file="/g) || []).length;
   let thumb = null;
   for (const id of imgs) {
     const it = store.items.get(id);
@@ -3443,11 +3443,55 @@ function setEditorHtml(html) {
   updateEmpty();
 }
 function ytCardActsHTML() {
-  return '<span class="lc-acts"><span class="lc-act" data-yt-dl="mp3" role="button" tabindex="0" title="Download MP3">MP3</span><span class="lc-act" data-yt-dl="m4a" role="button" tabindex="0" title="Download M4A Audio">M4A</span><span class="lc-act" data-yt-dl="mp4" role="button" tabindex="0" title="Download Video (MP4)">Video</span></span>';
+  return '<span class="lc-acts"><span class="lc-act" data-yt-dl="mp3" role="button" tabindex="0" title="Add MP3 to note for offline playback">MP3</span><span class="lc-act" data-yt-dl="m4a" role="button" tabindex="0" title="Add M4A audio to note for offline playback">M4A</span><span class="lc-act" data-yt-dl="mp4" role="button" tabindex="0" title="Download Video (MP4)">Video</span></span>';
+}
+function audioCardHTML(id, name = 'Audio') {
+  return `<div class="audio-card" data-file="${id}" data-name="${esc(name)}" contenteditable="false"></div>`;
+}
+function hydrateAudioCard(card) {
+  if (!card) return;
+  const id = card.dataset.file;
+  if (!id) return;
+  const it = store.items.get(id);
+  const existingPlayer = card.querySelector('.ac-player');
+  if (existingPlayer && it) {
+    const offBtn = card.querySelector('.ac-off');
+    if (offBtn) {
+      const off = files.isOffline(id);
+      offBtn.classList.toggle('is-on', off);
+      offBtn.textContent = off ? 'Offline ✓' : 'Save offline';
+      offBtn.title = off ? 'Saved on this device for offline playback' : 'Save on this device for offline playback';
+    }
+    return;
+  }
+  const fullName = (it && it.data && it.data.name) || card.dataset.name || 'Audio';
+  const extMatch = fullName.match(/\.([A-Za-z0-9]{2,5})$/);
+  const ext = extMatch ? extMatch[1].toUpperCase() : 'AUDIO';
+  const dispTitle = fullName.replace(/\.(mp3|m4a|webm|ogg|wav|aac|flac)$/i, '');
+  const sizeTxt = it && it.data && it.data.size ? fmtBytes(it.data.size) : '';
+  const off = files.isOffline(id);
+  const src = it ? files.src(id) : '';
+  card.setAttribute('contenteditable', 'false');
+  card.innerHTML =
+    `<div class="ac-head">` +
+      `<span class="ac-ic" aria-hidden="true"><svg class="ic"><use href="#i-music"/></svg></span>` +
+      `<div class="ac-meta">` +
+        `<div class="ac-title" title="${esc(fullName)}">${esc(dispTitle)}</div>` +
+        `<div class="ac-sub">` +
+          `<span class="ac-ext">${esc(ext)}</span>` +
+          `${sizeTxt ? `<span class="ac-sz">${esc(sizeTxt)}</span>` : ''}` +
+          `<button type="button" class="ac-off${off ? ' is-on' : ''}" title="${off ? 'Saved on this device for offline playback' : 'Save on this device for offline playback'}">${off ? 'Offline ✓' : 'Save offline'}</button>` +
+        `</div>` +
+      `</div>` +
+      `<button type="button" class="icon-btn sm ac-dl" title="Save copy to Downloads" aria-label="Save copy to Downloads"><svg class="ic"><use href="#i-download"/></svg></button>` +
+      `<button type="button" class="icon-btn sm ac-rm" title="Remove audio from note" aria-label="Remove audio from note"><svg class="ic"><use href="#i-x"/></svg></button>` +
+    `</div>` +
+    (it ? `<audio class="ac-player" controls preload="metadata" src="${esc(src)}"></audio>` : `<div class="ac-wait">Syncing audio file…</div>`);
 }
 function hydrateFiles(root) {
   for (const img of $$('img[data-file]', root)) if (!img.getAttribute('src')) img.src = files.src(img.dataset.file);
   for (const a of $$('a[data-file]', root)) { a.setAttribute('contenteditable', 'false'); a.removeAttribute('href'); }
+  for (const card of $$('div.audio-card[data-file]', root)) hydrateAudioCard(card);
   for (const a of $$('a.link-card', root)) {
     a.setAttribute('contenteditable', 'false');
     if (ytInfo(a.href)) {
@@ -4321,6 +4365,31 @@ function onEditorClick(e) {
     return;
   }
   const f = e.target.closest('[data-file]');
+  if (f && f.classList.contains('audio-card')) {
+    const it = store.items.get(f.dataset.file);
+    if (e.target.closest('.ac-rm')) {
+      e.preventDefault();
+      f.remove();
+      onEditorInput();
+      return;
+    }
+    if (e.target.closest('.ac-dl')) {
+      e.preventDefault();
+      if (it) files.download(it);
+      return;
+    }
+    if (e.target.closest('.ac-off')) {
+      e.preventDefault();
+      if (it && !files.isOffline(it.id)) {
+        files.keepOffline(it).then(() => {
+          hydrateAudioCard(f);
+          toast('Saved for offline playback');
+        }).catch(() => toast('Could not cache audio offline'));
+      }
+      return;
+    }
+    return;
+  }
   if (f && f.tagName !== 'IMG') {
     const it = store.items.get(f.dataset.file);
     if (it) { e.preventDefault(); openFile(it); }
@@ -4343,9 +4412,15 @@ async function attachToNote(list, point, at) {
   const items = await files.add(list, { parent: n.id });
   if (!items.length) return;
   const html = items
-    .map((it) => (fileKind(it.data.type, it.data.name) === 'image'
-      ? `<img data-file="${it.id}" alt="${esc(it.data.name)}">`
-      : `<a data-file="${it.id}" class="file-chip" contenteditable="false">📎 ${esc(it.data.name)}</a>&nbsp;`))
+    .map((it) => {
+      const k = fileKind(it.data.type, it.data.name);
+      if (k === 'image') return `<img data-file="${it.id}" alt="${esc(it.data.name)}">`;
+      if (k === 'audio') {
+        files.keepOffline(it).catch(() => {});
+        return audioCardHTML(it.id, it.data.name);
+      }
+      return `<a data-file="${it.id}" class="file-chip" contenteditable="false">📎 ${esc(it.data.name)}</a>&nbsp;`;
+    })
     .join('');
   exec('insertHTML', html);
   hydrateFiles(el.editorText);
@@ -6885,13 +6960,61 @@ async function decodeAndEncodeMp3Blob(buf) {
   if (tail.length) chunks.push(new Uint8Array(tail));
   return new Blob(chunks, { type: 'audio/mpeg' });
 }
-async function downloadYoutube(url, mode = 'mp4', hintTitle = '') {
+function placeAfterAnchor(anchorEl, node) {
+  if (!anchorEl || !anchorEl.isConnected || !el.editorText.contains(anchorEl)) {
+    el.editorText.appendChild(node);
+    if (!node.nextSibling) { const q = document.createElement('p'); q.innerHTML = '<br>'; node.after(q); }
+    return;
+  }
+  let target = anchorEl.closest('a.link-card');
+  if (!target) {
+    const blk = topBlock(anchorEl) || anchorEl;
+    target = (blk.nextElementSibling && blk.nextElementSibling.classList && blk.nextElementSibling.classList.contains('link-card'))
+      ? blk.nextElementSibling
+      : blk;
+  }
+  while (target.nextElementSibling && target.nextElementSibling.classList &&
+         (target.nextElementSibling.classList.contains('audio-pending') || target.nextElementSibling.classList.contains('audio-card'))) {
+    target = target.nextElementSibling;
+  }
+  target.after(node);
+  if (!node.nextSibling) { const q = document.createElement('p'); q.innerHTML = '<br>'; node.after(q); }
+}
+
+async function downloadYoutube(url, mode = 'mp4', hintTitle = '', opts = {}) {
   const info = ytInfo(url);
   if (!info) return;
   const apiMode = mode === 'mp4' ? 'video' : mode === 'm4a' ? 'm4a' : 'audio';
   const q = new URLSearchParams({ s: store.get('space'), v: info.id, mode: apiMode });
   const cleanHint = String(hintTitle || '').replace(/\s+/g, ' ').trim();
   if (cleanHint && !/^https?:\/\//i.test(cleanHint)) q.set('title', cleanHint.slice(0, 90));
+
+  const activeNote = openNoteItem();
+  const inNote = mode !== 'mp4' && ui.tab === 'notes' && !!(
+    (opts.anchorEl && el.editorText.contains(opts.anchorEl)) ||
+    (activeNote && !activeNote.data.canvas)
+  );
+  let targetNote = inNote ? activeNote : null;
+  if (inNote && !targetNote) { newNote(); targetNote = openNoteItem(); }
+  const targetNoteId = targetNote && !targetNote.data.canvas ? targetNote.id : null;
+
+  let pendingEl = null;
+  if (targetNoteId) {
+    const initTitle = (cleanHint && !/^https?:\/\//i.test(cleanHint) ? cleanHint : 'YouTube audio') + ` (${mode.toUpperCase()})`;
+    pendingEl = document.createElement('div');
+    pendingEl.className = 'audio-pending';
+    pendingEl.setAttribute('contenteditable', 'false');
+    pendingEl.innerHTML =
+      `<div class="ap-row"><span class="ap-spin"></span><span class="ap-title">${esc(initTitle)}</span><span class="ap-msg">Preparing…</span></div>` +
+      `<div class="ap-bar"><div class="ap-fill indet"></div></div>`;
+    let anchor = opts.anchorEl && el.editorText.contains(opts.anchorEl) ? opts.anchorEl : null;
+    if (!anchor) {
+      anchor = [...$$('#editor-text a[href]')].find((a) => { const yi = ytInfo(a.href); return yi && yi.id === info.id; }) || null;
+    }
+    placeAfterAnchor(anchor, pendingEl);
+    pendingEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (!store.items.has(targetNoteId)) saveNote.flush();
+  }
 
   let progToast = null;
   const setYtToast = (msg) => {
@@ -6907,25 +7030,95 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '') {
     if (progToast && progToast.isConnected) progToast.remove();
     progToast = null;
   };
-  const saveBlob = (blob, filename, msg) => {
+  const clearPending = () => {
+    if (pendingEl && pendingEl.isConnected) pendingEl.remove();
+    pendingEl = null;
+  };
+  const setStatus = (msg, pct) => {
+    if (pendingEl && pendingEl.isConnected) {
+      const m = pendingEl.querySelector('.ap-msg');
+      const f = pendingEl.querySelector('.ap-fill');
+      if (m) m.textContent = msg;
+      if (f) {
+        if (typeof pct === 'number' && pct > 0) {
+          f.classList.remove('indet');
+          f.style.width = `${Math.max(4, Math.min(100, pct))}%`;
+        } else {
+          f.classList.add('indet');
+          f.style.width = '';
+        }
+      }
+    }
+    if (!pendingEl || !pendingEl.isConnected || ui.tab !== 'notes' || ui.noteId !== targetNoteId) {
+      setYtToast(msg);
+    }
+  };
+  const saveAudioInPlace = async (blob, filename, mime, doneMsg) => {
+    clearYtToast();
+    const resolvedMime = mime || blob.type || (/\.mp3$/i.test(filename) ? 'audio/mpeg' : /\.webm$/i.test(filename) ? 'audio/webm' : 'audio/mp4');
+    const file = new File([blob], filename, { type: resolvedMime });
+    if (targetNoteId) {
+      setStatus('Saving offline to note…', 100);
+      const added = await files.add([file], { parent: targetNoteId });
+      const item = added[0];
+      if (!item) {
+        clearPending();
+        toast(`“${filename}” exceeds the max file size limit.`);
+        return;
+      }
+      await files.keepOffline(item);
+      const wrap = document.createElement('div');
+      wrap.innerHTML = audioCardHTML(item.id, item.data.name);
+      const cardEl = wrap.firstElementChild;
+      if (ui.tab === 'notes' && ui.noteId === targetNoteId) {
+        if (pendingEl && pendingEl.isConnected) pendingEl.replaceWith(cardEl);
+        else placeAfterAnchor(null, cardEl);
+        if (!cardEl.nextSibling) { const pq = document.createElement('p'); pq.innerHTML = '<br>'; cardEl.after(pq); }
+        hydrateAudioCard(cardEl);
+        onEditorInput();
+        saveNote.flush();
+      } else {
+        clearPending();
+        const tn = store.items.get(targetNoteId);
+        if (tn && !tn.data.canvas) {
+          const nextHtml = sanitizeNote((noteHtml(tn) || '') + audioCardHTML(item.id, item.data.name));
+          await writeNoteContent(tn, nextHtml, tn.data.text || '');
+          sync.schedule();
+        }
+      }
+      if (yt.mode === 'big') ytMode('mini');
+      toast(doneMsg || 'Audio added to note for offline playback');
+      return;
+    }
+    const added = await files.add([file], { keep: true });
+    const item = added[0];
+    if (item) {
+      await files.keepOffline(item);
+      openFile(item);
+      toast(doneMsg || 'Saved offline in Drops');
+      return;
+    }
     const blobUrl = URL.createObjectURL(blob);
     triggerBrowserDownload(blobUrl, filename);
     setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
-    clearYtToast();
-    if (msg) toast(msg);
   };
 
-  setYtToast(mode === 'mp4' ? 'Starting video download…' : mode === 'm4a' ? 'Preparing M4A audio…' : 'Preparing MP3 download…');
+  setStatus(mode === 'mp4' ? 'Starting video download…' : mode === 'm4a' ? 'Preparing M4A audio…' : 'Preparing MP3 download…');
   try {
     const r = await fetch(`/api/ytdl?${q}&info=1`);
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j.ok) {
+      clearPending();
       clearYtToast();
       toast(j.reason || `Could not download this YouTube ${mode === 'mp4' ? 'video' : 'audio'}.`);
       return;
     }
 
     const baseTitle = j.title || cleanHint || `youtube-${info.id}`;
+    if (pendingEl && pendingEl.isConnected && j.title) {
+      const tEl = pendingEl.querySelector('.ap-title');
+      if (tEl) tEl.textContent = j.title;
+    }
     const streamUrl = `/api/ytdl?${q}`;
 
     // 1. Direct MP4 video
@@ -6936,11 +7129,16 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '') {
       return;
     }
 
-    // 2. Direct M4A fast path (when YouTube allows >1 MB direct audio without PO token)
+    // 2. Direct M4A fast path (streamed directly into note / offline cache)
     if (mode === 'm4a' && j.hasDirectAudio && !j.muxed) {
-      clearYtToast();
-      toast('Starting M4A download…');
-      triggerBrowserDownload(streamUrl, `${baseTitle}.${j.ext || 'm4a'}`);
+      const { downloadRangeBlob } = await import('/js/mp4audio.js');
+      const m4aBlob = await downloadRangeBlob({
+        streamUrl,
+        totalSize: j.size || 0,
+        mime: j.mime || 'audio/mp4',
+        onProgress: setStatus
+      });
+      await saveAudioInPlace(m4aBlob, `${baseTitle}.${j.ext || 'm4a'}`, j.mime || 'audio/mp4', 'M4A added to note — ready offline');
       return;
     }
 
@@ -6960,46 +7158,45 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '') {
         totalSize: j.size,
         wantMp3: mode === 'mp3',
         loadLame,
-        onProgress: (msg) => setYtToast(msg)
+        onProgress: setStatus
       });
       if (out.ext === 'mp3') {
-        saveBlob(out.blob, `${baseTitle}.mp3`, 'MP3 ready — downloading');
+        await saveAudioInPlace(out.blob, `${baseTitle}.mp3`, 'audio/mpeg', 'MP3 added to note — ready offline');
       } else if (mode === 'mp3' && out.blob.size <= 36 * 1024 * 1024) {
-        setYtToast('Converting audio to MP3…');
+        setStatus('Converting audio to MP3…', 99);
         const mp3Blob = await decodeAndEncodeMp3Blob(await out.blob.arrayBuffer());
-        saveBlob(mp3Blob, `${baseTitle}.mp3`, 'MP3 ready — downloading');
+        await saveAudioInPlace(mp3Blob, `${baseTitle}.mp3`, 'audio/mpeg', 'MP3 added to note — ready offline');
       } else {
-        saveBlob(out.blob, `${baseTitle}.m4a`, mode === 'mp3' ? 'Long recording saved as .m4a' : 'M4A ready — downloading');
+        await saveAudioInPlace(out.blob, `${baseTitle}.m4a`, 'audio/mp4', mode === 'mp3' ? 'Long audio added as .m4a — ready offline' : 'M4A added to note — ready offline');
       }
       return;
     }
 
     // 4. Short adaptive audio (<= 32 MB): fetch & convert to MP3
-    setYtToast('Downloading & converting to MP3…');
-    const res = await fetch(streamUrl);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      clearYtToast();
-      toast(err.reason || `Audio download failed (HTTP ${res.status}).`);
-      return;
-    }
-    const rawName = filenameFromHeader(res.headers.get('content-disposition'), `${baseTitle}.m4a`);
-    const resolvedTitle = rawName.replace(/\.[^.]+$/, '') || baseTitle;
-    const ctype = res.headers.get('content-type') || 'audio/mp4';
-    const buf = await res.arrayBuffer();
-    if (buf.byteLength > 36 * 1024 * 1024) {
+    setStatus('Downloading audio…', 10);
+    const { downloadRangeBlob } = await import('/js/mp4audio.js');
+    const rawBlob = await downloadRangeBlob({
+      streamUrl,
+      totalSize: j.size || 0,
+      mime: j.mime || 'audio/mp4',
+      onProgress: (msg, pct) => setStatus(mode === 'mp3' ? msg : msg, pct)
+    });
+    const ctype = rawBlob.type || j.mime || 'audio/mp4';
+    if (mode === 'm4a' || rawBlob.size > 36 * 1024 * 1024) {
       const ext = /webm/i.test(ctype) ? 'webm' : 'm4a';
-      saveBlob(new Blob([buf], { type: ctype }), `${resolvedTitle}.${ext}`, `Long audio saved as .${ext}`);
+      await saveAudioInPlace(rawBlob, `${baseTitle}.${ext}`, ctype, `Audio added to note as .${ext} — ready offline`);
       return;
     }
     try {
-      const mp3Blob = await decodeAndEncodeMp3Blob(buf);
-      saveBlob(mp3Blob, `${resolvedTitle}.mp3`, 'MP3 ready — downloading');
+      setStatus('Converting audio to MP3…', 99);
+      const mp3Blob = await decodeAndEncodeMp3Blob(await rawBlob.arrayBuffer());
+      await saveAudioInPlace(mp3Blob, `${baseTitle}.mp3`, 'audio/mpeg', 'MP3 added to note — ready offline');
     } catch {
       const ext = /webm/i.test(ctype) ? 'webm' : 'm4a';
-      saveBlob(new Blob([buf], { type: ctype }), `${resolvedTitle}.${ext}`, `Saved audio as .${ext}`);
+      await saveAudioInPlace(rawBlob, `${baseTitle}.${ext}`, ctype, `Audio added to note as .${ext} — ready offline`);
     }
   } catch (e) {
+    clearPending();
     clearYtToast();
     toast((e && e.message) || 'YouTube download failed. Check your connection.');
   }
@@ -7113,9 +7310,10 @@ document.addEventListener('click', (e) => {
     if (href && ytInfo(href)) {
       e.preventDefault();
       e.stopPropagation();
+      const anchorEl = card || (ui.linkBubble && ui.linkBubble.contains(ytDl) ? ui.linkFor : null);
       const title = card ? (card.querySelector('.lc-t') && card.querySelector('.lc-t').textContent) || '' : '';
       if (ui.linkBubble && !ui.linkBubble.hidden) hideLinkBubble();
-      downloadYoutube(href, ytDl.dataset.ytDl, title);
+      downloadYoutube(href, ytDl.dataset.ytDl, title, { anchorEl });
       return;
     }
   }
