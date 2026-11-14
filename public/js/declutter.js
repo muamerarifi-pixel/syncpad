@@ -379,8 +379,8 @@ export function markdown(text, o = {}) {
 
 function inlineMdToDom(tn) {
   const txt = tn.nodeValue;
-  if (!/(?:\*\*[^*\n]+?\*\*|`[^`\n]+`|~~[^~\n]+?~~|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|==[^=\n]+?==)/.test(txt)) return;
-  const re = /(\*\*([^*\n]+?)\*\*|`([^`\n]+)`|~~([^~\n]+?)~~|==([^=\n]+?)==|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\))/g;
+  if (!/(?:\*\*\*[^*\n]+?\*\*\*|\*\*[^*\n]+?\*\*|`[^`\n]+`|~~[^~\n]+?~~|==[^=\n]+?==|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|(?<![\p{L}\p{N}*\\])\*(?=[^\s*])[^*\n]+?(?<=[^\s*\\])\*(?![\p{L}\p{N}*]))/u.test(txt)) return;
+  const re = /(\*\*\*([^*\n]+?)\*\*\*|\*\*([^*\n]+?)\*\*|`([^`\n]+)`|~~([^~\n]+?)~~|==([^=\n]+?)==|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|(?<![\p{L}\p{N}*\\])\*(?=[^\s*])([^*\n]+?)(?<=[^\s*\\])\*(?![\p{L}\p{N}*]))/gu;
   const frag = document.createDocumentFragment();
   let last = 0;
   let m;
@@ -388,16 +388,21 @@ function inlineMdToDom(tn) {
   while ((m = re.exec(txt))) {
     if (m.index > last) frag.append(txt.slice(last, m.index));
     changed = true;
-    if (m[2] != null) { const el = document.createElement('b'); el.textContent = m[2]; frag.append(el); }
-    else if (m[3] != null) { const el = document.createElement('code'); el.textContent = m[3]; frag.append(el); }
-    else if (m[4] != null) { const el = document.createElement('s'); el.textContent = m[4]; frag.append(el); }
-    else if (m[5] != null) { const el = document.createElement('mark'); el.textContent = m[5]; frag.append(el); }
-    else if (m[6] != null && m[7] != null) {
+    if (m[2] != null) { const b = document.createElement('b'); const em = document.createElement('i'); em.textContent = m[2]; b.append(em); frag.append(b); }
+    else if (m[3] != null) { const el = document.createElement('b'); el.textContent = m[3]; frag.append(el); }
+    else if (m[4] != null) { const el = document.createElement('code'); el.textContent = m[4]; frag.append(el); }
+    else if (m[5] != null) { const el = document.createElement('s'); el.textContent = m[5]; frag.append(el); }
+    else if (m[6] != null) { const el = document.createElement('mark'); el.textContent = m[6]; frag.append(el); }
+    else if (m[7] != null && m[8] != null) {
       const el = document.createElement('a');
-      el.href = cleanUrl(m[7]);
-      el.textContent = m[6];
+      el.href = cleanUrl(m[8]);
+      el.textContent = m[7];
       el.target = '_blank';
       el.rel = 'noopener noreferrer';
+      frag.append(el);
+    } else if (m[9] != null) {
+      const el = document.createElement('i');
+      el.textContent = m[9];
       frag.append(el);
     }
     last = re.lastIndex;
@@ -464,7 +469,13 @@ export function tidyHtml(html, o = {}) {
     }
     if (/^https?:/.test(href)) a.setAttribute('href', cleanUrl(href));
   }
+  for (const bq of root.querySelectorAll('blockquote.kp')) bq.remove();
   for (const e of root.querySelectorAll('hr')) e.remove();
+  for (const p of [...root.querySelectorAll('p')]) {
+    const raw = (p.textContent || '').trim();
+    if (HR.test(raw) && !p.querySelector('img, a[data-file], .audio-card, .link-card')) p.remove();
+  }
+  root.normalize();
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const texts = [];
   while (walker.nextNode()) texts.push(walker.currentNode);
@@ -532,6 +543,18 @@ export function tidyHtml(html, o = {}) {
       bs[0].remove();
     } else break;
   }
+  const bs0 = blocks();
+  if (bs0.length && !bs0[0].matches('ul, ol, table, pre, h1, h2, h3')) {
+    const w = document.createTreeWalker(bs0[0], NodeFilter.SHOW_TEXT);
+    let ft;
+    while ((ft = w.nextNode())) {
+      if (ft.nodeValue && ft.nodeValue.trim()) {
+        const stripped = ft.nodeValue.replace(LEAD_INTERJ, '');
+        if (stripped !== ft.nodeValue) ft.nodeValue = stripped;
+        break;
+      }
+    }
+  }
   for (let round = 0; round < 4; round++) {
     const bs = blocks();
     if (bs.length < 2) break;
@@ -574,16 +597,7 @@ function dropChip(a) {
    • very long paragraphs are cut into short ones, at the natural turns ("However…", "For example…")
    • inline lists ("1) … 2) …", "First… Second… Finally…", "you need: a, b, c and d") become real lists
    Pictures, files, tables, existing lists and headings are left exactly as they are. */
-const KP_TITLE = 'Key points';
-const STOP = new Set(('a an and are as at be been but by can could did do does for from had has have he her him his how i if in into is it its just me more most my no not of on or our out over she so some than that the their them then there these they this those to too up us very was we were what when which who why will with would you your also about after again all any because before being both down during each few further here just only other own same should such through under until while yet one two get got make made like ' +
-  'dhe në një për me që se nga të e i u ka kanë është janë do edhe por apo ose si ku kur më mos jo po ky kjo këtë këto ato ai ajo ata ato tij saj tyre ne ju unë ti jemi jeni isha ishte kishte kemi keni pra nëse sepse deri pas para mbi nën tek te pa duke qe qenë do të gjithë çdo vetëm shumë pak tani atëherë këtu atje').split(' '));
-const TURN = /^(another|one more|the idea|however|but|also|additionally|moreover|furthermore|in addition|for example|for instance|on the other hand|in contrast|meanwhile|finally|in conclusion|to sum up|overall|first|second|third|next|then|lastly|as a result|therefore|so,|instead|still|megjithatë|por|gjithashtu|për shembull|nga ana tjetër|në fund|përfundimisht|si rezultat|prandaj|pra,|së pari|së dyti|së treti|më pas|pastaj|ndërkohë)\b/i;
-const LABEL = /^(note|important|tip|warning|remember|caution|summary|example|key|key takeaway|takeaway|bottom line|tl;dr|tldr|pros|cons|verdict|conclusion|fix|cause|solution|result|action|reminder|step\s*\d+|shënim|kujdes|këshillë|e rëndësishme|kujtesë|shembull|përmbledhje|zgjidhje|rezultati)\s*[:\-–—]\s*/i;
-const ORDINAL = /^(first(ly)?|second(ly)?|third(ly)?|fourth|fifth|next|then|after that|finally|lastly|së pari|së dyti|së treti|së katërti|më pas|pastaj|në fund)\b[,:]?\s*/i;
 const ABBR = /(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|e\.g|i\.e|p\.sh|etj|nr|fig|vol|no|approx|zt|znj|ing|av|kap|fq)|\b[A-Z]|\d)\.$/i;
-const isRtl = (t) => (t.match(/[֐-ࣿ]/g) || []).length > t.replace(/\s/g, '').length * 0.3;
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const words = (t) => (t.toLowerCase().match(/[\p{L}\p{N}']+/gu) || []);
 
 export function sentences(text) {
   const parts = String(text).replace(/\s+/g, ' ').trim().split(/(?<=[.!?…؟]["”’»)\]]?)\s+(?=["“«'(\[]?[\p{Lu}\p{Lo}\d])/u);
@@ -595,172 +609,14 @@ export function sentences(text) {
   return out;
 }
 
-/** a flat paragraph → short paragraphs (and lists where the text is really a list) */
-function splitBlock(text) {
-  const t = text.replace(/\s+/g, ' ').trim();
-  // "1) a 2) b 3) c" / "1. a 2. b 3. c" inside one paragraph
-  const num = t.split(/\s(?=\(?\d{1,2}[.)]\s+\S)/);
-  if (num.length >= 3 && num.slice(1).every((x) => /^\(?\d{1,2}[.)]\s/.test(x))) {
-    const lead = /^\(?\d{1,2}[.)]\s/.test(num[0]) ? '' : num.shift();
-    return [...(lead ? [{ p: lead }] : []), { ol: num.map((x) => x.replace(/^\(?\d{1,2}[.)]\s+/, '')) }];
-  }
-  // "you will need: eggs, milk, flour, sugar and butter."
-  const ss = sentences(t);
-  if (ss.length === 1 && colonList(t)) { const cl = colonList(t); return [{ p: cl.lead }, { ul: cl.items }]; }
-  // "First, … Second, … Finally, …"
-  const ord = ss.filter((x) => ORDINAL.test(x)).length;
-  if (ord >= 3 && ord >= ss.length * 0.5) {
-    const lead = [];
-    while (ss.length && !ORDINAL.test(ss[0])) lead.push(ss.shift());
-    const items = [];
-    for (const x of ss) { if (ORDINAL.test(x) || !items.length) items.push(x.replace(ORDINAL, (m) => m)); else items[items.length - 1] += ' ' + x; }
-    return [...(lead.length ? [{ p: lead.join(' ') }] : []), { ol: items.map((x) => x.replace(ORDINAL, '').replace(/^\p{Ll}/u, (c) => c.toUpperCase())) }];
-  }
-  if (t.length < 380 || ss.length < 4) {
-    const k = ss.findIndex((x) => colonList(x));
-    if (k < 0 || ss.length === 1) return [{ p: t }];
-  }
-  // cut into paragraphs of 2–3 sentences, preferring the natural turns
-  const paras = [];
-  let cur = [];
-  let len = 0;
-  for (const x of ss) {
-    const turn = TURN.test(x) && cur.length >= 1;
-    if (cur.length && (turn || len + x.length > 340 || cur.length >= 3)) { paras.push(cur.join(' ')); cur = []; len = 0; }
-    cur.push(x);
-    len += x.length;
-  }
-  if (cur.length) {
-    // a lone short last sentence joins the paragraph before it
-    if (paras.length && cur.length === 1 && cur[0].length < 90) paras[paras.length - 1] += ' ' + cur[0];
-    else paras.push(cur.join(' '));
-  }
-  // a lone short sentence joins the paragraph before it (unless it starts a new turn)
-  const merged = [];
-  for (const p of paras) {
-    if (merged.length && sentences(p).length === 1 && p.length < 140 && !TURN.test(p)) merged[merged.length - 1] += ' ' + p;
-    else merged.push(p);
-  }
-  // "…you will need: a, b, c and d." inside a paragraph becomes its own list
-  const out = [];
-  for (const p of merged) {
-    const ps = sentences(p);
-    const k = ps.findIndex((x) => colonList(x));
-    if (k < 0) { out.push({ p }); continue; }
-    const cl = colonList(ps[k]);
-    if (k > 0) out.push({ p: ps.slice(0, k).join(' ') });
-    out.push({ p: cl.lead }, { ul: cl.items });
-    if (k < ps.length - 1) out.push({ p: ps.slice(k + 1).join(' ') });
-  }
-  return out;
-}
-function colonList(t) {
-  const m = t.match(/^(.{3,140}?):\s+(.+)$/);
-  if (!m) return null;
-  const items = m[2].replace(/[.;]\s*$/, '').split(/\s*[,;]\s*|\s+(?:and|or|dhe|ose)\s+(?=[^,]+$)/i).filter(Boolean);
-  return items.length >= 4 && items.every((x) => x.split(' ').length <= 6) ? { lead: m[1] + ':', items } : null;
-}
-
-function keyPoints(allSentences, nWords) {
-  const freq = new Map();
-  for (const s of allSentences) for (const w of words(s.text)) if (w.length > 2 && !STOP.has(w) && !/^\d+$/.test(w)) freq.set(w, (freq.get(w) || 0) + 1);
-  const top = Math.max(1, ...freq.values());
-  const scored = allSentences.map((s, i) => {
-    const ws = words(s.text);
-    if (ws.length < 6 || ws.length > 45) return { i, s, v: -1 };
-    // a line that only introduces a quote or a list ("…said:") is not a point by itself
-    if (/[:：]\s*$/.test(s.text) || /^["“«'„]/.test(s.text.trim())) return { i, s, v: -1 };
-    let v = 0;
-    for (const w of ws) v += (freq.get(w) || 0) / top;
-    v = v / Math.sqrt(ws.length);
-    if (s.first) v *= 1.25; // a paragraph's opening sentence usually carries its point
-    if (/\d/.test(s.text)) v *= 1.1;
-    if (/\?$/.test(s.text.trim())) v *= 0.6;
-    return { i, s, v };
-  });
-  const n = nWords > 900 ? 5 : nWords > 450 ? 4 : 3;
-  const ranked = scored.filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
-  const chosen = [];
-  const chosenSets = [];
-  for (const cand of ranked) {
-    const sig = new Set(words(cand.s.text).filter((w) => w.length > 2 && !STOP.has(w)));
-    const dup = sig.size > 0 && chosenSets.some((prev) => {
-      let overlap = 0;
-      for (const w of sig) if (prev.has(w)) overlap++;
-      return overlap / Math.min(sig.size, prev.size) >= 0.65;
-    });
-    if (dup) continue;
-    chosen.push(cand);
-    chosenSets.push(sig);
-    if (chosen.length >= n) break;
-  }
-  const pick = chosen.sort((a, b) => a.i - b.i);
-  return pick.map((x) => x.s.text.length > 220 ? x.s.text.slice(0, 217).replace(/\s+\S*$/, '') + '…' : x.s.text);
-}
-
-/** returns new HTML, or the same HTML when there is nothing worth changing */
+/** Strips any legacy auto-generated Key points box without altering or adding prose */
 export function readable(html) {
   const tpl = document.createElement('template');
   tpl.innerHTML = String(html || '');
-  const root = tpl.content;
-  // an earlier "Key points" box is rebuilt, not doubled
-  for (const o of [...root.children].filter((q) => q.tagName === 'BLOCKQUOTE').filter((q) => q.classList.contains('kp') || (q.firstElementChild && q.firstElementChild.tagName === 'B' && q.firstElementChild.textContent.trim() === KP_TITLE))) { const nx = o.nextElementSibling; o.remove(); if (nx && nx.tagName === 'HR') nx.remove(); }
-  const plainBlock = (e) => /^(P|DIV)$/.test(e.tagName) && !e.querySelector('img, a[data-file], table, ul, ol, pre, h1, h2, h3, blockquote, br + br') && !isRtl(e.textContent);
-  const kids = [...root.children];
-  const all = [];
-  let nWords = 0;
-  let changed = false;
-  kids.forEach((e, idx) => {
-    const text = e.textContent.replace(/\s+/g, ' ').trim();
-    if (!text) return;
-    nWords += words(text).length;
-    if (!plainBlock(e)) { if (/^(P|DIV|LI|BLOCKQUOTE)$/.test(e.tagName)) sentences(text).forEach((s, k) => all.push({ text: s, first: k === 0 })); return; }
-    const hasInline = !!e.querySelector('b, strong, i, em, u, a, mark, span[style], font');
-    // a short line on its own, followed by a longer paragraph → heading
-    const next = kids.slice(idx + 1).find((x) => x.textContent.trim());
-    const nextLen = next ? next.textContent.trim().length : 0;
-    if (text.length <= 70 && text.split(' ').length <= 9 && !/[.,;!?…]$/.test(text) && nextLen > 120 && idx > 0 || (/^[^.!?]{3,60}:$/.test(text) && nextLen > 60)) {
-      const h = document.createElement('h3');
-      h.textContent = text.replace(/:$/, '');
-      e.replaceWith(h);
-      changed = true;
-      return;
-    }
-    sentences(text).forEach((s, k) => all.push({ text: s, first: k === 0 }));
-    if (hasInline) return; // keep the user's own formatting untouched
-    const parts = splitBlock(text);
-    const lab = LABEL.exec(text);
-    if (parts.length === 1 && parts[0].p && !lab) return;
-    const frag = document.createDocumentFragment();
-    for (const part of parts) {
-      if (part.p) {
-        const p = document.createElement('p');
-        const m = LABEL.exec(part.p);
-        if (m) { const b = document.createElement('b'); b.textContent = m[0].trim().replace(/[:\-–—]$/, '') + ':'; p.append(b, ' ' + part.p.slice(m[0].length)); }
-        else p.textContent = part.p;
-        frag.append(p);
-      } else {
-        const list = document.createElement(part.ol ? 'ol' : 'ul');
-        for (const it of part.ol || part.ul) { const li = document.createElement('li'); li.textContent = it.replace(/[;,]\s*$/, ''); list.append(li); }
-        frag.append(list);
-      }
-    }
-    e.replaceWith(frag);
-    changed = true;
-  });
-  if (nWords >= 220 && all.length >= 8) {
-    const kp = keyPoints(all, nWords);
-    if (kp.length >= 2) {
-      const bq = document.createElement('blockquote');
-      bq.className = 'kp';
-      bq.innerHTML = `<b>${KP_TITLE}</b><ul>${kp.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
-      // the note's title (its first short line) stays first; the box goes right under it
-      const first = [...root.children].find((x) => x.textContent.trim());
-      // always after the first line, so the note keeps its own title in the list
-      if (first) first.after(bq, document.createElement('hr'));
-      else root.prepend(bq, document.createElement('hr'));
-      changed = true;
-    }
+  for (const o of [...tpl.content.querySelectorAll('blockquote.kp')]) {
+    const nx = o.nextElementSibling;
+    o.remove();
+    if (nx && nx.tagName === 'HR') nx.remove();
   }
-  return changed ? tpl.innerHTML : String(html || '');
+  return tpl.innerHTML;
 }

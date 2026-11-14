@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.83';
+const VERSION = '3.0.84';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -4972,18 +4972,119 @@ function cleanComposerPaste(e) {
 function declutterNote() {
   const before = el.editorText.innerHTML;
   const o = declutterOpts() || { punct: false };
-  const text = el.editorText.innerText || '';
-  const hasRichEmbeds = !!el.editorText.querySelector('[data-file], img, table, pre');
-  const md = De.looksMarkdown(text) && !hasRichEmbeds;
-  // 1. clean AI-chat leftovers & convert any markdown  2. make long, flat text easy to read (key points, headings, short paragraphs, lists)
-  const cleaned = md ? markdownToHtml(De.markdown(text, o)) : De.tidyHtml(before, o);
-  const out = sanitizeNote(De.readable(sanitizeNote(cleaned)));
+  const tpl = document.createElement('template');
+  tpl.innerHTML = before;
+  for (const kp of [...tpl.content.querySelectorAll('blockquote.kp')]) {
+    const next = kp.nextElementSibling;
+    if (next && next.tagName === 'HR') next.remove();
+    kp.remove();
+  }
+  const nodeText = (elNode) => {
+    const cl = elNode.cloneNode(true);
+    for (const br of [...cl.querySelectorAll('br')]) br.replaceWith('\n');
+    return (cl.textContent || '').replace(/\r/g, '');
+  };
+  const slicePlainText = (box) => {
+    const lines = [];
+    const pushLine = (t, raw = false) => lines.push({ t, raw });
+    const walk = (parent) => {
+      for (const c of parent.childNodes) {
+        if (c.nodeType === 3) {
+          const s = (c.nodeValue || '').replace(/\r/g, '').trim();
+          if (s) for (const sub of s.split('\n')) pushLine(sub);
+          continue;
+        }
+        if (c.nodeType !== 1 || c.tagName === 'HR') continue;
+        if (c.tagName === 'PRE') { pushLine('```\n' + (c.textContent || '').replace(/\r/g, '') + '\n```', true); continue; }
+        if (/^H[1-6]$/.test(c.tagName)) {
+          const lvl = Math.min(3, Number(c.tagName[1]) || 1);
+          const s = nodeText(c).trim().replace(/\n+/g, ' ');
+          if (s) pushLine('#'.repeat(lvl) + ' ' + s);
+          continue;
+        }
+        if (c.tagName === 'BLOCKQUOTE') {
+          const s = nodeText(c).trim();
+          if (s) pushLine(s.split(/\n+/).map((l) => '> ' + l).join('\n'));
+          continue;
+        }
+        if (c.tagName === 'UL' || c.tagName === 'OL') {
+          const ordered = c.tagName === 'OL';
+          let n = 1;
+          for (const li of c.children) {
+            if (li.tagName !== 'LI') continue;
+            const s = nodeText(li).trim().replace(/\n+/g, ' ');
+            if (s) pushLine((ordered ? (n++) + '. ' : '- ') + s);
+          }
+          continue;
+        }
+        if (c.tagName === 'TABLE') {
+          const rows = [...c.querySelectorAll('tr')].map((tr) => [...tr.children].map((td) => nodeText(td).trim().replace(/\n+/g, ' ')));
+          if (rows.length) {
+            pushLine('| ' + rows[0].join(' | ') + ' |');
+            pushLine('| ' + rows[0].map(() => '---').join(' | ') + ' |');
+            for (let i = 1; i < rows.length; i++) pushLine('| ' + rows[i].join(' | ') + ' |');
+          }
+          continue;
+        }
+        if (c.tagName === 'DIV' && c.querySelector('p, div, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, table, pre, hr')) {
+          walk(c);
+          continue;
+        }
+        const s = nodeText(c).trim();
+        if (s) for (const sub of s.split('\n')) pushLine(sub);
+      }
+    };
+    walk(box);
+    let out = '', inFence = false;
+    const isTbl = (l) => /^\|.*\|$/.test(l.trim()) || /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$/.test(l.trim());
+    const isList = (l) => /^([-*+•]|\d+[.)])\s+/.test(l.trim());
+    for (let i = 0; i < lines.length; i++) {
+      const cur = lines[i];
+      if (!cur.raw && /^```/.test(cur.t.trim())) inFence = !inFence;
+      if (i > 0) {
+        const prev = lines[i - 1];
+        const tight = inFence || cur.raw || prev.raw || (isTbl(prev.t) && isTbl(cur.t)) || (isList(prev.t) && isList(cur.t));
+        out += tight ? '\n' : '\n\n';
+      }
+      out += cur.t;
+    }
+    return out;
+  };
+  const isProtected = (n) => n.nodeType === 1 && n.matches('[data-file], img, .audio-card, .link-card');
+  const hasProtected = (n) => n.nodeType === 1 && !!n.querySelector('[data-file], img, .audio-card, .link-card');
+  let out = '', box = document.createElement('div');
+  const flush = () => {
+    if (!box.childNodes.length) return;
+    const html = box.innerHTML;
+    const txt = slicePlainText(box);
+    const hasRich = !!box.querySelector('h1, h2, h3, h4, h5, h6, ul, ol, blockquote, table, pre, b, strong, i, em, u, s, code, a');
+    if (txt.trim()) out += noteFromAi(txt, hasRich ? html : '', o);
+    box = document.createElement('div');
+  };
+  const processChild = (node) => {
+    if (isProtected(node)) { flush(); out += node.outerHTML; return; }
+    if (hasProtected(node)) {
+      const clone = node.cloneNode(true);
+      for (const p of clone.querySelectorAll('[data-file], img, .audio-card, .link-card')) p.remove();
+      if (!clone.textContent.trim()) { flush(); out += node.outerHTML; return; }
+      for (const ch of [...node.childNodes]) processChild(ch);
+      return;
+    }
+    box.appendChild(node);
+  };
+  for (const node of [...tpl.content.childNodes]) processChild(node);
+  flush();
+  out = sanitizeNote(out);
   const norm = (h) => h.replace(/\s+/g, ' ').trim();
-  if (!out.replace(/<[^>]+>/g, '').trim() || norm(out) === norm(sanitizeNote(before))) { toast('Nothing to clean here'); return; }
+  if (!out.replace(/<[^>]+>/g, '').trim() && !/<\s*img\b|data-file|audio-card|link-card/i.test(out)) {
+    toast('Nothing to clean here');
+    return;
+  }
+  if (norm(out) === norm(sanitizeNote(before))) { toast('Nothing to clean here'); return; }
   setEditorHtml(out);
   onEditorInput();
   const noteId = ui.noteId;
-  toast('AI text cleaned', { action: 'Undo', duration: 6000, onAction: () => { if (ui.noteId === noteId) { setEditorHtml(before); onEditorInput(); } } });
+  cleanedToast(() => { if (ui.noteId === noteId) { setEditorHtml(before); onEditorInput(); } });
 }
 
 function rangeFromPoint(x, y) {
