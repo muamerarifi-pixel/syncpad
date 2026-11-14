@@ -111,6 +111,8 @@
       <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></symbol>
       <symbol id="i-select" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" stroke-dasharray="3 3"/><path d="m9 12 2 2 4-4"/></symbol>
       <symbol id="i-sync" viewBox="0 0 24 24"><path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
     </defs>
   </svg>
 
@@ -142,6 +144,8 @@
         <button class="icon-btn" id="btn-settings" aria-label="Settings"><svg class="ic"><use href="#i-settings"/></svg></button>
       </div>
     </header>
+
+    <div class="audio-bar" id="audio-bar" hidden aria-label="Audio player"></div>
 
     <main class="views">
       <!-- DROPS -->

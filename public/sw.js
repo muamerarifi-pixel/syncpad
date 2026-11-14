@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v3.0.73';
+const VERSION = 'v3.0.74';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
@@ -120,13 +120,14 @@ async function fileFirst(req, url) {
   const range = req.headers.get('range');
   if (hit) {
     if (range) return rangeFrom(hit, range);
+    const h = new Headers(hit.headers);
+    h.set('accept-ranges', 'bytes');
     if (download) {
-      const h = new Headers(hit.headers);
       const name = (/filename\*=UTF-8''([^;]+)/.exec(h.get('content-disposition') || '') || [])[1] || 'file';
       h.set('content-disposition', `attachment; filename*=UTF-8''${name}`);
       return new Response(hit.body, { status: 200, headers: h });
     }
-    return hit;
+    return new Response(hit.body, { status: hit.status || 200, headers: h });
   }
   const res = await fetch(req);
   const len = Number(res.headers.get('content-length') || 0);
@@ -149,6 +150,7 @@ async function rangeFrom(res, range) {
   }
   if (start > end || start >= size) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
   const h = new Headers(res.headers);
+  h.set('accept-ranges', 'bytes');
   h.set('content-range', `bytes ${start}-${end}/${size}`);
   h.set('content-length', String(end - start + 1));
   return new Response(blob.slice(start, end + 1), { status: 206, headers: h });

@@ -40,7 +40,7 @@ export class Files extends EventTarget {
     const cache = await caches.open('sp-offline');
     let res;
     const b = this.mem.get(item.id);
-    if (b) res = new Response(b, { headers: { 'content-type': item.data.type || b.type || 'application/octet-stream', 'content-length': String(b.size) } });
+    if (b) res = new Response(b, { headers: { 'content-type': item.data.type || b.type || 'application/octet-stream', 'content-length': String(b.size), 'accept-ranges': 'bytes' } });
     else {
       res = await fetch(this.url(item.id));
       if (!res.ok) throw new Error('download failed');

@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.73';
+const VERSION = '3.0.74';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -214,7 +214,10 @@ function wire() {
     renderStatus();
     toast('This device lost access to your SyncPad. Connect it again with a code from another device.', { action: 'Connect', onAction: openConnect, duration: 12000 });
   });
-  files.addEventListener('offline', () => scheduleRender(true, false));
+  files.addEventListener('offline', () => { scheduleRender(true, false); bgAudio.syncUI(); });
+  store.addEventListener('deleted', (e) => {
+    if (bgAudio.fileId && Array.isArray(e.detail) && e.detail.includes(bgAudio.fileId)) bgAudio.stop();
+  });
   sync.addEventListener('rejected', (e) => toast(e.detail.err === 'too_big' ? 'That note is too large to sync.' : 'Something could not be synced.'));
   files.addEventListener('progress', (e) => updateProgress(e.detail.id));
   files.addEventListener('error', (e) => toast(e.detail.message, { duration: 6000 }));
@@ -419,6 +422,16 @@ function wire() {
     if (a.dataset.act === 'conflict-drop') resolveConflict(false);
   });
   try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch {}
+  el.editorText.addEventListener('pointerdown', (e) => { if (e.target && e.target.classList && e.target.classList.contains('ac-seek')) bgAudio.scrubbing = true; }, true);
+  for (const ev of ['pointerup', 'pointercancel', 'change']) {
+    el.editorText.addEventListener(ev, (e) => { if (e.target && e.target.classList && e.target.classList.contains('ac-seek')) bgAudio.scrubbing = false; }, true);
+  }
+  el.editorText.addEventListener('input', (e) => {
+    if (e.target && e.target.classList && e.target.classList.contains('ac-seek')) {
+      e.stopImmediatePropagation();
+      bgAudio.handleCardSeek(e.target);
+    }
+  }, true);
   el.editorText.addEventListener('input', onEditorInput);
   el.editorText.addEventListener('input', (e) => {
     // a link typed in a note becomes a real link once you press space or Enter
@@ -3445,6 +3458,274 @@ function setEditorHtml(html) {
 function ytCardActsHTML() {
   return '<span class="lc-acts"><span class="lc-act" data-yt-dl="mp3" role="button" tabindex="0" title="Add MP3 to note for offline playback">MP3</span><span class="lc-act" data-yt-dl="m4a" role="button" tabindex="0" title="Add M4A audio to note for offline playback">M4A</span><span class="lc-act" data-yt-dl="mp4" role="button" tabindex="0" title="Download Video (MP4)">Video</span></span>';
 }
+function fmtAudioTime(s) {
+  if (!Number.isFinite(s) || s < 0) return '0:00';
+  const n = Math.floor(s);
+  const h = Math.floor(n / 3600);
+  const m = Math.floor((n % 3600) / 60);
+  const r = n % 60;
+  const pad = (v) => String(v).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
+}
+const bgAudio = {
+  el: null,
+  fileId: '',
+  noteId: '',
+  title: '',
+  ext: 'AUDIO',
+  scrubbing: false,
+  ensureEl() {
+    if (this.el) return this.el;
+    const a = document.createElement('audio');
+    a.preload = 'metadata';
+    a.setAttribute('playsinline', '');
+    a.setAttribute('x-webkit-airplay', 'allow');
+    a.style.cssText = 'position:fixed;width:0;height:0;opacity:0;pointer-events:none;';
+    document.body.append(a);
+    a.addEventListener('play', () => { this.syncSession(); this.syncUI(); });
+    a.addEventListener('pause', () => { this.syncSession(); this.syncUI(); });
+    a.addEventListener('ended', () => { this.syncSession(); this.syncUI(); });
+    a.addEventListener('loadedmetadata', () => { this.syncSession(); this.syncUI(); });
+    a.addEventListener('durationchange', () => { this.syncSession(); this.syncUI(); });
+    a.addEventListener('seeked', () => { this.syncPosition(); this.syncUI(); });
+    a.addEventListener('timeupdate', () => { this.syncPosition(); this.syncUI(true); });
+    a.addEventListener('error', () => {
+      if (!a.getAttribute('src')) return;
+      toast('Could not play this audio file.');
+      this.syncUI();
+    });
+    this.el = a;
+    return a;
+  },
+  playFile(id, noteId = null) {
+    const it = store.items.get(id);
+    if (!it) return;
+    const a = this.ensureEl();
+    const resolvedNote = noteId || (it.data && it.data.parent) || '';
+    if (this.fileId === id && a.getAttribute('src')) {
+      if (resolvedNote && !this.noteId) this.noteId = resolvedNote;
+      this.play();
+      return;
+    }
+    const fullName = (it.data && it.data.name) || 'Audio';
+    const extMatch = fullName.match(/\.([A-Za-z0-9]{2,5})$/);
+    this.fileId = id;
+    this.noteId = resolvedNote;
+    this.title = fullName.replace(/\.(mp3|m4a|webm|ogg|wav|aac|flac)$/i, '');
+    this.ext = extMatch ? extMatch[1].toUpperCase() : 'AUDIO';
+    a.src = files.src(id);
+    a.load();
+    this.play();
+    this.syncSession();
+    this.syncUI();
+  },
+  toggleFile(id, noteId = null) {
+    if (this.fileId === id && this.el && this.el.getAttribute('src')) {
+      if (this.el.paused) this.play();
+      else this.pause();
+      return;
+    }
+    this.playFile(id, noteId);
+  },
+  play() {
+    if (!this.el || !this.fileId) return;
+    const p = this.el.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  },
+  pause() {
+    if (this.el && !this.el.paused) this.el.pause();
+  },
+  seekTo(sec) {
+    if (!this.el || !this.fileId) return;
+    const d = this.el.duration;
+    const next = Number.isFinite(d) && d > 0 ? Math.max(0, Math.min(d, sec)) : Math.max(0, sec);
+    try { this.el.currentTime = next; } catch {}
+    this.syncPosition();
+    this.syncUI();
+  },
+  seekBy(delta) {
+    if (!this.el || !this.fileId) return;
+    this.seekTo((this.el.currentTime || 0) + delta);
+  },
+  stop() {
+    this.fileId = '';
+    this.noteId = '';
+    this.title = '';
+    if (this.el) {
+      try { this.el.pause(); } catch {}
+      this.el.removeAttribute('src');
+      try { this.el.load(); } catch {}
+    }
+    if ('mediaSession' in navigator) {
+      try { navigator.mediaSession.playbackState = 'none'; } catch {}
+    }
+    this.syncUI();
+  },
+  syncSession() {
+    if (!('mediaSession' in navigator) || !this.fileId) return;
+    try {
+      const off = files.isOffline(this.fileId);
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: this.title || 'Audio',
+        artist: 'SyncPad',
+        album: off ? 'Offline audio' : 'SyncPad audio',
+        artwork: [
+          { src: `${location.origin}/icons/icon-192.png`, sizes: '192x192', type: 'image/png' },
+          { src: `${location.origin}/icons/icon-512.png`, sizes: '512x512', type: 'image/png' }
+        ]
+      });
+      navigator.mediaSession.playbackState = (!this.el || this.el.paused) ? 'paused' : 'playing';
+      const handlers = {
+        play: () => this.play(),
+        pause: () => this.pause(),
+        seekbackward: (d) => this.seekBy(-(d && d.seekOffset ? d.seekOffset : 15)),
+        seekforward: (d) => this.seekBy(d && d.seekOffset ? d.seekOffset : 15),
+        seekto: (d) => {
+          if (!d || d.seekTime == null) return;
+          if (d.fastSeek && this.el && typeof this.el.fastSeek === 'function') {
+            try { this.el.fastSeek(d.seekTime); } catch { this.seekTo(d.seekTime); }
+          } else this.seekTo(d.seekTime);
+        },
+        stop: () => this.stop()
+      };
+      for (const [k, fn] of Object.entries(handlers)) {
+        try { navigator.mediaSession.setActionHandler(k, fn); } catch {}
+      }
+      this.syncPosition();
+    } catch {}
+  },
+  syncPosition() {
+    if (!('mediaSession' in navigator) || typeof navigator.mediaSession.setPositionState !== 'function' || !this.el || !this.fileId) return;
+    const d = this.el.duration;
+    const p = this.el.currentTime || 0;
+    if (!Number.isFinite(d) || d <= 0) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: d,
+        playbackRate: this.el.playbackRate || 1,
+        position: Math.max(0, Math.min(d, p))
+      });
+    } catch {}
+  },
+  ensureBar() {
+    const bar = $('#audio-bar');
+    if (!bar || bar.dataset.ready) return bar;
+    bar.dataset.ready = '1';
+    bar.innerHTML =
+      `<div class="ab-row">` +
+        `<button type="button" class="icon-btn sm ab-play" aria-label="Play or pause audio" title="Play / Pause"><svg class="ic"><use href="#i-play"/></svg></button>` +
+        `<button type="button" class="ab-skip ab-rw" aria-label="Back 15 seconds" title="Back 15s">−15s</button>` +
+        `<button type="button" class="ab-info" title="Open note">` +
+          `<span class="ab-title"></span>` +
+          `<span class="ab-sub"></span>` +
+        `</button>` +
+        `<button type="button" class="ab-skip ab-fw" aria-label="Forward 15 seconds" title="Forward 15s">+15s</button>` +
+        `<span class="ab-time">0:00</span>` +
+        `<button type="button" class="icon-btn sm ab-close" aria-label="Stop audio" title="Stop audio"><svg class="ic"><use href="#i-x"/></svg></button>` +
+      `</div>` +
+      `<input type="range" class="ab-seek" min="0" max="1000" value="0" step="1" aria-label="Audio playback position">`;
+    bar.addEventListener('click', (e) => {
+      if (e.target.closest('.ab-play')) { this.el && !this.el.paused ? this.pause() : this.play(); return; }
+      if (e.target.closest('.ab-rw')) { this.seekBy(-15); return; }
+      if (e.target.closest('.ab-fw')) { this.seekBy(15); return; }
+      if (e.target.closest('.ab-close')) { this.stop(); return; }
+      if (e.target.closest('.ab-info')) {
+        if (this.noteId && store.items.get(this.noteId)) {
+          const note = store.items.get(this.noteId);
+          if (note && note.kind === 'note' && !note.data.trashed) { setTab('notes'); openNote(this.noteId); return; }
+        }
+        setTab('drops');
+      }
+    });
+    const seek = bar.querySelector('.ab-seek');
+    seek.addEventListener('pointerdown', () => { this.scrubbing = true; });
+    const endScrub = () => { this.scrubbing = false; };
+    seek.addEventListener('pointerup', endScrub);
+    seek.addEventListener('pointercancel', endScrub);
+    seek.addEventListener('change', endScrub);
+    seek.addEventListener('input', () => {
+      const d = this.el && this.el.duration;
+      if (!Number.isFinite(d) || d <= 0) return;
+      const pct = Number(seek.value) / 10;
+      seek.style.setProperty('--p', `${pct}%`);
+      this.seekTo((Number(seek.value) / 1000) * d);
+    });
+    return bar;
+  },
+  handleCardSeek(rangeEl) {
+    const card = rangeEl.closest('.audio-card[data-file]');
+    if (!card) return;
+    const id = card.dataset.file;
+    if (this.fileId !== id) {
+      this.playFile(id, openNoteItem() && openNoteItem().id);
+      return;
+    }
+    const d = this.el && this.el.duration;
+    if (!Number.isFinite(d) || d <= 0) return;
+    const pct = Number(rangeEl.value) / 10;
+    rangeEl.style.setProperty('--p', `${pct}%`);
+    this.seekTo((Number(rangeEl.value) / 1000) * d);
+  },
+  syncUI(timeOnly = false) {
+    const a = this.el;
+    const playing = !!(a && !a.paused && this.fileId);
+    const cur = (a && Number.isFinite(a.currentTime)) ? a.currentTime : 0;
+    const dur = (a && Number.isFinite(a.duration) && a.duration > 0) ? a.duration : 0;
+    const ratio = dur > 0 ? Math.max(0, Math.min(1, cur / dur)) : 0;
+    const pct = (ratio * 100).toFixed(2);
+    const timeLabel = dur > 0 ? `${fmtAudioTime(cur)} / ${fmtAudioTime(dur)}` : fmtAudioTime(cur);
+
+    const bar = this.ensureBar();
+    if (bar) {
+      const wasHidden = bar.hidden;
+      bar.hidden = !this.fileId;
+      if (this.fileId) {
+        bar.classList.toggle('is-playing', playing);
+        const pb = bar.querySelector('.ab-play use');
+        if (pb) pb.setAttribute('href', playing ? '#i-pause' : '#i-play');
+        const abPlay = bar.querySelector('.ab-play');
+        if (abPlay) abPlay.setAttribute('aria-label', playing ? 'Pause audio' : 'Play audio');
+        if (!timeOnly || wasHidden) {
+          const tEl = bar.querySelector('.ab-title');
+          if (tEl) tEl.textContent = this.title || 'Audio';
+          const sEl = bar.querySelector('.ab-sub');
+          if (sEl) {
+            const off = files.isOffline(this.fileId);
+            sEl.textContent = off ? `${this.ext} · Offline ✓` : this.ext;
+          }
+        }
+        const tm = bar.querySelector('.ab-time');
+        if (tm) tm.textContent = timeLabel;
+        const sk = bar.querySelector('.ab-seek');
+        if (sk && !this.scrubbing) {
+          sk.value = String(Math.round(ratio * 1000));
+          sk.style.setProperty('--p', `${pct}%`);
+          sk.disabled = dur <= 0;
+        }
+      }
+    }
+
+    if (el.editorText) {
+      for (const card of $$('div.audio-card[data-file]', el.editorText)) {
+        const active = this.fileId && card.dataset.file === this.fileId;
+        card.classList.toggle('is-active', !!active);
+        card.classList.toggle('is-playing', !!(active && playing));
+        const u = card.querySelector('.ac-play use');
+        if (u) u.setAttribute('href', active && playing ? '#i-pause' : '#i-play');
+        const pb = card.querySelector('.ac-play');
+        if (pb) pb.setAttribute('aria-label', active && playing ? 'Pause audio' : 'Play audio');
+        const tm = card.querySelector('.ac-time');
+        if (tm) tm.textContent = active ? timeLabel : '0:00';
+        const sk = card.querySelector('.ac-seek');
+        if (sk && !this.scrubbing) {
+          sk.value = active ? String(Math.round(ratio * 1000)) : '0';
+          sk.style.setProperty('--p', active ? `${pct}%` : '0%');
+          sk.disabled = !active || dur <= 0;
+        }
+      }
+    }
+  }
+};
 function audioCardHTML(id, name = 'Audio') {
   return `<div class="audio-card" data-file="${id}" data-name="${esc(name)}" contenteditable="false"></div>`;
 }
@@ -3453,8 +3734,8 @@ function hydrateAudioCard(card) {
   const id = card.dataset.file;
   if (!id) return;
   const it = store.items.get(id);
-  const existingPlayer = card.querySelector('.ac-player');
-  if (existingPlayer && it) {
+  const existingCtrl = card.querySelector('.ac-ctrl');
+  if (existingCtrl && it) {
     const offBtn = card.querySelector('.ac-off');
     if (offBtn) {
       const off = files.isOffline(id);
@@ -3462,6 +3743,7 @@ function hydrateAudioCard(card) {
       offBtn.textContent = off ? 'Offline ✓' : 'Save offline';
       offBtn.title = off ? 'Saved on this device for offline playback' : 'Save on this device for offline playback';
     }
+    bgAudio.syncUI();
     return;
   }
   const fullName = (it && it.data && it.data.name) || card.dataset.name || 'Audio';
@@ -3470,7 +3752,6 @@ function hydrateAudioCard(card) {
   const dispTitle = fullName.replace(/\.(mp3|m4a|webm|ogg|wav|aac|flac)$/i, '');
   const sizeTxt = it && it.data && it.data.size ? fmtBytes(it.data.size) : '';
   const off = files.isOffline(id);
-  const src = it ? files.src(id) : '';
   card.setAttribute('contenteditable', 'false');
   card.innerHTML =
     `<div class="ac-head">` +
@@ -3486,7 +3767,16 @@ function hydrateAudioCard(card) {
       `<button type="button" class="icon-btn sm ac-dl" title="Save copy to Downloads" aria-label="Save copy to Downloads"><svg class="ic"><use href="#i-download"/></svg></button>` +
       `<button type="button" class="icon-btn sm ac-rm" title="Remove audio from note" aria-label="Remove audio from note"><svg class="ic"><use href="#i-x"/></svg></button>` +
     `</div>` +
-    (it ? `<audio class="ac-player" controls preload="metadata" src="${esc(src)}"></audio>` : `<div class="ac-wait">Syncing audio file…</div>`);
+    (it
+      ? `<div class="ac-ctrl">` +
+          `<button type="button" class="ac-play" aria-label="Play audio" title="Play / Pause"><svg class="ic"><use href="#i-play"/></svg></button>` +
+          `<button type="button" class="ac-rw" aria-label="Back 15 seconds" title="Back 15 seconds">−15s</button>` +
+          `<input type="range" class="ac-seek" min="0" max="1000" value="0" step="1" aria-label="Audio position" disabled>` +
+          `<button type="button" class="ac-fw" aria-label="Forward 15 seconds" title="Forward 15 seconds">+15s</button>` +
+          `<span class="ac-time">0:00</span>` +
+        `</div>`
+      : `<div class="ac-wait">Syncing audio file…</div>`);
+  bgAudio.syncUI();
 }
 function hydrateFiles(root) {
   for (const img of $$('img[data-file]', root)) if (!img.getAttribute('src')) img.src = files.src(img.dataset.file);
@@ -4366,9 +4656,32 @@ function onEditorClick(e) {
   }
   const f = e.target.closest('[data-file]');
   if (f && f.classList.contains('audio-card')) {
-    const it = store.items.get(f.dataset.file);
+    const id = f.dataset.file;
+    const it = store.items.get(id);
+    if (e.target.closest('.ac-play')) {
+      e.preventDefault();
+      if (it) bgAudio.toggleFile(id, openNoteItem() && openNoteItem().id);
+      return;
+    }
+    if (e.target.closest('.ac-rw')) {
+      e.preventDefault();
+      if (it) {
+        if (bgAudio.fileId === id) bgAudio.seekBy(-15);
+        else bgAudio.playFile(id, openNoteItem() && openNoteItem().id);
+      }
+      return;
+    }
+    if (e.target.closest('.ac-fw')) {
+      e.preventDefault();
+      if (it) {
+        if (bgAudio.fileId === id) bgAudio.seekBy(15);
+        else bgAudio.playFile(id, openNoteItem() && openNoteItem().id);
+      }
+      return;
+    }
     if (e.target.closest('.ac-rm')) {
       e.preventDefault();
+      if (bgAudio.fileId === id) bgAudio.stop();
       f.remove();
       onEditorInput();
       return;
@@ -4659,6 +4972,7 @@ async function openFile(it) {
   if (extOf(d.name) === 'epub' || /epub/.test(d.type || '')) { openEpubViewer(it); return; }
   const dk = docKindOf(kind, d.name);
   if (dk) { openDocViewer(it, dk); return; }
+  if (kind === 'audio') { bgAudio.playFile(it.id, d.parent || null); return; }
   if (!['image', 'video', 'audio', 'pdf'].includes(kind) && !textual) { files.download(it); return; }
   ui.viewing = it;
   el.viewerDownload.hidden = false;

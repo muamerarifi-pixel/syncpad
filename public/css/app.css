@@ -1560,7 +1560,68 @@ html, body { overscroll-behavior-x: none; }
   border-radius: 999px; padding: 1px 8px; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
 }
 .rt .ac-off.is-on { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: var(--green-soft); color: var(--accent-text); cursor: default; }
-.rt .ac-player { width: 100%; height: 38px; display: block; border-radius: 8px; outline: none; }
+.rt .ac-ctrl { display: flex; align-items: center; gap: 6px; padding-top: 2px; }
+.rt .ac-play {
+  width: 34px; height: 34px; border-radius: 50%; border: 0; flex: none;
+  display: grid; place-items: center; cursor: pointer;
+  background: var(--accent); color: #fff;
+  transition: transform .12s, filter .12s;
+}
+.rt .ac-play:active { transform: scale(.93); }
+.rt .ac-play .ic { width: 16px; height: 16px; fill: currentColor; stroke: none; }
+.rt .audio-card.is-playing { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); }
+.rt .ac-rw, .rt .ac-fw {
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  border-radius: 7px; height: 28px; padding: 0 7px; font: inherit; font-size: 11px; font-weight: 700;
+  cursor: pointer; flex: none; white-space: nowrap;
+}
+.rt .ac-rw:hover, .rt .ac-fw:hover { color: var(--text); border-color: var(--accent); }
+.rt .ac-seek, .audio-bar .ab-seek {
+  -webkit-appearance: none; appearance: none; flex: 1; min-width: 60px; height: 6px;
+  border-radius: 999px; cursor: pointer; margin: 0 2px;
+  background: linear-gradient(to right, var(--accent) 0%, var(--accent) var(--p, 0%), var(--border) var(--p, 0%), var(--border) 100%);
+}
+.rt .ac-seek:disabled { opacity: .5; cursor: default; }
+.rt .ac-seek::-webkit-slider-thumb, .audio-bar .ab-seek::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.rt .ac-seek::-moz-range-thumb, .audio-bar .ab-seek::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--surface);
+  background: var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.rt .ac-time { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; white-space: nowrap; min-width: 36px; text-align: right; }
+
+/* Persistent background audio bar — stays playing across notes, tabs, home screen & lock screen */
+.audio-bar[hidden] { display: none !important; }
+.audio-bar {
+  flex: none; position: relative; z-index: 6;
+  background: color-mix(in srgb, var(--surface) 94%, var(--accent) 6%);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 12px 8px; display: flex; flex-direction: column; gap: 5px;
+}
+.audio-bar .ab-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.audio-bar .ab-play { background: var(--accent); color: #fff; border-radius: 50%; width: 30px; height: 30px; flex: none; }
+.audio-bar .ab-play .ic { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+.audio-bar .ab-skip {
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+  border-radius: 7px; height: 26px; padding: 0 6px; font: inherit; font-size: 11px; font-weight: 700;
+  cursor: pointer; flex: none; white-space: nowrap;
+}
+.audio-bar .ab-skip:hover { color: var(--text); border-color: var(--accent); }
+.audio-bar .ab-info {
+  flex: 1; min-width: 0; border: 0; background: transparent; padding: 0 4px; text-align: left;
+  cursor: pointer; display: flex; flex-direction: column; line-height: 1.25; color: var(--text); font: inherit;
+}
+.audio-bar .ab-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audio-bar .ab-sub { font-size: 10.5px; color: var(--accent-text); font-weight: 600; }
+.audio-bar .ab-time { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; white-space: nowrap; }
+.audio-bar .ab-seek { width: 100%; margin: 0; height: 4px; flex: none; }
+.audio-bar .ab-seek::-webkit-slider-thumb { width: 12px; height: 12px; }
+@media (max-width: 480px) {
+  .audio-bar { padding: 6px 10px 7px; }
+  .audio-bar .ab-skip { padding: 0 5px; font-size: 10.5px; }
+}
 .rt .ac-wait { font-size: 12px; color: var(--muted); padding: 4px 2px; }
 .rt .audio-pending { display: flex; flex-direction: column; gap: 8px; }
 .rt .ap-row { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
