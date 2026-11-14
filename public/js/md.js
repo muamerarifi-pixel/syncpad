@@ -26,7 +26,7 @@ function P() {
         if (kept.length) data.attrValue = kept.join('; ');
         else data.keepAttr = false;
       } else if (data.attrName === 'class') {
-        if (!/^(file-chip|link-card|lc-img|lc-t|lc-d|kp)$/.test(data.attrValue)) data.keepAttr = false;
+        if (!/^(?:file-chip|link-card|link-card has-fav|lc-img|lc-fav-wrap|lc-fav|lc-t|lc-d|lc-acts|lc-act|kp)$/.test(data.attrValue)) data.keepAttr = false;
       } else if (data.attrName === 'contenteditable') {
         if (node.tagName === 'A' && (node.hasAttribute('data-file') || /\blink-card\b/.test(node.getAttribute('class') || ''))) data.attrValue = 'false';
         else data.keepAttr = false;
@@ -46,7 +46,7 @@ function P() {
 const BASE = {
   ALLOWED_TAGS: ['p', 'div', 'br', 'span', 'b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'a', 'img', 'h1', 'h2', 'h3',
     'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'hr', 'mark', 'font', 'sub', 'sup', 'table', 'thead', 'tbody', 'tr', 'th', 'td'],
-  ALLOWED_ATTR: ['href', 'src', 'data-file', 'data-checklist', 'data-checked', 'data-align', 'alt', 'style', 'size', 'color', 'class', 'contenteditable', 'target', 'rel', 'loading'],
+  ALLOWED_ATTR: ['href', 'src', 'data-file', 'data-checklist', 'data-checked', 'data-align', 'data-yt-dl', 'alt', 'style', 'size', 'color', 'class', 'contenteditable', 'target', 'rel', 'loading'],
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|blob|data):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 };
 

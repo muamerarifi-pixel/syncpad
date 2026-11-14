@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.68';
+const VERSION = '3.0.69';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1464,9 +1464,14 @@ function metaParts(it, prog) {
 function primaryAction(it, prog) {
   if (it.kind === 'clip') {
     const url = singleUrl(it.data.text || '');
-    return url
-      ? `<a class="icon-btn act" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="Open link" title="Open link"><svg class="ic"><use href="#i-link"/></svg></a>`
-      : `<button class="icon-btn act" data-act="copy" aria-label="Copy text" title="Copy"><svg class="ic"><use href="#i-copy"/></svg></button>`;
+    if (url) {
+      const ytBtns = ytInfo(url)
+        ? `<button class="yt-dl-btn" data-act="yt-mp3" aria-label="Download MP3" title="Download MP3"><svg class="ic"><use href="#i-download"/></svg><span>MP3</span></button>` +
+          `<button class="yt-dl-btn" data-act="yt-mp4" aria-label="Download Video" title="Download Video (MP4)"><svg class="ic"><use href="#i-download"/></svg><span>Video</span></button>`
+        : '';
+      return `${ytBtns}<a class="icon-btn act" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="Open link" title="Open link"><svg class="ic"><use href="#i-link"/></svg></a>`;
+    }
+    return `<button class="icon-btn act" data-act="copy" aria-label="Copy text" title="Copy"><svg class="ic"><use href="#i-copy"/></svg></button>`;
   }
   if (prog) return '';
   const kind = fileKind(it.data.type, it.data.name);
@@ -1498,7 +1503,11 @@ function rowHTML(it, prog) {
 
 function tileHTML(it, prog) {
   const sel = ui.selected.has(it.id);
-  const isText = it.kind === 'clip' && !singleUrl(it.data.text || '');
+  const url = it.kind === 'clip' ? singleUrl(it.data.text || '') : '';
+  const isText = it.kind === 'clip' && !url;
+  const ytActs = url && ytInfo(url)
+    ? `<div class="tile-yt-acts"><button class="yt-dl-btn" data-act="yt-mp3" title="Download MP3"><svg class="ic"><use href="#i-download"/></svg><span>MP3</span></button><button class="yt-dl-btn" data-act="yt-mp4" title="Download Video (MP4)"><svg class="ic"><use href="#i-download"/></svg><span>Video</span></button></div>`
+    : '';
   return `<article class="tile${sel ? ' selected' : ''}${ui.selecting ? ' selecting' : ''}" data-id="${it.id}">
     <button class="tile-media" data-act="${isText ? 'expand-tile' : 'open'}" aria-label="Open" draggable="${!isTouch()}">
       ${isText ? `<span class="tile-text">${esc((it.data.text || '').slice(0, 220))}</span>` : thumbHTML(it)}
@@ -1507,6 +1516,7 @@ function tileHTML(it, prog) {
     <button class="tile-more icon-btn sm" data-act="menu" aria-label="More actions"><svg class="ic"><use href="#i-more"/></svg></button>
     <div class="tile-name" title="${esc(dropTitle(it).slice(0, 300))}">${esc(dropTitle(it).slice(0, 120))}</div>
     <div class="tile-meta">${it.kind === 'file' && !prog ? esc(fmtBytes(it.data.size)) + ' · ' : ''}${clock(it.created)}</div>
+    ${ytActs}
     ${hitHTML(it)}
     ${prog && prog.state !== 'err' ? `<div class="progress"><span style="width:${pct(prog)}%"></span></div>` : ''}
   </article>`;
@@ -1587,6 +1597,9 @@ async function onFeedClick(e) {
     openFile(it);
   } else if (act === 'download') {
     files.download(it);
+  } else if (act === 'yt-mp3' || act === 'yt-mp4') {
+    const u = singleUrl(it.data.text || '');
+    if (u) downloadYoutube(u, act === 'yt-mp3' ? 'mp3' : 'mp4', dropTitle(it));
   } else if (act === 'share') {
     files.share(it).catch(() => files.download(it));
   } else if (act === 'menu') {
@@ -1614,6 +1627,10 @@ function dropMenu(anchor, it, at) {
   }
     m.push({ icon: 'pen', label: url ? 'Rename link…' : 'Edit message…', run: () => renameDrop(it) });
     if (url) m.push({ icon: 'link', label: ytInfo(url) ? 'Play privately' : 'Open link', run: () => openUrl(url) });
+    if (url && ytInfo(url)) {
+      m.push({ icon: 'download', label: 'Download MP3', run: () => downloadYoutube(url, 'mp3', dropTitle(it)) });
+      m.push({ icon: 'download', label: 'Download Video (MP4)', run: () => downloadYoutube(url, 'mp4', dropTitle(it)) });
+    }
     if (navigator.share && isTouch()) m.push({ icon: 'share', label: 'Share…', run: () => navigator.share(url ? { url } : { text: it.data.text }).catch(() => {}) });
     m.push({ icon: 'note', label: 'Save as note', run: () => saveClipAsNote(it) });
   } else {
@@ -2657,7 +2674,7 @@ async function addLinkCard(a) {
       thumbHtml = `<img class="lc-img" src="${esc(p.thumb)}" alt="" loading="lazy">`;
     }
   }
-  card.innerHTML = `${thumbHtml}<span class="lc-t">${esc(p.title || host)}</span><span class="lc-d">${esc(p.site || host)}</span>`;
+  card.innerHTML = `${thumbHtml}<span class="lc-t">${esc(p.title || host)}</span><span class="lc-d">${esc(p.site || host)}</span>${ytInfo(url) ? ytCardActsHTML() : ''}`;
   blk.after(card);
   if (!card.nextSibling) { const q = document.createElement('p'); q.innerHTML = '<br>'; card.after(q); }
   onEditorInput();
@@ -2669,6 +2686,8 @@ function showLinkBubble(a) {
     b = document.createElement('div');
     b.className = 'link-bubble';
     b.innerHTML = '<a class="lb-open" target="_blank" rel="noopener noreferrer"><svg class="ic"><use href="#i-link"/></svg><span class="lb-url"></span></a>' +
+      '<button class="yt-dl-btn" data-yt-dl="mp3" title="Download MP3" hidden>MP3</button>' +
+      '<button class="yt-dl-btn" data-yt-dl="mp4" title="Download Video (MP4)" hidden>Video</button>' +
       '<button class="icon-btn sm" data-lb="copy" title="Copy link" aria-label="Copy link"><svg class="ic"><use href="#i-copy"/></svg></button>' +
       '<button class="icon-btn sm" data-lb="unlink" title="Remove link" aria-label="Remove link"><svg class="ic"><use href="#i-x"/></svg></button>';
     document.body.appendChild(b);
@@ -2690,6 +2709,11 @@ function showLinkBubble(a) {
   ui.linkFor = a;
   const open = b.querySelector('.lb-open');
   open.href = a.href;
+  const isYt = !!ytInfo(a.href);
+  for (const dl of $$('[data-yt-dl]', b)) {
+    dl.hidden = !isYt;
+    if (isYt) dl.dataset.ytUrl = a.href;
+  }
   b.querySelector('.lb-url').textContent = a.href.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '').slice(0, 48) + ' ↗';
   setAnimatedVisible(b, true, 125);
   const r = a.getBoundingClientRect();
@@ -3415,10 +3439,16 @@ function setEditorHtml(html) {
   hydrateFiles(el.editorText);
   updateEmpty();
 }
+function ytCardActsHTML() {
+  return '<span class="lc-acts"><span class="lc-act" data-yt-dl="mp3" role="button" tabindex="0" title="Download MP3">MP3</span><span class="lc-act" data-yt-dl="mp4" role="button" tabindex="0" title="Download Video (MP4)">Video</span></span>';
+}
 function hydrateFiles(root) {
   for (const img of $$('img[data-file]', root)) if (!img.getAttribute('src')) img.src = files.src(img.dataset.file);
   for (const a of $$('a[data-file]', root)) { a.setAttribute('contenteditable', 'false'); a.removeAttribute('href'); }
-  for (const a of $$('a.link-card', root)) a.setAttribute('contenteditable', 'false');
+  for (const a of $$('a.link-card', root)) {
+    a.setAttribute('contenteditable', 'false');
+    if (ytInfo(a.href) && !a.querySelector('.lc-acts')) a.insertAdjacentHTML('beforeend', ytCardActsHTML());
+  }
 }
 function updateEmpty() {
   const ed = el.editorText;
@@ -6788,9 +6818,129 @@ function ytInfo(url) {
   else { const m = t.match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/); if (m) start = (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0); }
   return { id, start, list: u.searchParams.get('list') || '' };
 }
+let lamePromise = null;
+function loadLame() {
+  if (window.lamejs) return Promise.resolve(window.lamejs);
+  if (lamePromise) return lamePromise;
+  lamePromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = '/vendor/lame.min.js';
+    s.onload = () => (window.lamejs ? resolve(window.lamejs) : reject(new Error('lamejs unavailable')));
+    s.onerror = () => { lamePromise = null; reject(new Error('Could not load MP3 encoder')); };
+    document.head.append(s);
+  });
+  return lamePromise;
+}
+function triggerBrowserDownload(href, filename) {
+  const a = document.createElement('a');
+  a.href = href;
+  if (filename) a.download = filename;
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+function filenameFromHeader(cd, fallback) {
+  if (!cd) return fallback;
+  const u8 = cd.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (u8 && u8[1]) { try { return decodeURIComponent(u8[1]).trim(); } catch {} }
+  const plain = cd.match(/filename\s*=\s*"([^"]+)"/i);
+  if (plain && plain[1]) return plain[1].trim();
+  return fallback;
+}
+async function downloadYoutube(url, mode = 'mp4', hintTitle = '') {
+  const info = ytInfo(url);
+  if (!info) return;
+  const q = new URLSearchParams({
+    s: store.get('space'),
+    v: info.id,
+    mode: mode === 'mp3' ? 'audio' : 'video'
+  });
+  const cleanHint = String(hintTitle || '').replace(/\s+/g, ' ').trim();
+  if (cleanHint && !/^https?:\/\//i.test(cleanHint)) q.set('title', cleanHint.slice(0, 90));
+
+  if (mode !== 'mp3') {
+    toast('Starting video download…');
+    try {
+      const r = await fetch(`/api/ytdl?${q}&info=1`);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) { toast(j.reason || 'Could not download this YouTube video.'); return; }
+      triggerBrowserDownload(`/api/ytdl?${q}`, `${j.title || cleanHint || 'youtube'}.${j.ext || 'mp4'}`);
+    } catch {
+      toast('Video download failed. Check your connection.');
+    }
+    return;
+  }
+
+  toast('Downloading & converting to MP3…', { duration: 60000 });
+  try {
+    const res = await fetch(`/api/ytdl?${q}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      toast(err.reason || 'Could not download audio for this YouTube video.');
+      return;
+    }
+    const rawName = filenameFromHeader(res.headers.get('content-disposition'), `${cleanHint || 'youtube-' + info.id}.m4a`);
+    const baseTitle = rawName.replace(/\.[^.]+$/, '') || `youtube-${info.id}`;
+    const ctype = res.headers.get('content-type') || 'audio/mp4';
+    const buf = await res.arrayBuffer();
+
+    // Very long recordings (>48 MB) save directly as original audio so low-RAM phones don't stall
+    if (buf.byteLength > 48 * 1024 * 1024) {
+      const ext = /webm/i.test(ctype) ? 'webm' : 'm4a';
+      const blobUrl = URL.createObjectURL(new Blob([buf], { type: ctype }));
+      triggerBrowserDownload(blobUrl, `${baseTitle}.${ext}`);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+      toast(`Long audio saved as .${ext}`);
+      return;
+    }
+
+    try {
+      const lame = await loadLame();
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ac = new AC();
+      let audioBuf;
+      try { audioBuf = await ac.decodeAudioData(buf.slice(0)); } finally { ac.close().catch(() => {}); }
+      const nCh = Math.min(2, audioBuf.numberOfChannels || 1);
+      const sr = audioBuf.sampleRate || 44100;
+      const enc = new lame.Mp3Encoder(nCh, sr, 128);
+      const toI16 = (f32) => {
+        const out = new Int16Array(f32.length);
+        for (let i = 0; i < f32.length; i++) {
+          const v = Math.max(-1, Math.min(1, f32[i]));
+          out[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+        }
+        return out;
+      };
+      const left = toI16(audioBuf.getChannelData(0));
+      const right = nCh === 2 ? toI16(audioBuf.getChannelData(1)) : null;
+      const chunks = [];
+      const step = 1152 * 40;
+      for (let i = 0; i < left.length; i += step) {
+        const l = left.subarray(i, i + step);
+        const mp3buf = nCh === 2 ? enc.encodeBuffer(l, right.subarray(i, i + step)) : enc.encodeBuffer(l);
+        if (mp3buf.length) chunks.push(new Uint8Array(mp3buf));
+        if (i % (step * 4) === 0) await new Promise((r) => setTimeout(r, 0));
+      }
+      const tail = enc.flush();
+      if (tail.length) chunks.push(new Uint8Array(tail));
+      const blobUrl = URL.createObjectURL(new Blob(chunks, { type: 'audio/mpeg' }));
+      triggerBrowserDownload(blobUrl, `${baseTitle}.mp3`);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+      toast('MP3 ready — downloading');
+    } catch {
+      const ext = /webm/i.test(ctype) ? 'webm' : 'm4a';
+      const blobUrl = URL.createObjectURL(new Blob([buf], { type: ctype }));
+      triggerBrowserDownload(blobUrl, `${baseTitle}.${ext}`);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+      toast(`Saved audio as .${ext}`);
+    }
+  } catch {
+    toast('MP3 download failed. Check your connection.');
+  }
+}
 /* the player floats above the app: big, or a small corner player that keeps playing while you use SyncPad */
 const YT_ORIGIN = 'https://www.youtube-nocookie.com';
-const yt = { box: null, mode: '', state: -1, wanted: false, autoPaused: false, tries: 0, hideAt: 0, showAt: 0, listenT: 0, heard: false };
+const yt = { box: null, url: '', mode: '', state: -1, wanted: false, autoPaused: false, tries: 0, hideAt: 0, showAt: 0, listenT: 0, heard: false };
 function ytMode(mode) {
   const box = yt.box;
   if (!box) return;
@@ -6864,18 +7014,21 @@ function openUrl(url) {
   if (!info) { window.open(url, '_blank', 'noopener'); return; }
   if (!yt.box) {
     const box = document.createElement('div');
-    box.innerHTML = `<div class="yt-shade"></div><div class="yt-card"><div class="yt-bar"><span class="yt-note"><svg class="ic"><use href="#i-lock"/></svg><span>Private — not saved to your YouTube history</span></span><span class="spacer"></span><button class="btn btn-sm" id="yt-pop" title="Full screen — then swipe up and it keeps playing over your other apps"><svg class="ic"><use href="#i-fit"/></svg><span>Pop out</span></button><a class="btn btn-sm" id="yt-open" target="_blank" rel="noopener noreferrer">Open in YouTube</a><button class="icon-btn" id="yt-min" aria-label="Keep playing in the corner" title="Keep playing in the corner"><svg class="ic"><use href="#i-chev"/></svg></button><button class="icon-btn" id="yt-max" aria-label="Bigger" title="Bigger"><svg class="ic"><use href="#i-fit"/></svg></button><button class="icon-btn" id="yt-close" aria-label="Stop and close" title="Stop and close"><svg class="ic"><use href="#i-x"/></svg></button></div><div class="yt-frame"></div></div>`;
+    box.innerHTML = `<div class="yt-shade"></div><div class="yt-card"><div class="yt-bar"><span class="yt-note"><svg class="ic"><use href="#i-lock"/></svg><span>Private — not saved to your YouTube history</span></span><span class="spacer"></span><button class="btn btn-sm" id="yt-dl-mp3" title="Download MP3"><svg class="ic"><use href="#i-download"/></svg><span>MP3</span></button><button class="btn btn-sm" id="yt-dl-mp4" title="Download Video (MP4)"><svg class="ic"><use href="#i-download"/></svg><span>Video</span></button><button class="btn btn-sm" id="yt-pop" title="Full screen — then swipe up and it keeps playing over your other apps"><svg class="ic"><use href="#i-fit"/></svg><span>Pop out</span></button><a class="btn btn-sm" id="yt-open" target="_blank" rel="noopener noreferrer">Open in YouTube</a><button class="icon-btn" id="yt-min" aria-label="Keep playing in the corner" title="Keep playing in the corner"><svg class="ic"><use href="#i-chev"/></svg></button><button class="icon-btn" id="yt-max" aria-label="Bigger" title="Bigger"><svg class="ic"><use href="#i-fit"/></svg></button><button class="icon-btn" id="yt-close" aria-label="Stop and close" title="Stop and close"><svg class="ic"><use href="#i-x"/></svg></button></div><div class="yt-frame"></div></div>`;
     document.body.append(box);
     yt.box = box;
     box.addEventListener('click', (e) => {
       if (e.target.closest('.yt-shade, #yt-min')) ytMode('mini');
       else if (e.target.closest('#yt-max')) ytMode('big');
       else if (e.target.closest('#yt-pop')) ytPopOut();
+      else if (e.target.closest('#yt-dl-mp3')) { if (yt.url) downloadYoutube(yt.url, 'mp3'); }
+      else if (e.target.closest('#yt-dl-mp4')) { if (yt.url) downloadYoutube(yt.url, 'mp4'); }
       else if (e.target.closest('#yt-close')) ytMode('');
       else if (e.target.closest('#yt-open')) ytMode('');
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && yt.mode === 'big' && !document.fullscreenElement) { e.stopPropagation(); ytMode('mini'); } }, true);
   }
+  yt.url = url;
   const q = new URLSearchParams({ autoplay: '1', rel: '0', playsinline: '1', modestbranding: '1', enablejsapi: '1', origin: location.origin });
   if (info.start) q.set('start', String(info.start));
   if (info.list) q.set('list', info.list);
@@ -6886,6 +7039,19 @@ function openUrl(url) {
   ytMode('big');
 }
 document.addEventListener('click', (e) => {
+  const ytDl = e.target.closest && e.target.closest('[data-yt-dl]');
+  if (ytDl) {
+    const card = ytDl.closest('a.link-card');
+    const href = ytDl.dataset.ytUrl || (card && card.href) || '';
+    if (href && ytInfo(href)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const title = card ? (card.querySelector('.lc-t') && card.querySelector('.lc-t').textContent) || '' : '';
+      if (ui.linkBubble && !ui.linkBubble.hidden) hideLinkBubble();
+      downloadYoutube(href, ytDl.dataset.ytDl, title);
+      return;
+    }
+  }
   const a = e.target.closest && e.target.closest('a[href]');
   if (!a || e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0 || a.closest('.yt-float')) return;
   if (!ytInfo(a.href)) return;
