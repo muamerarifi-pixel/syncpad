@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.75';
+const VERSION = '3.0.76';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -3473,6 +3473,11 @@ const bgAudio = {
   noteId: '',
   title: '',
   ext: 'AUDIO',
+  isStream: false,
+  streamUrl: '',
+  streamSub: '',
+  streamArtist: '',
+  streamQueue: [],
   scrubbing: false,
   ensureEl() {
     if (this.el) return this.el;
@@ -3491,6 +3496,16 @@ const bgAudio = {
     a.addEventListener('timeupdate', () => { this.syncPosition(); this.syncUI(true); });
     a.addEventListener('error', () => {
       if (!a.getAttribute('src')) return;
+      if (this.isStream && this.streamQueue && this.streamQueue.length) {
+        const nextUrl = this.streamQueue.shift();
+        this.streamUrl = nextUrl;
+        this.fileId = 'stream:' + nextUrl;
+        a.src = nextUrl;
+        a.load();
+        this.play();
+        this.syncUI();
+        return;
+      }
       toast('Could not play this audio file.');
       this.syncUI();
     });
@@ -3509,6 +3524,11 @@ const bgAudio = {
     }
     const fullName = (it.data && it.data.name) || 'Audio';
     const extMatch = fullName.match(/\.([A-Za-z0-9]{2,5})$/);
+    this.isStream = false;
+    this.streamUrl = '';
+    this.streamSub = '';
+    this.streamArtist = '';
+    this.streamQueue = [];
     this.fileId = id;
     this.noteId = resolvedNote;
     this.title = fullName.replace(/\.(mp3|m4a|webm|ogg|wav|aac|flac)$/i, '');
@@ -3518,6 +3538,35 @@ const bgAudio = {
     this.play();
     this.syncSession();
     this.syncUI();
+  },
+  toggleStream(urls, title, sub = 'Streaming preview', artist = 'SyncPad', noteId = '') {
+    const list = (Array.isArray(urls) ? urls : [urls]).filter(Boolean);
+    if (!list.length) return;
+    const a = this.ensureEl();
+    if (this.isStream && list.includes(this.streamUrl) && a.getAttribute('src')) {
+      if (a.paused) this.play();
+      else this.pause();
+      return;
+    }
+    const primary = list[0];
+    this.isStream = true;
+    this.streamUrl = primary;
+    this.streamSub = sub || 'Streaming preview';
+    this.streamArtist = artist || 'SyncPad';
+    this.streamQueue = list.slice(1);
+    this.fileId = 'stream:' + primary;
+    this.noteId = noteId || '';
+    this.title = title || 'Audio';
+    this.ext = 'MP3';
+    a.src = primary;
+    a.load();
+    this.play();
+    this.syncSession();
+    this.syncUI();
+  },
+  activeStreamUrl() {
+    if (!this.isStream || !this.el || this.el.paused) return '';
+    return this.streamUrl;
   },
   toggleFile(id, noteId = null) {
     if (this.fileId === id && this.el && this.el.getAttribute('src')) {
@@ -3551,6 +3600,11 @@ const bgAudio = {
     this.fileId = '';
     this.noteId = '';
     this.title = '';
+    this.isStream = false;
+    this.streamUrl = '';
+    this.streamSub = '';
+    this.streamArtist = '';
+    this.streamQueue = [];
     if (this.el) {
       try { this.el.pause(); } catch {}
       this.el.removeAttribute('src');
@@ -3564,11 +3618,11 @@ const bgAudio = {
   syncSession() {
     if (!('mediaSession' in navigator) || !this.fileId) return;
     try {
-      const off = files.isOffline(this.fileId);
+      const off = !this.isStream && files.isOffline(this.fileId);
       navigator.mediaSession.metadata = new MediaMetadata({
         title: this.title || 'Audio',
-        artist: 'SyncPad',
-        album: off ? 'Offline audio' : 'SyncPad audio',
+        artist: (this.isStream && this.streamArtist) ? this.streamArtist : 'SyncPad',
+        album: this.isStream ? 'Streaming preview' : (off ? 'Offline audio' : 'SyncPad audio'),
         artwork: [
           { src: `${location.origin}/icons/icon-192.png`, sizes: '192x192', type: 'image/png' },
           { src: `${location.origin}/icons/icon-512.png`, sizes: '512x512', type: 'image/png' }
@@ -3634,6 +3688,7 @@ const bgAudio = {
           const note = store.items.get(this.noteId);
           if (note && note.kind === 'note' && !note.data.trashed) { setTab('notes'); openNote(this.noteId); return; }
         }
+        if (this.isStream) { openQuranPicker(); return; }
         setTab('drops');
       }
     });
@@ -3690,8 +3745,12 @@ const bgAudio = {
           if (tEl) tEl.textContent = this.title || 'Audio';
           const sEl = bar.querySelector('.ab-sub');
           if (sEl) {
-            const off = files.isOffline(this.fileId);
-            sEl.textContent = off ? `${this.ext} · Offline ✓` : this.ext;
+            if (this.isStream) {
+              sEl.textContent = this.streamSub || 'Streaming preview';
+            } else {
+              const off = files.isOffline(this.fileId);
+              sEl.textContent = off ? `${this.ext} · Offline ✓` : this.ext;
+            }
           }
         }
         const tm = bar.querySelector('.ab-time');
@@ -3703,6 +3762,10 @@ const bgAudio = {
           sk.disabled = dur <= 0;
         }
       }
+    }
+
+    if (!timeOnly) {
+      window.dispatchEvent(new CustomEvent('sp-bgaudio-sync'));
     }
 
     if (el.editorText) {
@@ -4309,7 +4372,10 @@ function noteMenu(anchor) {
     n.data.canvas
       ? { icon: 'note', label: 'Turn into normal note', run: turnIntoPage }
       : { icon: 'canvas', label: 'Turn into canvas', run: turnIntoCanvas },
-    ...(n.data.canvas ? [] : [{ icon: 'sparkle', label: 'De-clutter text', run: declutterNote }]),
+    ...(n.data.canvas ? [] : [
+      { icon: 'music', label: 'Add Quran audio (offline MP3)…', run: () => openQuranPicker() },
+      { icon: 'sparkle', label: 'De-clutter text', run: declutterNote }
+    ]),
     ...(!n.data.canvas && Math.abs((currentZoom || 1) - 1) > 0.01 ? [{ icon: 'fit', label: `Reset zoom to 100% (now ${Math.round(currentZoom * 100)}%)`, run: () => el.btnZoomReset.click() }] : []),
     { icon: 'download', label: 'Download (keeps colours)', run: downloadNote }
   ];
@@ -4565,6 +4631,7 @@ function format(kind, btn) {
   if (kind === 'heading') return toggleHeading();
   if (kind === 'link') return addLink();
   if (kind === 'attach') { saveSel(); return el.noteFileInput.click(); }
+  if (kind === 'quran') { saveSel(); return openQuranPicker(); }
   if (kind === 'case') {
     el.editorText.focus();
     const mode = cycleCase(el.editorText);
@@ -6425,6 +6492,7 @@ function newMenu(anchor) {
     { icon: 'pen', label: 'New note', run: () => newNote() },
     { icon: 'task', label: 'New checklist', run: () => { newNote(); setTimeout(() => { makeChecklist(); onEditorInput(); }, 40); } },
     { icon: 'canvas', label: 'New canvas — draw and place anything', run: () => newNote({ canvas: true }) },
+    { icon: 'music', label: 'Quran audio note (offline MP3)…', run: () => { newNote(); openQuranPicker(); } },
     { icon: 'clip', label: 'Add files to all devices…', run: () => el.fileInput.click() },
     { icon: 'doc', label: 'New document (Word or PDF)', run: newDocument },
     { icon: 'book', label: 'Import e-book or document as a note…', run: () => el.importInput.click() }
@@ -7296,43 +7364,22 @@ function placeAfterAnchor(anchorEl, node) {
   if (!node.nextSibling) { const q = document.createElement('p'); q.innerHTML = '<br>'; node.after(q); }
 }
 
-async function downloadYoutube(url, mode = 'mp4', hintTitle = '', opts = {}) {
-  const info = ytInfo(url);
-  if (!info) return;
-  const apiMode = mode === 'mp4' ? 'video' : mode === 'm4a' ? 'm4a' : 'audio';
-  const q = new URLSearchParams({ s: store.get('space'), v: info.id, mode: apiMode });
-  const cleanHint = String(hintTitle || '').replace(/\s+/g, ' ').trim();
-  if (cleanHint && !/^https?:\/\//i.test(cleanHint)) q.set('title', cleanHint.slice(0, 90));
-
-  const activeNote = openNoteItem();
-  const inNote = mode !== 'mp4' && ui.tab === 'notes' && !!(
-    (opts.anchorEl && el.editorText.contains(opts.anchorEl)) ||
-    (activeNote && !activeNote.data.canvas)
-  );
-  let targetNote = inNote ? activeNote : null;
-  if (inNote && !targetNote) { newNote(); targetNote = openNoteItem(); }
-  const targetNoteId = targetNote && !targetNote.data.canvas ? targetNote.id : null;
-
+function createNoteAudioTask({ targetNoteId, initTitle, anchorEl = null }) {
   let pendingEl = null;
   if (targetNoteId) {
-    const initTitle = (cleanHint && !/^https?:\/\//i.test(cleanHint) ? cleanHint : 'YouTube audio') + ` (${mode.toUpperCase()})`;
     pendingEl = document.createElement('div');
     pendingEl.className = 'audio-pending';
     pendingEl.setAttribute('contenteditable', 'false');
     pendingEl.innerHTML =
-      `<div class="ap-row"><span class="ap-spin"></span><span class="ap-title">${esc(initTitle)}</span><span class="ap-msg">Preparing…</span></div>` +
+      `<div class="ap-row"><span class="ap-spin"></span><span class="ap-title">${esc(initTitle || 'Audio')}</span><span class="ap-msg">Preparing…</span></div>` +
       `<div class="ap-bar"><div class="ap-fill indet"></div></div>`;
-    let anchor = opts.anchorEl && el.editorText.contains(opts.anchorEl) ? opts.anchorEl : null;
-    if (!anchor) {
-      anchor = [...$$('#editor-text a[href]')].find((a) => { const yi = ytInfo(a.href); return yi && yi.id === info.id; }) || null;
-    }
-    placeAfterAnchor(anchor, pendingEl);
+    placeAfterAnchor(anchorEl, pendingEl);
     pendingEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     if (!store.items.has(targetNoteId)) saveNote.flush();
   }
 
   let progToast = null;
-  const setYtToast = (msg) => {
+  const setProgToast = (msg) => {
     if (progToast && progToast.isConnected && progToast.firstElementChild) {
       progToast.firstElementChild.textContent = msg;
       return;
@@ -7341,13 +7388,19 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '', opts = {}) {
     toast(msg, { duration: 180_000 });
     progToast = $$('.toast', el.toasts).find((t) => !before.has(t)) || el.toasts.lastElementChild;
   };
-  const clearYtToast = () => {
+  const clearProgToast = () => {
     if (progToast && progToast.isConnected) progToast.remove();
     progToast = null;
   };
   const clearPending = () => {
     if (pendingEl && pendingEl.isConnected) pendingEl.remove();
     pendingEl = null;
+  };
+  const setTitle = (t) => {
+    if (pendingEl && pendingEl.isConnected && t) {
+      const tEl = pendingEl.querySelector('.ap-title');
+      if (tEl) tEl.textContent = t;
+    }
   };
   const setStatus = (msg, pct) => {
     if (pendingEl && pendingEl.isConnected) {
@@ -7365,11 +7418,11 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '', opts = {}) {
       }
     }
     if (!pendingEl || !pendingEl.isConnected || ui.tab !== 'notes' || ui.noteId !== targetNoteId) {
-      setYtToast(msg);
+      setProgToast(msg);
     }
   };
-  const saveAudioInPlace = async (blob, filename, mime, doneMsg) => {
-    clearYtToast();
+  const saveAudioInPlace = async (blob, filename, mime, doneMsg, onSaved) => {
+    clearProgToast();
     const resolvedMime = mime || blob.type || (/\.mp3$/i.test(filename) ? 'audio/mpeg' : /\.webm$/i.test(filename) ? 'audio/webm' : 'audio/mp4');
     const file = new File([blob], filename, { type: resolvedMime });
     if (targetNoteId) {
@@ -7401,7 +7454,7 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '', opts = {}) {
           sync.schedule();
         }
       }
-      if (yt.mode === 'big') ytMode('mini');
+      if (typeof onSaved === 'function') onSaved(item);
       toast(doneMsg || 'Audio added to note for offline playback');
       return;
     }
@@ -7417,6 +7470,118 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '', opts = {}) {
     triggerBrowserDownload(blobUrl, filename);
     setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
   };
+  return { setStatus, setTitle, saveAudioInPlace, clearPending, clearProgToast };
+}
+
+async function openQuranPicker() {
+  try {
+    const dlg = $('#dlg-quran');
+    if (!dlg) return;
+    const { openQuranModal } = await import('/js/quran.js');
+    openQuranModal({
+      dlg,
+      openDialog,
+      closeDialog,
+      getPlayingUrl: () => bgAudio.activeStreamUrl(),
+      onPreview: ({ surahNum, surahNameEn, surahNameAr, reciterName, urls }) => {
+        const title = `${surahNum}. Surah ${surahNameEn} (${surahNameAr})`;
+        bgAudio.toggleStream(urls, title, reciterName, reciterName);
+      },
+      onAdd: (payload) => {
+        downloadQuranToNote(payload);
+      }
+    });
+  } catch (e) {
+    toast((e && e.message) || 'Could not open Quran audio picker.');
+  }
+}
+
+async function downloadQuranToNote({ surahNum, surahNameEn, surahNameAr, reciter, reciterName, urls }) {
+  const active = openNoteItem();
+  if (ui.tab !== 'notes' || !active || active.data.canvas) newNote();
+  const targetNote = openNoteItem();
+  const targetNoteId = targetNote && !targetNote.data.canvas ? targetNote.id : null;
+  const displayTitle = `Surah ${surahNameEn} (${surahNameAr}) — ${reciterName}`;
+  if (targetNoteId && ui.tab === 'notes' && ui.noteId === targetNoteId) {
+    applyLinkTitleToNote(displayTitle, '');
+  }
+  const anchorEl = (ui.savedRange && el.editorText.contains(ui.savedRange.commonAncestorContainer))
+    ? (ui.savedRange.commonAncestorContainer.nodeType === 1
+      ? ui.savedRange.commonAncestorContainer
+      : ui.savedRange.commonAncestorContainer.parentElement)
+    : null;
+  const task = createNoteAudioTask({
+    targetNoteId,
+    initTitle: `${surahNum}. ${surahNameEn} — ${reciterName}`,
+    anchorEl
+  });
+  task.setStatus('Connecting to Quran CDN…', 5);
+  try {
+    const [{ downloadRangeBlob }, { resolveFallbackAudioUrl }] = await Promise.all([
+      import('/js/mp4audio.js'),
+      import('/js/quran.js')
+    ]);
+    const candidates = [...(urls || [])];
+    if (reciter && reciter.qdcId) {
+      const extraUrl = await resolveFallbackAudioUrl(reciter, surahNum);
+      if (extraUrl && !candidates.includes(extraUrl)) candidates.push(extraUrl);
+    }
+    let blob = null;
+    let lastErr = null;
+    for (const streamUrl of candidates) {
+      try {
+        blob = await downloadRangeBlob({
+          streamUrl,
+          totalSize: 0,
+          mime: 'audio/mpeg',
+          onProgress: (msg, pct) => task.setStatus(msg, pct)
+        });
+        if (blob && blob.size > 0) break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (!blob || !blob.size) throw lastErr || new Error('Could not download Quran audio');
+    const padNum = String(surahNum).padStart(3, '0');
+    const safeRec = String(reciterName || 'Reciter').replace(/[\\/:*?"<>|]/g, '').trim();
+    const filename = `${padNum} - Surah ${surahNameEn} (${safeRec}).mp3`;
+    await task.saveAudioInPlace(blob, filename, 'audio/mpeg', `Surah ${surahNameEn} saved offline in note`);
+  } catch (e) {
+    task.clearPending();
+    task.clearProgToast();
+    toast((e && e.message) || 'Could not download this Surah. Try another reciter.');
+  }
+}
+
+async function downloadYoutube(url, mode = 'mp4', hintTitle = '', opts = {}) {
+  const info = ytInfo(url);
+  if (!info) return;
+  const apiMode = mode === 'mp4' ? 'video' : mode === 'm4a' ? 'm4a' : 'audio';
+  const q = new URLSearchParams({ s: store.get('space'), v: info.id, mode: apiMode });
+  const cleanHint = String(hintTitle || '').replace(/\s+/g, ' ').trim();
+  if (cleanHint && !/^https?:\/\//i.test(cleanHint)) q.set('title', cleanHint.slice(0, 90));
+
+  const activeNote = openNoteItem();
+  const inNote = mode !== 'mp4' && ui.tab === 'notes' && !!(
+    (opts.anchorEl && el.editorText.contains(opts.anchorEl)) ||
+    (activeNote && !activeNote.data.canvas)
+  );
+  let targetNote = inNote ? activeNote : null;
+  if (inNote && !targetNote) { newNote(); targetNote = openNoteItem(); }
+  const targetNoteId = targetNote && !targetNote.data.canvas ? targetNote.id : null;
+
+  let anchor = null;
+  if (targetNoteId) {
+    anchor = opts.anchorEl && el.editorText.contains(opts.anchorEl) ? opts.anchorEl : null;
+    if (!anchor) {
+      anchor = [...$$('#editor-text a[href]')].find((a) => { const yi = ytInfo(a.href); return yi && yi.id === info.id; }) || null;
+    }
+  }
+  const initTitle = (cleanHint && !/^https?:\/\//i.test(cleanHint) ? cleanHint : 'YouTube audio') + ` (${mode.toUpperCase()})`;
+  const task = createNoteAudioTask({ targetNoteId, initTitle, anchorEl: anchor });
+  const { setStatus, setTitle, clearPending, clearProgToast: clearYtToast } = task;
+  const saveAudioInPlace = (blob, filename, mime, doneMsg) =>
+    task.saveAudioInPlace(blob, filename, mime, doneMsg, () => { if (yt.mode === 'big') ytMode('mini'); });
 
   setStatus(mode === 'mp4' ? 'Starting video download…' : mode === 'm4a' ? 'Preparing M4A audio…' : 'Preparing MP3 download…');
   try {
@@ -7430,10 +7595,7 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '', opts = {}) {
     }
 
     const baseTitle = j.title || cleanHint || `youtube-${info.id}`;
-    if (pendingEl && pendingEl.isConnected && j.title) {
-      const tEl = pendingEl.querySelector('.ap-title');
-      if (tEl) tEl.textContent = j.title;
-    }
+    setTitle(j.title);
     const streamUrl = `/api/ytdl?${q}`;
 
     // 1. Direct MP4 video

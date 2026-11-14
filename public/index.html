@@ -260,6 +260,7 @@
               <span class="fmt-sep"></span>
               <button class="icon-btn sm" data-fmt="link" title="Link"><svg class="ic"><use href="#i-link"/></svg></button>
               <button class="icon-btn sm" data-fmt="attach" title="Attach a file or photo"><svg class="ic"><use href="#i-clip"/></svg></button>
+              <button class="icon-btn sm" data-fmt="quran" title="Add Quran audio (offline MP3)"><svg class="ic"><use href="#i-book"/></svg></button>
               <button class="icon-btn sm fmt-case" data-fmt="case" title="Sentence case → UPPERCASE → lowercase (one click each)"><b>Aa</b></button>
               <button class="icon-btn sm" data-fmt="clear" title="Clear formatting"><svg class="ic"><use href="#i-eraser"/></svg></button>
             </div>
@@ -735,6 +736,9 @@
       </div>
     </div>
   </dialog>
+
+  <!-- Quran audio picker -->
+  <dialog class="sheet quran-dlg" id="dlg-quran" aria-labelledby="quran-title"></dialog>
 
   <!-- PIN lock -->
   <div class="lock" id="lock" hidden role="dialog" aria-modal="true" aria-labelledby="lock-title">

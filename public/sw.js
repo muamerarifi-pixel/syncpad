@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v3.0.75';
+const VERSION = 'v3.0.76';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
@@ -21,7 +21,7 @@ const SHELL = [
   '/js/pdfcore.js',
   '/js/docview.js',
   '/js/docmodel.js',
-  '/js/docedit.js', '/js/declutter.js', '/js/canvas.js', '/js/noteimg.js', '/js/cvexport.js', '/js/textcase.js', '/js/search.js', '/js/reorder.js', '/js/bignote.js', '/js/keyboard.js', '/js/backup.js', '/js/speak.js', '/js/epub.js', '/js/notepdf.js', '/js/mp4audio.js', '/vendor/fonts/outfit-latin-wght-normal.woff2',
+  '/js/docedit.js', '/js/declutter.js', '/js/canvas.js', '/js/noteimg.js', '/js/cvexport.js', '/js/textcase.js', '/js/search.js', '/js/reorder.js', '/js/bignote.js', '/js/keyboard.js', '/js/backup.js', '/js/speak.js', '/js/epub.js', '/js/notepdf.js', '/js/mp4audio.js', '/js/quran.js', '/vendor/fonts/outfit-latin-wght-normal.woff2',
   '/vendor/doc/fflate.mjs',
   '/js/md.js',
   '/vendor/marked.esm.js',
