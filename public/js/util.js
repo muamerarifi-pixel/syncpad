@@ -73,6 +73,23 @@ export const isMobileLayout = () => matchMedia('(max-width: 860px)').matches;
 export const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 export const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
+/** Tactile feedback — native Android hardware haptics inside the APK, Web Vibration on touch browsers. */
+export function haptic(kind = 'tick') {
+  try {
+    if (window.SyncPadAndroid && typeof window.SyncPadAndroid.haptic === 'function') {
+      window.SyncPadAndroid.haptic(String(kind || 'tick'));
+      return;
+    }
+    if (!isTouch() || !navigator.vibrate) return;
+    const pat = kind === 'error' ? [28, 45, 36]
+      : kind === 'success' ? [12, 34, 18]
+      : kind === 'heavy' ? 22
+      : kind === 'click' ? 14
+      : 8;
+    navigator.vibrate(pat);
+  } catch {}
+}
+
 const URL_RE = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]}]/g;
 export function linkify(text) {
   let out = '';

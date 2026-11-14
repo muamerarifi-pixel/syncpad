@@ -62,10 +62,13 @@
 
 * {
   box-sizing: border-box;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+
+
+
 }
-::-webkit-scrollbar {
+@media (hover: hover) and (pointer: fine) {
+  * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+  ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
@@ -84,6 +87,14 @@
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+}
+@media (pointer: coarse), (max-width: 860px) {
+  * { scrollbar-width: none; }
+  ::-webkit-scrollbar { display: none; width: 0; height: 0; }
+}
+:is(.chips, .drop-chips, .nf-chips, #tag-chips, .fmt-bar, .pe-toolbar, .de-toolbar, .cv-bar, .img-bar)::-webkit-scrollbar {
+  display: none !important; width: 0 !important; height: 0 !important;
 }
 ::-webkit-scrollbar-button {
   display: none;
@@ -633,9 +644,21 @@ a { color: var(--link); }
 .tile-name { font-size: 13px; font-weight: 600; margin: 7px 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile-meta { font-size: 11.5px; color: var(--muted); margin: 0 4px; }
 .tile .progress { margin: 6px 4px 0; }
-.tile-more { position: absolute; top: 10px; right: 10px; background: rgba(255, 255, 255, .92); color: #333; opacity: 0; transition: opacity .15s; box-shadow: var(--shadow-sm); }
+.tile-more, .tile-more.icon-btn.sm { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border-radius: 999px; background: rgba(255, 255, 255, .86); color: #1f2328; border: 1px solid rgba(16, 24, 40, .08); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); opacity: 0; transition: opacity .15s, background .15s, transform 95ms ease; box-shadow: 0 2px 6px rgba(0, 0, 0, .12); }
+.tile-more .ic, .tile-more.icon-btn.sm .ic { width: 15px; height: 15px; }
+[data-theme="dark"] .tile-more, [data-theme="dark"] .tile-more.icon-btn.sm { background: rgba(18, 20, 27, .74); color: #f3f4f6; border-color: rgba(255, 255, 255, .16); box-shadow: 0 2px 8px rgba(0, 0, 0, .42); }
+.tile-more:hover { background: rgba(255, 255, 255, .96); color: #111; }
+[data-theme="dark"] .tile-more:hover { background: rgba(28, 31, 40, .92); color: #fff; }
 .tile:hover .tile-more, .tile-more:focus-visible { opacity: 1; }
-@media (hover: none) { .tile-more { opacity: 1; } }
+@media (hover: none), (pointer: coarse) {
+  .tile-more, .tile-more.icon-btn.sm { opacity: .94; }
+  .tile-more:hover, .tile-more.icon-btn.sm:hover { background: rgba(255, 255, 255, .86); }
+  [data-theme="dark"] .tile-more:hover, [data-theme="dark"] .tile-more.icon-btn.sm:hover { background: rgba(18, 20, 27, .74); }
+}
+[data-theme="dark"] .tile { background: var(--surface-2); border-color: var(--border-strong); box-shadow: var(--bevel), 0 4px 12px rgba(0, 0, 0, .3); }
+[data-theme="dark"] .tile-media { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .07); }
+.tile:hover .tile-more, .tile-more:focus-visible { opacity: 1; }
+
 .tile .ri-check { position: absolute; top: 12px; left: 12px; }
 .select-bar {
   flex: none; display: flex; align-items: center; gap: 6px; width: calc(100% - 32px); max-width: 760px; margin: 0 auto 16px;
@@ -658,6 +681,7 @@ a { color: var(--link); }
   .feed-inner { padding: 0 10px 12px; }
   .tile-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
   .tile-name { font-size: 12.5px; }
+  .tile-media .mini-badge { bottom: 5px; right: 5px; height: 18px; padding: 0 6px; font-size: 9.5px; border-radius: 6px; }
   .select-bar { width: calc(100% - 16px); margin-bottom: 8px; }
   .ri { padding: 8px 6px 8px 10px; }
 }
@@ -1572,7 +1596,7 @@ html, body { overscroll-behavior-x: none; }
 /* phones: bottom tabs get a pill behind the current one */
 @media (max-width: 860px) {
   .tabbar { box-shadow: 0 -4px 14px rgba(16, 24, 40, .05); }
-  [data-theme="dark"] .tabbar { box-shadow: 0 -4px 14px rgba(0, 0, 0, .35); }
+  [data-theme="dark"] .tabbar { box-shadow: 0 -4px 14px rgba(0, 0, 0, .35); border-top-color: rgba(255, 255, 255, .08); }
   .tabbar-btn .ic { padding: 4px 18px; border-radius: 14px; box-sizing: content-box; transition: background .15s; }
   .tabbar-btn[aria-selected="true"] .ic { background: var(--green-soft); color: var(--accent); }
   .tabbar-btn[aria-selected="true"] { color: var(--accent); }

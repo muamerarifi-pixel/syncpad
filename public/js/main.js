@@ -1,7 +1,7 @@
 // SyncPad v2 — app controller
 import {
   $, $$, rid, esc, fmtBytes, clock, dayLabel, ago, shortDate, detectDeviceName, isTouch, isMobileLayout,
-  isIOS, isStandalone, linkify, singleUrl, fileKind, kindIcon, extOf, noteTitle, noteSnippet, noteTags, debounce
+  isIOS, isStandalone, haptic, linkify, singleUrl, fileKind, kindIcon, extOf, noteTitle, noteSnippet, noteTags, debounce
 } from './util.js';
 import { Store, readV1Notes } from './store.js';
 import { Sync } from './sync.js';
@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.61';
+const VERSION = '3.0.62';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -114,6 +114,49 @@ async function boot() {
   scheduleLocalReminders();
   setTimeout(indexBacklog, 6000);
   syncThemeColor();
+  window.__spAndroidBack = () => {
+    if (lk && lk.mode) { if (lk.mode === 'unlock') return false; endLock(false); return true; }
+    if (!el.menu.hidden && !el.menu.classList.contains('is-leaving')) { closeMenu(); return true; }
+    if (layers.length) {
+      const top = layers.pop();
+      ui.fromPop = true;
+      try { top.close(); } finally { ui.fromPop = false; }
+      return true;
+    }
+    if (ui.selecting) { exitSelect(); return true; }
+    if (ui.nselecting) { exitNoteSelect(); return true; }
+    if (el.app.classList.contains('searching')) {
+      el.search.value = ''; ui.query = ''; renderLists(); el.search.blur();
+      el.app.classList.remove('searching');
+      return true;
+    }
+    return false;
+  };
+  window.__spReceiveAndroidShare = (payload) => {
+    if (!payload) return;
+    whenUnlocked(async () => {
+      setTab('drops');
+      const list = [];
+      for (const f of payload.files || []) {
+        if (!f || !f.base64) continue;
+        try {
+          const bin = atob(f.base64);
+          const u8 = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+          list.push(new File([u8], f.name || 'shared-file', { type: f.type || 'application/octet-stream' }));
+        } catch {}
+      }
+      if (list.length) await sendFiles(list);
+      if (payload.text && String(payload.text).trim()) sendClip(String(payload.text).trim());
+      if (list.length || (payload.text && String(payload.text).trim())) {
+        haptic('success');
+        toast('Sent to your devices');
+      }
+    });
+  };
+  if (Array.isArray(window.__spAndroidShareQueue)) {
+    for (const p of window.__spAndroidShareQueue.splice(0)) window.__spReceiveAndroidShare(p);
+  }
   if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
     // hooks for the automated tests (only on a developer's own machine)
     window.__test_setRemind = (t) => { const n = openNoteItem(); if (n) setReminder([n], t); };
@@ -178,7 +221,7 @@ function wire() {
   files.addEventListener('full', () => toast('Cloud storage is full. Delete some old drops in Settings → storage.', { action: 'Settings', onAction: openSettings, duration: 8000 }));
 
   // tabs
-  for (const b of $$('[data-tab]')) if (b.tagName === 'BUTTON') b.addEventListener('click', () => setTab(b.dataset.tab));
+  for (const b of $$('[data-tab]')) if (b.tagName === 'BUTTON') b.addEventListener('click', () => { if (ui.tab !== b.dataset.tab) haptic('tick'); setTab(b.dataset.tab); });
 
   // search
   el.search.addEventListener('input', () => { ui.query = el.search.value.trim(); renderLists(); });
@@ -218,7 +261,7 @@ function wire() {
   setupEditorZoomGestures();
 
   // PIN lock
-  el.keypad.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) pinKey(b.dataset.k); });
+  el.keypad.addEventListener('click', (e) => { const b = e.target.closest('[data-k]'); if (b) { haptic('tick'); pinKey(b.dataset.k); } });
   el.lockNext.addEventListener('click', pinNext);
   el.btnPinSet.addEventListener('click', async () => { await el.dlgSettings.close(); showLock('new'); });
   el.btnPinChange.addEventListener('click', async () => {
@@ -253,8 +296,8 @@ function wire() {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isTouch()) { e.preventDefault(); sendText(); }
   });
   el.composer.addEventListener('submit', (e) => { e.preventDefault(); sendText(); });
-  if (el.btnAddFiles) el.btnAddFiles.addEventListener('click', () => el.fileInput.click());
-  if (el.btnUpload) el.btnUpload.addEventListener('click', () => el.fileInput.click());
+  if (el.btnAddFiles) el.btnAddFiles.addEventListener('click', () => { haptic('click'); el.fileInput.click(); });
+  if (el.btnUpload) el.btnUpload.addEventListener('click', () => { haptic('click'); el.fileInput.click(); });
   el.fileInput.addEventListener('change', () => { sendFiles([...el.fileInput.files]); el.fileInput.value = ''; });
   el.noteFileInput.addEventListener('change', () => { attachToNote([...el.noteFileInput.files]); el.noteFileInput.value = ''; });
 
@@ -262,17 +305,17 @@ function wire() {
   el.feedInner.addEventListener('click', onFeedClick);
   const navClick = async (e) => {
     const v = e.target.closest('[data-view]');
-    if (v) return setDropView(v.dataset.view);
+    if (v) { haptic('tick'); return setDropView(v.dataset.view); }
     const a = e.target.closest('[data-act="new-folder"]');
-    if (a) { const f = await createFolder(); if (f) setDropView('f:' + f.id); }
+    if (a) { haptic('click'); const f = await createFolder(); if (f) setDropView('f:' + f.id); }
   };
   el.dropsSide.addEventListener('click', navClick);
   el.dropChips.addEventListener('click', navClick);
-  el.typeChips.addEventListener('click', (e) => { const b = e.target.closest('[data-type]'); if (b) setDropType(b.dataset.type); });
+  el.typeChips.addEventListener('click', (e) => { const b = e.target.closest('[data-type]'); if (b) { haptic('tick'); setDropType(b.dataset.type); } });
   el.btnType.addEventListener('click', () => typeMenu(el.btnType));
   initMarquee();
-  el.viewToggle.addEventListener('click', (e) => { const b = e.target.closest('[data-layout]'); if (b) setLayout(b.dataset.layout); });
-  el.btnSelect.addEventListener('click', () => (ui.selecting ? exitSelect() : enterSelect()));
+  el.viewToggle.addEventListener('click', (e) => { const b = e.target.closest('[data-layout]'); if (b) { haptic('tick'); setLayout(b.dataset.layout); } });
+  el.btnSelect.addEventListener('click', () => { haptic('tick'); (ui.selecting ? exitSelect() : enterSelect()); });
   el.btnFolderMore.addEventListener('click', () => folderMenu(el.btnFolderMore));
   el.selectBar.addEventListener('click', onSelectBar);
   // drag drops onto a folder (desktop)
@@ -344,7 +387,7 @@ function wire() {
     if (ui.nselecting) { toggleNoteSel(id); return; }
     openNote(id);
   });
-  el.btnNselect.addEventListener('click', () => (ui.nselecting ? exitNoteSelect() : enterNoteSelect()));
+  el.btnNselect.addEventListener('click', () => { haptic('tick'); (ui.nselecting ? exitNoteSelect() : enterNoteSelect()); });
   el.nselBar.addEventListener('click', (e) => { const b = e.target.closest('[data-nsel]'); if (b) nselAction(b.dataset.nsel, b); });
   el.btnDsort.addEventListener('click', () => dropSortMenu(el.btnDsort));
   el.importInput.addEventListener('change', () => { const f = [...el.importInput.files]; el.importInput.value = ''; (async () => { for (const x of f) await importAsNote(x); })(); });
@@ -364,8 +407,8 @@ function wire() {
     renderNotesList();
     triggerAnim(el.noteList, 'view-swap', ['view-swap'], 160);
   });
-  el.btnNewNote.addEventListener('click', () => newNote());
-  el.btnNewMore.addEventListener('click', () => newMenu(el.btnNewMore));
+  el.btnNewNote.addEventListener('click', () => { haptic('click'); newNote(); });
+  el.btnNewMore.addEventListener('click', () => { haptic('tick'); newMenu(el.btnNewMore); });
   el.btnNewNote.addEventListener('contextmenu', (e) => { e.preventDefault(); newMenu(el.btnNewMore); });
   el.editorPane.addEventListener('click', (e) => {
     const a = e.target.closest('[data-act]');
@@ -493,7 +536,7 @@ function wire() {
   setupPinLogin();
   el.btnBackup.addEventListener('click', makeBackup);
   setupListen();
-  el.setWall.addEventListener('click', (e) => { const b = e.target.closest('[data-wall-opt]'); if (b) setWall(b.dataset.wallOpt); });
+  el.setWall.addEventListener('click', (e) => { const b = e.target.closest('[data-wall-opt]'); if (b) { haptic('tick'); setWall(b.dataset.wallOpt); } });
   setTimeout(backupReminder, 8000);
   el.joinCode.addEventListener('input', () => {
     const d = el.joinCode.value.replace(/\D/g, '').slice(0, 6);
@@ -516,6 +559,7 @@ function wire() {
   el.setTheme.addEventListener('click', (e) => {
     const b = e.target.closest('[data-theme-opt]');
     if (!b) return;
+    haptic('tick');
     try { localStorage.setItem('sp-theme', b.dataset.themeOpt); } catch {}
     applyTheme();
     renderThemeSeg();
@@ -2089,6 +2133,7 @@ async function moveTo(ids, folderId) {
 
 function enterSelect() {
   if (ui.selecting) return;
+  haptic('heavy');
   ui.selecting = true;
   ui.selected.clear();
   el.app.classList.add('selecting');
@@ -2113,6 +2158,7 @@ function setSelection(set) {
   renderDrops();
 }
 function toggleSelect(id) {
+  haptic('tick');
   ui.selected.has(id) ? ui.selected.delete(id) : ui.selected.add(id);
   renderSelectBar();
   renderDrops();
@@ -2230,6 +2276,7 @@ function updateSend() { el.btnSend.disabled = !el.composerInput.value.trim(); }
 async function sendText() {
   const text = el.composerInput.value.trim();
   if (!text) return;
+  haptic('click');
   el.composerInput.value = '';
   autosize();
   updateSend();
@@ -2642,7 +2689,7 @@ function setupNoteLongPress() {
       if (s !== held) return;
       s = null;
       ui.blockClick = true; // the finger lifting must not open the note
-      if (navigator.vibrate) navigator.vibrate(12);
+      haptic('heavy');
       const n = store.items.get(b.dataset.id);
       if (n) noteItemMenu(b, n, { x: held.x, y: held.y });
     }, 500);
@@ -2676,6 +2723,7 @@ function tabSwipeBlocked(target, dir) {
 }
 function swipeToTab(next, dir) {
   if (next === ui.tab) return;
+  haptic('tick');
   setTab(next, { dir });
 }
 function setupTabSwipe() {
@@ -5254,7 +5302,7 @@ function shakeDots() {
   el.pinDots.classList.remove('shake');
   void el.pinDots.offsetWidth;
   el.pinDots.classList.add('shake');
-  try { navigator.vibrate && navigator.vibrate(70); } catch {}
+  haptic('error');
 }
 function endLock(ok) {
   const { done, mode } = lk;
@@ -5801,7 +5849,7 @@ function newMenu(anchor) {
 
 const selNotes = () => [...ui.nsel].map((id) => store.items.get(id)).filter((n) => n && n.kind === 'note');
 function enterNoteSelect(id) {
-  if (!ui.nselecting) { ui.nselecting = true; ui.nsel = new Set(); el.app.classList.add('nselecting'); }
+  if (!ui.nselecting) { haptic('heavy'); ui.nselecting = true; ui.nsel = new Set(); el.app.classList.add('nselecting'); }
   if (id) ui.nsel.add(id);
   renderNotesList();
 }
@@ -5813,6 +5861,7 @@ function exitNoteSelect() {
   renderNotesList();
 }
 function toggleNoteSel(id) {
+  haptic('tick');
   if (ui.nsel.has(id)) ui.nsel.delete(id); else ui.nsel.add(id);
   ui.lastNotePicked = id;
   renderNotesList();
@@ -6182,7 +6231,7 @@ function showReminder(n, missedAt = 0) {
   const title = noteTitle(noteText(n)) || 'Note';
   const missed = missedAt ? `Missed at ${new Date(missedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ` : '';
   if (document.visibilityState === 'visible') {
-    try { navigator.vibrate && navigator.vibrate([60, 60, 60]); } catch {}
+    haptic('success');
     toast(`🔔 ${missed}${title}`, { action: 'Open', onAction: () => openNote(n.id), duration: missed ? 30000 : 15000 });
   } else if ('Notification' in window && Notification.permission === 'granted') {
     // rings on this device by itself, even offline; the same tag means a server push for it replaces, not doubles, it

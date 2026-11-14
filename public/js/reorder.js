@@ -1,6 +1,7 @@
 // Arrange items by hand. Touch: press and hold an item (it gets selected), then — without lifting the
 // finger — drag it where you want it. Mouse: drag an item (the app wires HTML5 drag & drop and uses
 // `slot()` to find where it lands).
+import { haptic } from './util.js';
 
 /** Where a pointer at (x, y) would drop among `items` (in DOM order): { before, after } elements */
 export function slot(items, x, y, skip) {
@@ -45,7 +46,7 @@ export function touchReorder(list, opts) {
       if (s !== me) return;
       s.held = true;
       s.x0 = s.x; s.y0 = s.y;
-      try { navigator.vibrate && navigator.vibrate(18); } catch {}
+      haptic('heavy');
       if (opts.blockClick) opts.blockClick();
       if (opts.onHold) opts.onHold(s.id);
       // the list may have been redrawn
@@ -98,8 +99,8 @@ export function touchReorder(list, opts) {
     s.ghost.style.transform = `translate(${s.x - s.dx}px, ${s.y - s.dy}px) rotate(1.2deg) scale(1.03)`;
     const at = slot(items(), s.x, s.y, s.el);
     if (!at.ref) return;
-    if (at.side === 'before' && at.ref.previousElementSibling !== s.el) at.ref.parentNode.insertBefore(s.el, at.ref);
-    else if (at.side === 'after' && at.ref.nextElementSibling !== s.el) at.ref.parentNode.insertBefore(s.el, at.ref.nextSibling);
+    if (at.side === 'before' && at.ref.previousElementSibling !== s.el) { at.ref.parentNode.insertBefore(s.el, at.ref); haptic('tick'); }
+    else if (at.side === 'after' && at.ref.nextElementSibling !== s.el) { at.ref.parentNode.insertBefore(s.el, at.ref.nextSibling); haptic('tick'); }
   };
   // scroll when the finger is near the top or bottom edge
   const tick = () => {
