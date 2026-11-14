@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.67';
+const VERSION = '3.0.68';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1609,7 +1609,9 @@ function dropMenu(anchor, it, at) {
   if (it.kind === 'clip') {
     const url = singleUrl(it.data.text || '');
     m.push({ icon: 'copy', label: 'Copy text', run: async () => { await copyText(it.data.text); toast('Copied'); } });
-    if (De.isAiText(it.data.text || '')) m.push({ icon: 'sparkle', label: 'Copy clean text', run: async () => { await copyText(De.plainText(it.data.text, declutterOpts() || {})); toast('Clean text copied'); } });
+    if (De.isAiText(it.data.text || '') || De.looksMarkdown(it.data.text || '') || De.plainText(it.data.text || '', declutterOpts() || {}) !== (it.data.text || '').trim()) {
+    m.push({ icon: 'sparkle', label: 'Copy clean text', run: async () => { await copyText(De.plainText(it.data.text, declutterOpts() || {})); toast('Clean text copied'); } });
+  }
     m.push({ icon: 'pen', label: url ? 'Rename link…' : 'Edit message…', run: () => renameDrop(it) });
     if (url) m.push({ icon: 'link', label: ytInfo(url) ? 'Play privately' : 'Open link', run: () => openUrl(url) });
     if (navigator.share && isTouch()) m.push({ icon: 'share', label: 'Share…', run: () => navigator.share(url ? { url } : { text: it.data.text }).catch(() => {}) });
@@ -4467,9 +4469,11 @@ function declutterNote() {
   const before = el.editorText.innerHTML;
   const o = declutterOpts() || { punct: false };
   const text = el.editorText.innerText || '';
-  const md = De.looksMarkdown(text) && !el.editorText.querySelector('[data-file], img, table');
-  // 1. clean AI-chat leftovers  2. make long, flat text easy to read (key points, headings, short paragraphs, lists)
-  const out = sanitizeNote(De.readable(sanitizeNote(md ? markdownToHtml(De.markdown(text, o)) : De.tidyHtml(before, o))));
+  const hasRichEmbeds = !!el.editorText.querySelector('[data-file], img, table, pre');
+  const md = De.looksMarkdown(text) && !hasRichEmbeds;
+  // 1. clean AI-chat leftovers & convert any markdown  2. make long, flat text easy to read (key points, headings, short paragraphs, lists)
+  const cleaned = md ? markdownToHtml(De.markdown(text, o)) : De.tidyHtml(before, o);
+  const out = sanitizeNote(De.readable(sanitizeNote(cleaned)));
   const norm = (h) => h.replace(/\s+/g, ' ').trim();
   if (!out.replace(/<[^>]+>/g, '').trim() || norm(out) === norm(sanitizeNote(before))) { toast('Nothing to clean here'); return; }
   setEditorHtml(out);

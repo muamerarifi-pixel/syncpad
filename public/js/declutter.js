@@ -7,7 +7,7 @@
 //   looksMarkdown(text)   → does the text still carry markdown symbols?
 // o.punct: also swap — dashes, “curly” quotes and … for plain ones.
 
-const HIDDEN = /[​‌⁠-⁤﻿­‎‏‪-‮⁦-⁩᠎]/g;
+const HIDDEN = /[​‌⁠-⁤﻿­‎‏‪-‮⁦-⁩᠎\u206A-\u206F]/g;
 const STRAY_ZWJ = /(?<!\p{Extended_Pictographic}️?)‍|‍(?!\p{Extended_Pictographic})/gu;
 const ODD_SPACE = /[  -   　]/g;
 const PRIVATE = /[-]/g;
@@ -16,28 +16,48 @@ const LEAD_EMOJI = new RegExp(`^([ \\t]*(?:#{1,6}[ \\t]+|[-*+•][ \\t]+|\\d{1,3
 const KEEP_EMOJI = /^[✅❌✔✖☑⚠❗❓✓✗️\s]+$/u; // these carry meaning (yes / no / warning)
 const KEYCAP = /^([ \t]*)([0-9])️?⃣[ \t]*/gm;
 
-const INTERJ = '(?:sure|certainly|absolutely|of course|definitely|okay|ok|alright|got it|no problem|understood|perfect|great|excellent|sigurisht|patjetër|natyrisht|me kënaqësi|në rregull|shumë mirë|dakord)';
+const INTERJ = '(?:sure|certainly|absolutely|of course|definitely|okay|ok|alright|got it|no problem|no worries|understood|perfect|great|excellent|gladly|for sure|you bet|totally|yes|hello|hi|hey|sigurisht|patjetër|po patjetër|natyrisht|me kënaqësi|me shumë kënaqësi|në rregull|shumë mirë|dakord|përshëndetje|po)';
 const INTRO = new RegExp(
-  `^(?:${INTERJ}[!.,—–-]?\\s*$` + // just "Sure!"
-  `|(?:(?:${INTERJ}|(?:great|good|excellent|nice|interesting|fair) (?:question|idea|point|catch|choice)|pyetje e mirë)\\s*[!.,—–-]+\\s*)?` +
-  `(?:here(?:'|’)s|here (?:is|are)|below (?:is|are)|i(?:'|’)ve (?:rewritten|revised|updated|cleaned|polished|put together|created|made|written|drafted|summarized|organized)|i(?:'|’)ll (?:break|walk|explain|give|summarize)|let(?:'|’)s (?:break|go|look|walk)|ja(?:\\s|,)|këtu (?:është|janë|e ke|i ke|ke)|më poshtë (?:është|janë|e ke|ke|po)|po ta (?:shpjegoj|jap))[^\\n]{0,200}[:.!]?` +
-  `|(?:great|good|excellent|nice|interesting|fair) (?:question|idea|point|catch|choice)[!.]?\\s*$|pyetje e mirë[!.]?\\s*$|(?:i(?:'|’)d be |i(?:'|’)m )?(?:happy|glad) to help[^\\n]{0,120}[!.:]?)$`, 'iu');
-const LEAD_INTERJ = new RegExp(`^(?:${INTERJ}|(?:great|good|excellent) question|pyetje e mirë)\\s*[!.,—–-]+\\s+(?=\\S)`, 'iu');
-const CLOSE = /^[-—*_\s]*(?:i hope (?:this|that|it|these)|hope (?:this|that|it) helps|let me know|please let me know|just let me know|feel free|don(?:'|’)t hesitate|ask away\b|would you like|do you want|want me to|if you(?:'|’)d like|if you want|if you need|if needed,? i can|i can also|i could also|shall i|should i also|need anything else|anything else\b|is there anything|is this what you|was this helpful|happy to help|glad (?:i could|to) help|good luck|best of luck|shpresoj|më trego|më thuaj|më njofto|nëse dëshiron|nëse do\b|nëse ke nevojë|nëse të duhet|nëse të intereson|dëshiron (?:që|të)|a do (?:që|të)|a dëshiron|mund ta bëj|mund të bëj edhe|mos hezito|mos ngurro|suksese\b|fat të mbarë)/iu;
+  `^(?:${INTERJ}[!.,—–-]?\\s*$` +
+  `|(?:(?:${INTERJ}|(?:great|good|excellent|nice|interesting|fair|that(?:'|’)s a great) (?:question|idea|point|catch|choice)|thanks for (?:asking|sharing)[^!.,\\n]{0,60}|pyetje e mirë)\\s*[!.,—–-]+\\s*)?` +
+  `(?:here(?:'|’)s|here (?:is|are)|below (?:is|are|you(?:'|’)ll find)|i(?:'|’)ve (?:rewritten|revised|updated|cleaned|polished|put together|created|made|written|drafted|summarized|organized|prepared)|i(?:'|’)ll (?:break|walk|explain|give|summarize|outline|show)|i(?:'|’)d be (?:happy|glad) to|i(?:'|’)m (?:happy|glad) to|let(?:'|’)s (?:break|go|look|walk|dive|get started)|based on (?:your|the) [^\\n]{1,60},|ja(?:\\s|,)|këtu (?:është|janë|e ke|i ke|ke)|më poshtë (?:është|janë|e ke|ke|po|do të gjesh)|po ta (?:shpjegoj|jap|përmbledh))[^\\n]{0,220}[:.!]?` +
+  `|(?:that(?:'|’)s a )?(?:great|good|excellent|nice|interesting|fair) (?:question|idea|point|catch|choice)[!.]?\\s*$|pyetje e mirë[!.]?\\s*$|(?:i(?:'|’)d be |i(?:'|’)m )?(?:happy|glad) to help[^\\n]{0,120}[!.:]?)$`, 'iu');
+const LEAD_INTERJ = new RegExp(`^(?:${INTERJ}|(?:that(?:'|’)s a )?(?:great|good|excellent) question|pyetje e mirë)\\s*[!.,—–-]+\\s+(?=\\S)`, 'iu');
+const CLOSE = /^[-—*_\s]*(?:i hope (?:this|that|it|these)|hope (?:this|that|it) helps|let me know|please let me know|just let me know|feel free|don(?:'|’)t hesitate|ask away\b|would you like|do you want|want me to|need me to|if you(?:'|’)d like|if you want|if you need|if needed,? i can|if anything (?:is unclear|needs)|i can also|i could also|shall i|should i also|need anything else|anything else\b|is there anything|is this what you|was this helpful|tell me (?:if|what) you|just say the word|next steps (?:you|we) can|happy to help|glad (?:i could|to) help|good luck|best of luck|shpresoj|më trego|më thuaj|më njofto|nëse dëshiron|nëse do\b|nëse ke nevojë|nëse të duhet|nëse të intereson|dëshiron (?:që|të)|a do (?:që|të)|a dëshiron|a do të doje|mund ta bëj|mund të bëj edhe|mos hezito|mos ngurro|suksese\b|fat të mbarë)/iu;
+const UI_CHROME_LINE = /^[ \t]*(?:show thinking|hide thinking|thinking process:?|thinking\.{0,3}|thought for \d+\s*(?:s|sec|secs|second|seconds|m|min|mins|minute|minutes)|searched(?: \d+)? (?:web )?pages?|read \d+ web pages?|analyzed(?: \d+ sources?| with \w+)|copy code|copy|regenerate|was this helpful\??|like|dislike|share|(?:you|chatgpt|gemini|claude|copilot|deepseek|grok|perplexity|assistant) said:?|(?:bash|sh|zsh|powershell|ps1|cmd|python|py|js|jsx|ts|tsx|javascript|typescript|json|yaml|yml|toml|xml|html|css|scss|sql|go|rust|rs|java|kotlin|swift|c|cpp|csharp|cs|php|ruby|rb|r|dart|lua|text|plaintext|markdown|md|diff)[ \t]*copy(?:[ \t]+code)?)[ \t]*$/i;
 
 const LIST_LINE = /^[ \t]*(?:[-*+•●▪◦‣∙]|\d{1,3}[.)])[ \t]+\S/;
 const HR = /^[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 
 /* ───── shared steps ───── */
 
-function base(text) {
-  return String(text || '')
+function dedentOutsideCode(text) {
+  const lines = text.split('\n');
+  let min = Infinity;
+  for (const l of lines) {
+    if (!l.trim()) continue;
+    const m = /^[ ]*/.exec(l);
+    min = Math.min(min, m ? m[0].length : 0);
+    if (min < 2) return text;
+  }
+  if (!Number.isFinite(min) || min < 2) return text;
+  const cut = ' '.repeat(min);
+  return lines.map((l) => (l.startsWith(cut) ? l.slice(min) : l)).join('\n');
+}
+
+function stripUiChrome(text) {
+  return text.split('\n').filter((l) => !UI_CHROME_LINE.test(l.trim())).join('\n').replace(/^\n+|\n+$/g, '');
+}
+
+function base(text, dedent = true) {
+  const s = String(text || '')
     .replace(/\r\n?/g, '\n')
     .replace(/\u2028|\u2029/g, '\n')
     .replace(HIDDEN, '')
     .replace(STRAY_ZWJ, '')
     .replace(ODD_SPACE, ' ')
     .replace(/\t/g, '    ');
+  return dedent ? dedentOutsideCode(s) : s;
 }
 
 /** Code is left alone: fenced blocks and `inline code` are parked while the rest is cleaned */
@@ -57,11 +77,14 @@ function restore(s, bag, plain) {
   });
 }
 
+const TRACKING_PARAM = /^(?:utm_|fbclid$|gclid$|yclid$|mc_cid$|mc_eid$|igshid$|igsh$|_hsenc$|_hsmi$|srsltid$|ref_src$|ref_url$)/i;
+const AI_CITE_URL = /utm_source=(?:chatgpt\.com|openai|perplexity|gemini|copilot)|[?&]source=perplexity/i;
+
 function cleanUrl(u) {
   try {
     const x = new URL(u);
     let changed = false;
-    for (const k of [...x.searchParams.keys()]) if (/^(?:utm_|fbclid$|gclid$)/i.test(k)) { x.searchParams.delete(k); changed = true; }
+    for (const k of [...x.searchParams.keys()]) if (TRACKING_PARAM.test(k)) { x.searchParams.delete(k); changed = true; }
     if (!changed) return u;
     return x.toString().replace(/\?(?=#|$)/, '');
   } catch { return u; }
@@ -74,15 +97,22 @@ function refLinks(s, keepLinks) {
   s = s.replace(/^[ \t]{0,3}\[([^\]\n^]+)\]:[ \t]*<?(\S+?)>?(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*$/gm, (m, k, u) => { defs.set(k.trim().toLowerCase(), u); return ''; });
   s = s.replace(/^[ \t]{0,3}\[\^[^\]\n]+\]:.*$/gm, ''); // footnote definitions
   if (defs.size) {
-    s = s.replace(/[ \t]?\(\s*\[[^\]\n]{1,80}\]\[[^\]\n]+\](?:\s*[,;]?\s*\[[^\]\n]{1,80}\]\[[^\]\n]+\])*\s*\)/g, '');
+    s = s.replace(/[ \t]?\(\s*\[[^\]\n]{1,80}\]\[[^\]\n]+\](?:\s*[,;]?\s*\[[^\]\n]{1,80}\]\[[^\]\n]+\])*(?:\s*\+\d+)?\s*\)/g, '');
     s = s.replace(/\[([^\]\n]+)\]\[([^\]\n]*)\]/g, (m, t, k) => {
       const u = defs.get((k || t).trim().toLowerCase());
       if (!u) return m;
       return keepLinks ? `[${t}](${u})` : t;
     });
   }
-  // inline pills: ([Reuters](https://…)) or ([BBC](…), [CNN](…))
-  s = s.replace(/[ \t]?\(\s*\[[^\]\n]{1,80}\]\(https?:[^)\s]+\)(?:\s*[,;]?\s*\[[^\]\n]{1,80}\]\(https?:[^)\s]+\))*\s*\)/g, '');
+  // inline citation pills: ([Reuters](https://…)) or ([BBC](…), [CNN](…) +2)
+  s = s.replace(/[ \t]?\(\s*\[[^\]\n]{1,80}\]\(https?:[^)\s]+\)(?:\s*[,;]?\s*\[[^\]\n]{1,80}\]\(https?:[^)\s]+\))*(?:\s*\+\d+)?\s*\)/g, '');
+  // strip trailing AI "Sources / Citations" block when it consists only of AI-tracked source pills/links
+  s = s.replace(/\n{1,2}(?:#{1,3}[ \t]+)?(?:\*{1,2})?(?:Sources|Citations|References)(?:\*{1,2})?:?[ \t]*\n([\s\S]{1,1200})$/i, (m, tail) => {
+    const ls = tail.split('\n').map((x) => x.trim()).filter(Boolean);
+    if (!ls.length) return '';
+    const isAiSrcLine = (x) => AI_CITE_URL.test(x) || /^(?:[-*•]|\d+[.)])?\s*(?:\[[^\]]+\]\([^)]+\)|[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\s*\+\d+)?)\s*$/i.test(x);
+    return ls.every(isAiSrcLine) && ls.some((x) => AI_CITE_URL.test(x) || /\+\d+/.test(x)) ? '' : m;
+  });
   return s;
 }
 
@@ -95,30 +125,42 @@ function stripCites(s) {
     .replace(/[ \t]?\bcite(?:turn\d+[a-z]+\d+)+\b/gi, '')
     .replace(/[ \t]?\bturn\d+(?:search|news|view|fetch|file|image|product)\d+\b/gi, '')
     .replace(/[ \t]?\[\^\d{1,3}\]/g, '')
-    .replace(/(?<=[\p{L}\p{N}.,;:!?)"'”’\]])[ \t]?\[\d{1,3}(?:\s*[,–-]\s*\d{1,3})*\](?![(:])/gu, '')
+    .replace(/(?<=[\p{L}\p{N}.,;:!?)"'”’\]\u0000])[ \t]*\[\d{1,3}(?:\s*[,–-]\s*\d{1,3})*\](?![(:])/gu, '')
+    .replace(/(?<=[\p{L}\p{N}.,;:!?)"'”’\]\u0000])[ \t]*\(\s*[a-z0-9-]+(?:\.[a-z0-9-]+)+\s+\+\d+\s*\)/giu, '')
+    .replace(/(?:^|\n)[ \t]*[Aa]s an AI(?: language model| assistant| model)?,\s*/g, (m) => (m.startsWith('\n') ? '\n' : ''))
     .replace(/\b[Aa]s an AI(?: language model| assistant| model)?,\s*/g, '')
     .replace(PRIVATE, '');
 }
 
 /* ───── maths (\( x^2 \), $$ \frac{a}{b} $$) → readable text ───── */
 const TEX = { times: '×', cdot: '·', div: '÷', pm: '±', mp: '∓', approx: '≈', neq: '≠', ne: '≠', leq: '≤', le: '≤', geq: '≥', ge: '≥',
-  to: '→', rightarrow: '→', Rightarrow: '⇒', leftarrow: '←', implies: '⇒', infty: '∞', circ: '°', degree: '°', alpha: 'α', beta: 'β',
-  gamma: 'γ', delta: 'δ', Delta: 'Δ', theta: 'θ', lambda: 'λ', mu: 'μ', pi: 'π', sigma: 'σ', Sigma: 'Σ', omega: 'ω', Omega: 'Ω',
-  sum: 'Σ', ldots: '…', dots: '…', cdots: '⋯', quad: ' ', qquad: '  ', percent: '%', in: '∈', cap: '∩', cup: '∪' };
-const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
+  equiv: '≡', cong: '≅', propto: '∝', sim: '∼', simeq: '≃', ll: '≪', gg: '≫',
+  to: '→', rightarrow: '→', Rightarrow: '⇒', leftarrow: '←', Leftarrow: '⇐', leftrightarrow: '↔', iff: '⇔', implies: '⇒', mapsto: '↦',
+  infty: '∞', circ: '°', degree: '°', deg: '°', angle: '∠', perp: '⊥', parallel: '∥',
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', Delta: 'Δ', epsilon: 'ε', varepsilon: 'ε', zeta: 'ζ', eta: 'η',
+  theta: 'θ', Theta: 'Θ', iota: 'ι', kappa: 'κ', lambda: 'λ', Lambda: 'Λ', mu: 'μ', nu: 'ν', xi: 'ξ',
+  pi: 'π', Pi: 'Π', rho: 'ρ', sigma: 'σ', Sigma: 'Σ', tau: 'τ', phi: 'φ', Phi: 'Φ', chi: 'χ', psi: 'ψ', Psi: 'Ψ', omega: 'ω', Omega: 'Ω',
+  sum: 'Σ', prod: 'Π', int: '∫', partial: '∂', nabla: '∇', forall: '∀', exists: '∃', neg: '¬', land: '∧', lor: '∨',
+  ldots: '…', dots: '…', cdots: '⋯', quad: ' ', qquad: '  ', percent: '%', in: '∈', notin: '∉', subset: '⊂', subseteq: '⊆', supset: '⊃', cap: '∩', cup: '∪' };
+const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹', n: 'ⁿ', '+': '⁺', '-': '⁻' };
+const SUB = { 0: '₀', 1: '₁', 2: '₂', 3: '₃', 4: '₄', 5: '₅', 6: '₆', 7: '₇', 8: '₈', 9: '₉' };
+const BLACKBOARD = { R: 'ℝ', N: 'ℕ', Z: 'ℤ', Q: 'ℚ', C: 'ℂ' };
 function tex(src) {
   const wrap = (x) => (/^[\w.]+$/.test(x.trim()) ? x.trim() : `(${x.trim()})`);
   let t = src.trim();
   for (let k = 0; k < 4; k++) {
     t = t.replace(/\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, (m, a, b) => `${wrap(a)}/${wrap(b)}`)
       .replace(/\\sqrt\s*\{([^{}]*)\}/g, (m, a) => `√${wrap(a)}`)
+      .replace(/\\mathbb\s*\{([RNZQC])\}/g, (m, c) => BLACKBOARD[c] || c)
       .replace(/\\(?:text|mathrm|mathbf|mathit|operatorname|textbf|textit|boxed|mbox)\s*\{([^{}]*)\}/g, '$1');
   }
   return t.replace(/\\left|\\right/g, '')
     .replace(/\\([A-Za-z]+)/g, (m, k) => (k in TEX ? TEX[k] : m))
     .replace(/\\([%$&#_{}])/g, '$1')
     .replace(/\\[,;:! ]/g, ' ')
-    .replace(/\^\{?(\d)\}?/g, (m, d) => SUP[d])
+    .replace(/\^\{\s*-1\s*\}/g, '⁻¹')
+    .replace(/\^\{?([0-9n])\}?/g, (m, d) => SUP[d] || `^${d}`)
+    .replace(/\_\{?([0-9])\}?/g, (m, d) => SUB[d] || `_${d}`)
     .replace(/[_^]\{([^{}]*)\}/g, (m, a) => (m[0] === '^' ? '^' : '_') + a)
     .replace(/[{}]/g, '')
     .replace(/[ \t]{2,}/g, ' ');
@@ -126,22 +168,34 @@ function tex(src) {
 const maths = (s) => s
   .replace(/\$\$([\s\S]+?)\$\$/g, (m, a) => tex(a))
   .replace(/\\\[([\s\S]+?)\\\]/g, (m, a) => tex(a))
-  .replace(/\\\(([\s\S]+?)\\\)/g, (m, a) => tex(a));
+  .replace(/\\\(([\s\S]+?)\\\)/g, (m, a) => tex(a))
+  .replace(/(?<![\\\w$])\$(?!\s)([^$\n]{1,120}?)(?<!\s)\$(?!\d)/g, (m, a) => {
+    const inner = a.trim();
+    if (/^\d[\d.,]*(?:\s|$)/.test(inner)) return m;
+    if (/\\[A-Za-z]+|\^|_|\{[^}]+\}|^[A-Za-z]\s*[=<>±≈≠≤≥]\s*[A-Za-z0-9()+\-*/^_\\ ]+$/.test(inner)) return tex(inner);
+    return m;
+  });
 
 /* ───── "Sure! Here's…" and "Let me know if…" ───── */
 function trimFiller(s) {
   let paras = s.split(/\n[ \t]*\n/);
   const text = (p) => p.replace(/^[ \t>#*_-]+|[*_]+/g, '').trim();
-  if (paras.length > 1) {
+  for (let round = 0; round < 2 && paras.length > 1; round++) {
     const first = text(paras[0]);
-    if (!first.includes('\n') && first.length <= 220 && INTRO.test(first)) paras.shift();
+    if (!first.includes('\n') && first.length <= 240 && INTRO.test(first)) { paras.shift(); continue; }
+    const nl = paras[0].indexOf('\n');
+    if (nl > 0) {
+      const l1 = text(paras[0].slice(0, nl));
+      if (l1.length <= 220 && INTRO.test(l1)) { paras[0] = paras[0].slice(nl + 1); continue; }
+    }
+    break;
   }
-  if (paras.length) paras[0] = paras[0].replace(LEAD_INTERJ, (m) => '').replace(/^\S/, (c) => c.toUpperCase());
-  for (let round = 0; round < 3 && paras.length > 1; round++) {
+  if (paras.length) paras[0] = paras[0].replace(LEAD_INTERJ, '').replace(/^\S/, (c) => c.toUpperCase());
+  for (let round = 0; round < 4 && paras.length > 1; round++) {
     let cut = -1;
     for (let i = paras.length - 1; i >= Math.max(1, paras.length - 4); i--) {
       const p = text(paras[i]);
-      if (p.length <= 320 && CLOSE.test(p)) { cut = i; break; }
+      if (p.length <= 340 && CLOSE.test(p)) { cut = i; break; }
       if (!paras[i].split('\n').every((l) => !l.trim() || LIST_LINE.test(l) || /^[ \t]{2,}\S/.test(l))) break;
     }
     if (cut < 1) break;
@@ -149,6 +203,8 @@ function trimFiller(s) {
     paras = paras.slice(0, cut);
     while (paras.length > 1 && HR.test(paras[paras.length - 1].trim())) paras.pop();
   }
+  while (paras.length > 1 && HR.test(paras[0].trim())) paras.shift();
+  while (paras.length > 1 && HR.test(paras[paras.length - 1].trim())) paras.pop();
   return paras.join('\n\n');
 }
 
@@ -261,7 +317,7 @@ function mdToPlain(s) {
 
 export function looksMarkdown(text) {
   const t = String(text || '');
-  return /(?:^|[\s("“'\[>])\*\*[^*\n]+?\*\*|^\s{0,3}#{1,6}[ \t]+\S|^\s*\|.+\|\s*\n\s*\|?\s*:?-{3,}|^\s*[-*+][ \t]+\[[ xX]\][ \t]|\[[^\]\n]+\]\(https?:|^[ \t]*```|^[ \t]{0,3}(?:---|\*\*\*|___)[ \t]*$/m.test(t) ||
+  return /(?:^|[\s("“'\[>])\*\*[^*\n]+?\*\*|^\s{0,3}#{1,6}[ \t]+\S|^\s*\|.+\|\s*\n\s*\|?\s*:?-{3,}|^\s*[-*+][ \t]+\[[ xX]\][ \t]|\[[^\]\n]+\]\(https?:|^[ \t]*```|`[^`\n]+`|^[ \t]*>[ \t]+\S|^[ \t]{0,3}(?:---|\*\*\*|___)[ \t]*$/m.test(t) ||
     (t.match(/^\s*(?:[-*+•]|\d{1,3}[.)])[ \t]+\S/gm) || []).length >= 2;
 }
 
@@ -269,20 +325,29 @@ export function aiScore(text, html = '') {
   const t = String(text || '');
   const h = String(html || '');
   let n = 0;
-  if (/data-start="\d+"|data-message-author-role|font-claude|model-response|markdown prose|data-sourcepos|utm_source=chatgpt\.com/.test(h)) n += 3;
-  if (/utm_source=chatgpt\.com|【[^】\n]*】|oaicite|contentReference\[|\bturn\d+(?:search|news|view|fetch)\d+|[-]/.test(t)) n += 3;
+  if (/data-start="\d+"|data-end="\d+"|data-message-author-role|font-claude|data-is-streaming|standard-markdown|model-response|message-content|ds-markdown|cib-|ac-textBlock|markdown prose|data-sourcepos|utm_source=(?:chatgpt\.com|perplexity|gemini|copilot)/.test(h)) n += 3;
+  if (/utm_source=(?:chatgpt\.com|openai|perplexity|gemini|copilot)|[?&]source=perplexity|【[^】\n]*】|oaicite|contentReference\[|\bturn\d+(?:search|news|view|fetch)\d+|[-]/.test(t)) n += 3;
   if (/[​‌⁠﻿]/.test(t)) n += 2;
-  if (/(^|\s)\*\*[^*\n]+\*\*/m.test(t)) n += 2;
+  if (t.split('\n').some((l) => UI_CHROME_LINE.test(l.trim()))) n += 2;
+  if (/(^|[\s("“'\[>])\*\*[^*\n]+\*\*/m.test(t)) n += 2;
   if (/^\s{0,3}#{1,6}[ \t]+\S/m.test(t)) n += 2;
   if (/^\s*\|.+\|\s*\n\s*\|?\s*:?-{3,}/m.test(t)) n += 2;
-  if (/\\\(|\\\[|\$\$/.test(t)) n += 1;
+  if (/^[ \t]*```/m.test(t)) n += 2;
+  if (/\\\(|\\\[|\$\$|\\(?:frac|times|approx|leq|geq|rightarrow)/.test(t)) n += 1;
   if (/^[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/m.test(t)) n += 1;
-  if ((t.match(/^\s*[-*+•][ \t]+\S/gm) || []).length >= 2) n += 1;
-  if (/(?<=[\p{L}.,;:!?)])\[\d{1,2}\]/u.test(t)) n += 1;
+  if ((t.match(/^\s*(?:[-*+•]|\d{1,3}[.)])[ \t]+\S/gm) || []).length >= 2) n += 1;
+  if (/\[[^\]\n]+\]\(https?:/.test(t)) n += 1;
+  if (/(?<=[\p{L}.,;:!?)])\[\d{1,3}(?:\s*[,–-]\s*\d{1,3})*\]/u.test(t)) n += 1;
+  if ((t.match(/—/g) || []).length >= 2) n += 1;
   const lines = t.split('\n');
   if (lines.filter((l) => { const m = LEAD_EMOJI.exec(l); return m && !KEEP_EMOJI.test(m[2]); }).length >= 2) n += 1;
   const paras = t.trim().split(/\n\s*\n/);
-  if (paras.length > 1 && (INTRO.test(paras[0].trim()) || CLOSE.test(paras[paras.length - 1].trim()))) n += 1;
+  const firstL = (paras[0] || '').split('\n')[0].trim();
+  const hasIntro = !!(firstL && INTRO.test(firstL));
+  const hasClose = !!(paras.length > 1 && CLOSE.test(paras[paras.length - 1].trim()));
+  if (hasIntro) n += 1;
+  if (hasClose) n += 1;
+  if (hasIntro && hasClose) n += 1;
   return n;
 }
 export const isAiText = (text, html) => !!String(text || '').trim() && aiScore(text, html) >= 2;
@@ -291,6 +356,7 @@ export function plainText(text, o = {}) {
   let s = base(text);
   let bag;
   [s, bag] = protect(s);
+  s = stripUiChrome(s);
   s = maths(cleanUrls(stripCites(refLinks(s, false))));
   s = mdToPlain(emojiLines(trimFiller(s)));
   if (o.punct) s = plainPunct(s);
@@ -301,6 +367,7 @@ export function markdown(text, o = {}) {
   let s = base(text);
   let bag;
   [s, bag] = protect(s);
+  s = stripUiChrome(s);
   s = maths(cleanUrls(stripCites(refLinks(s, true))));
   s = emojiLines(trimFiller(s))
     .split('\n').filter((l) => !HR.test(l)).join('\n')
@@ -310,7 +377,37 @@ export function markdown(text, o = {}) {
   return restore(tidy(s), bag, false);
 }
 
-/** Formatted copy (no markdown): drop citation chips, hidden characters, rules, filler blocks */
+function inlineMdToDom(tn) {
+  const txt = tn.nodeValue;
+  if (!/(?:\*\*[^*\n]+?\*\*|`[^`\n]+`|~~[^~\n]+?~~|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|==[^=\n]+?==)/.test(txt)) return;
+  const re = /(\*\*([^*\n]+?)\*\*|`([^`\n]+)`|~~([^~\n]+?)~~|==([^=\n]+?)==|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\))/g;
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  let m;
+  let changed = false;
+  while ((m = re.exec(txt))) {
+    if (m.index > last) frag.append(txt.slice(last, m.index));
+    changed = true;
+    if (m[2] != null) { const el = document.createElement('b'); el.textContent = m[2]; frag.append(el); }
+    else if (m[3] != null) { const el = document.createElement('code'); el.textContent = m[3]; frag.append(el); }
+    else if (m[4] != null) { const el = document.createElement('s'); el.textContent = m[4]; frag.append(el); }
+    else if (m[5] != null) { const el = document.createElement('mark'); el.textContent = m[5]; frag.append(el); }
+    else if (m[6] != null && m[7] != null) {
+      const el = document.createElement('a');
+      el.href = cleanUrl(m[7]);
+      el.textContent = m[6];
+      el.target = '_blank';
+      el.rel = 'noopener noreferrer';
+      frag.append(el);
+    }
+    last = re.lastIndex;
+  }
+  if (!changed) return;
+  if (last < txt.length) frag.append(txt.slice(last));
+  tn.replaceWith(frag);
+}
+
+/** Formatted copy (no markdown): drop citation chips, hidden characters, foreign styles, rules, filler blocks */
 export function tidyHtml(html, o = {}) {
   const tpl = document.createElement('template');
   tpl.innerHTML = String(html || '');
@@ -327,7 +424,23 @@ export function tidyHtml(html, o = {}) {
     }
     if (!unwrapped) break;
   }
-  // Split double <br> breaks inside <p>/<div> into real paragraphs
+  // Normalize h4-h6 down to h3 so hierarchy stays clean inside notes
+  for (const h of [...root.querySelectorAll('h4, h5, h6')]) {
+    const h3 = document.createElement('h3');
+    h3.append(...h.childNodes);
+    h.replaceWith(h3);
+  }
+  // Strip foreign web background/font/color styles while preserving user marks, callouts, files, and links
+  for (const el of [...root.querySelectorAll('span, font, p, div, li, h1, h2, h3, blockquote, b, strong, i, em, u, s, td, th')]) {
+    if (el.closest('pre, code, .kp, .link-card, [data-file]')) continue;
+    if (el.hasAttribute('style')) {
+      if (el.tagName === 'IMG') continue;
+      el.removeAttribute('style');
+    }
+    if (el.tagName === 'FONT') { el.replaceWith(...el.childNodes); continue; }
+    if (el.tagName === 'SPAN' && !el.attributes.length) el.replaceWith(...el.childNodes);
+  }
+  // Split double <br> breaks inside <p>/<div> into real paragraphs, or single <br> lines if list/heading markers exist
   for (const el of [...root.querySelectorAll('p, div')]) {
     if (el.closest('pre, code, table, li, blockquote')) continue;
     const h = el.innerHTML;
@@ -341,10 +454,11 @@ export function tidyHtml(html, o = {}) {
     if (/^\s*\[?\d{1,3}(?:\s*[,–-]\s*\d{1,3})*\]?\s*$/.test(sup.textContent)) dropChip(sup);
   }
   for (const a of root.querySelectorAll('a[href]')) {
+    if (a.hasAttribute('data-file') || a.classList.contains('link-card')) continue;
     const href = a.getAttribute('href') || '';
     const label = a.textContent.trim();
-    if ((/utm_source=(?:chatgpt\.com|openai|perplexity|gemini|copilot)|[?&]source=perplexity/i.test(href) && label.length <= 48 && label.split(/\s+/).length <= 5 && !a.closest('li, td')) ||
-        (/^https?:/.test(href) && /^\[\d{1,3}\]$/.test(label))) {
+    if ((AI_CITE_URL.test(href) && label.length <= 48 && label.split(/\s+/).length <= 5 && !a.closest('li, td')) ||
+        (/^https?:/.test(href) && /^\[?\d{1,3}\]?$/.test(label))) {
       dropChip(a);
       continue;
     }
@@ -355,10 +469,55 @@ export function tidyHtml(html, o = {}) {
   const texts = [];
   while (walker.nextNode()) texts.push(walker.currentNode);
   for (const tn of texts) {
-    let v = stripCites(base(tn.nodeValue).replace(/ {4}/g, ' '));
-    if (!tn.parentElement || !tn.parentElement.closest('pre, code')) v = v.replace(/[ \t]{2,}/g, ' ');
+    if (tn.parentElement && tn.parentElement.closest('pre, code, .link-card, [data-file]')) continue;
+    let v = maths(stripCites(base(tn.nodeValue, false).replace(/ {4}/g, ' ')));
+    v = v.replace(/[ \t]{2,}/g, ' ');
     if (o.punct) v = plainPunct(v);
     if (v !== tn.nodeValue) tn.nodeValue = v;
+    if (!tn.parentElement || !tn.parentElement.closest('a, pre, code')) inlineMdToDom(tn);
+  }
+  // Drop UI chrome blocks ("Copy code", "ChatGPT said:", "Thought for 4s"…) and convert heading-prefixed <p>/<div>s
+  for (const b of [...root.querySelectorAll('p, div, h1, h2, h3, blockquote')]) {
+    if (b.closest('pre, code, table, li, .kp')) continue;
+    const raw = b.textContent.trim();
+    if (!raw && !b.querySelector('img, br, a[data-file]')) { b.remove(); continue; }
+    if (UI_CHROME_LINE.test(raw) && !b.querySelector('img, a[data-file]')) { b.remove(); continue; }
+    if (/^(P|DIV)$/.test(b.tagName) && !b.querySelector('img, a[data-file], pre, table, ul, ol')) {
+      const hm = /^[ \t]{0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(raw);
+      if (hm) {
+        const tag = hm[1].length <= 1 ? 'h1' : hm[1].length === 2 ? 'h2' : 'h3';
+        const hx = document.createElement(tag);
+        hx.textContent = hm[2];
+        b.replaceWith(hx);
+      }
+    }
+  }
+  // Merge consecutive bullet / numbered <p>/<div> paragraphs into proper <ul>/<ol> lists
+  let curList = null;
+  let curKind = '';
+  for (const kid of [...root.children]) {
+    const isPlain = /^(P|DIV)$/.test(kid.tagName) && !kid.querySelector('img, a[data-file], ul, ol, pre, table, br');
+    const txt = isPlain ? kid.textContent.trim() : '';
+    const bm = isPlain ? /^([-*+•●▪◦‣∙])\s+(\S[\s\S]*)$/.exec(txt) : null;
+    const nm = !bm && isPlain ? /^(\d{1,3})[.)]\s+(\S[\s\S]*)$/.exec(txt) : null;
+    if (bm || nm) {
+      const want = nm ? 'ol' : 'ul';
+      if (!curList || curKind !== want) {
+        curList = document.createElement(want);
+        curKind = want;
+        kid.before(curList);
+      }
+      const li = document.createElement('li');
+      const leadRe = nm ? /^\s*\d{1,3}[.)]\s+/ : /^\s*[-*+•●▪◦‣∙]\s+/;
+      li.append(...kid.childNodes);
+      const ft = firstText(li);
+      if (ft) ft.nodeValue = ft.nodeValue.replace(leadRe, '');
+      curList.append(li);
+      kid.remove();
+    } else {
+      curList = null;
+      curKind = '';
+    }
   }
   for (const b of root.querySelectorAll('p, li, h1, h2, h3, div, blockquote')) {
     const first = firstText(b);
@@ -366,16 +525,20 @@ export function tidyHtml(html, o = {}) {
     const m = LEAD_EMOJI.exec(first.nodeValue);
     if (m && !KEEP_EMOJI.test(m[2])) first.nodeValue = m[1] + first.nodeValue.slice(m[0].length);
   }
-  const blocks = () => [...root.children].filter((e) => e.textContent.trim() || e.querySelector('img'));
-  let bs = blocks();
-  if (bs.length > 1 && !bs[0].matches('ul, ol, table') && bs[0].textContent.trim().length <= 220 && INTRO.test(bs[0].textContent.trim())) bs[0].remove();
-  for (let round = 0; round < 3; round++) {
-    bs = blocks();
+  const blocks = () => [...root.children].filter((e) => e.textContent.trim() || e.querySelector('img, a[data-file]'));
+  for (let round = 0; round < 2; round++) {
+    const bs = blocks();
+    if (bs.length > 1 && !bs[0].matches('ul, ol, table, pre') && bs[0].textContent.trim().length <= 240 && INTRO.test(bs[0].textContent.trim())) {
+      bs[0].remove();
+    } else break;
+  }
+  for (let round = 0; round < 4; round++) {
+    const bs = blocks();
     if (bs.length < 2) break;
     const last = bs[bs.length - 1];
     const prev = bs[bs.length - 2];
-    if (!last.matches('ul, ol, table') && last.textContent.trim().length <= 320 && CLOSE.test(last.textContent.trim())) last.remove();
-    else if (last.matches('ul, ol') && bs.length > 2 && !prev.matches('ul, ol, table') && prev.textContent.trim().length <= 320 && CLOSE.test(prev.textContent.trim())) { last.remove(); prev.remove(); }
+    if (!last.matches('ul, ol, table, pre') && last.textContent.trim().length <= 340 && CLOSE.test(last.textContent.trim())) last.remove();
+    else if (last.matches('ul, ol') && bs.length > 2 && !prev.matches('ul, ol, table, pre') && prev.textContent.trim().length <= 340 && CLOSE.test(prev.textContent.trim())) { last.remove(); prev.remove(); }
     else break;
   }
   for (const p of root.querySelectorAll('p, div, h1, h2, h3, li')) if (!p.textContent.trim() && !p.querySelector('img, br, a[data-file]')) p.remove();
@@ -415,7 +578,7 @@ const KP_TITLE = 'Key points';
 const STOP = new Set(('a an and are as at be been but by can could did do does for from had has have he her him his how i if in into is it its just me more most my no not of on or our out over she so some than that the their them then there these they this those to too up us very was we were what when which who why will with would you your also about after again all any because before being both down during each few further here just only other own same should such through under until while yet one two get got make made like ' +
   'dhe në një për me që se nga të e i u ka kanë është janë do edhe por apo ose si ku kur më mos jo po ky kjo këtë këto ato ai ajo ata ato tij saj tyre ne ju unë ti jemi jeni isha ishte kishte kemi keni pra nëse sepse deri pas para mbi nën tek te pa duke qe qenë do të gjithë çdo vetëm shumë pak tani atëherë këtu atje').split(' '));
 const TURN = /^(another|one more|the idea|however|but|also|additionally|moreover|furthermore|in addition|for example|for instance|on the other hand|in contrast|meanwhile|finally|in conclusion|to sum up|overall|first|second|third|next|then|lastly|as a result|therefore|so,|instead|still|megjithatë|por|gjithashtu|për shembull|nga ana tjetër|në fund|përfundimisht|si rezultat|prandaj|pra,|së pari|së dyti|së treti|më pas|pastaj|ndërkohë)\b/i;
-const LABEL = /^(note|important|tip|warning|remember|caution|summary|example|key|reminder|shënim|kujdes|këshillë|e rëndësishme|kujtesë|shembull|përmbledhje)\s*[:\-–—]\s*/i;
+const LABEL = /^(note|important|tip|warning|remember|caution|summary|example|key|key takeaway|takeaway|bottom line|tl;dr|tldr|pros|cons|verdict|conclusion|fix|cause|solution|result|action|reminder|step\s*\d+|shënim|kujdes|këshillë|e rëndësishme|kujtesë|shembull|përmbledhje|zgjidhje|rezultati)\s*[:\-–—]\s*/i;
 const ORDINAL = /^(first(ly)?|second(ly)?|third(ly)?|fourth|fifth|next|then|after that|finally|lastly|së pari|së dyti|së treti|së katërti|më pas|pastaj|në fund)\b[,:]?\s*/i;
 const ABBR = /(?:\b(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|e\.g|i\.e|p\.sh|etj|nr|fig|vol|no|approx|zt|znj|ing|av|kap|fq)|\b[A-Z]|\d)\.$/i;
 const isRtl = (t) => (t.match(/[֐-ࣿ]/g) || []).length > t.replace(/\s/g, '').length * 0.3;
@@ -516,7 +679,22 @@ function keyPoints(allSentences, nWords) {
     return { i, s, v };
   });
   const n = nWords > 900 ? 5 : nWords > 450 ? 4 : 3;
-  const pick = scored.filter((x) => x.v > 0).sort((a, b) => b.v - a.v).slice(0, n).sort((a, b) => a.i - b.i);
+  const ranked = scored.filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
+  const chosen = [];
+  const chosenSets = [];
+  for (const cand of ranked) {
+    const sig = new Set(words(cand.s.text).filter((w) => w.length > 2 && !STOP.has(w)));
+    const dup = sig.size > 0 && chosenSets.some((prev) => {
+      let overlap = 0;
+      for (const w of sig) if (prev.has(w)) overlap++;
+      return overlap / Math.min(sig.size, prev.size) >= 0.65;
+    });
+    if (dup) continue;
+    chosen.push(cand);
+    chosenSets.push(sig);
+    if (chosen.length >= n) break;
+  }
+  const pick = chosen.sort((a, b) => a.i - b.i);
   return pick.map((x) => x.s.text.length > 220 ? x.s.text.slice(0, 217).replace(/\s+\S*$/, '') + '…' : x.s.text);
 }
 
