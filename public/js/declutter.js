@@ -18,12 +18,12 @@ const KEYCAP = /^([ \t]*)([0-9])️?⃣[ \t]*/gm;
 
 const INTERJ = '(?:sure|certainly|absolutely|of course|definitely|okay|ok|alright|got it|no problem|understood|perfect|great|excellent|sigurisht|patjetër|natyrisht|me kënaqësi|në rregull|shumë mirë|dakord)';
 const INTRO = new RegExp(
-  `^(?:${INTERJ}[!.,]?\\s*$` + // just "Sure!"
-  `|(?:(?:${INTERJ}|(?:great|good|excellent|nice|interesting|fair) (?:question|idea|point|catch|choice)|pyetje e mirë)[!.,]\\s*)?` +
-  `(?:here(?:'|’)s|here (?:is|are)|below (?:is|are)|i(?:'|’)ve (?:rewritten|revised|updated|cleaned|polished|put together|created|made|written|drafted)|i(?:'|’)ll (?:break|walk|explain|give)|let(?:'|’)s (?:break|go|look|walk)|ja(?:\\s|,)|këtu (?:është|janë|e ke|i ke|ke)|më poshtë (?:është|janë|e ke|ke|po)|po ta (?:shpjegoj|jap))[^\\n]{0,200}[:.!]` +
+  `^(?:${INTERJ}[!.,—–-]?\\s*$` + // just "Sure!"
+  `|(?:(?:${INTERJ}|(?:great|good|excellent|nice|interesting|fair) (?:question|idea|point|catch|choice)|pyetje e mirë)\\s*[!.,—–-]+\\s*)?` +
+  `(?:here(?:'|’)s|here (?:is|are)|below (?:is|are)|i(?:'|’)ve (?:rewritten|revised|updated|cleaned|polished|put together|created|made|written|drafted|summarized|organized)|i(?:'|’)ll (?:break|walk|explain|give|summarize)|let(?:'|’)s (?:break|go|look|walk)|ja(?:\\s|,)|këtu (?:është|janë|e ke|i ke|ke)|më poshtë (?:është|janë|e ke|ke|po)|po ta (?:shpjegoj|jap))[^\\n]{0,200}[:.!]?` +
   `|(?:great|good|excellent|nice|interesting|fair) (?:question|idea|point|catch|choice)[!.]?\\s*$|pyetje e mirë[!.]?\\s*$|(?:i(?:'|’)d be |i(?:'|’)m )?(?:happy|glad) to help[^\\n]{0,120}[!.:]?)$`, 'iu');
-const LEAD_INTERJ = new RegExp(`^(?:${INTERJ}|(?:great|good|excellent) question|pyetje e mirë)[!.,]\\s+(?=\\S)`, 'iu');
-const CLOSE = /^[-—*_\s]*(?:i hope (?:this|that|it|these)|hope (?:this|that|it) helps|let me know|feel free|would you like|do you want|want me to|if you(?:'|’)d like|if you want|if you need|if needed,? i can|i can also|i could also|shall i|should i also|need anything else|anything else\b|is there anything|happy to help|glad (?:i could|to) help|good luck|best of luck|shpresoj|më trego|më thuaj|më njofto|nëse dëshiron|nëse do\b|nëse ke nevojë|nëse të duhet|nëse të intereson|dëshiron (?:që|të)|a do (?:që|të)|a dëshiron|mund ta bëj|mund të bëj edhe|mos hezito|mos ngurro|suksese\b|fat të mbarë)/iu;
+const LEAD_INTERJ = new RegExp(`^(?:${INTERJ}|(?:great|good|excellent) question|pyetje e mirë)\\s*[!.,—–-]+\\s+(?=\\S)`, 'iu');
+const CLOSE = /^[-—*_\s]*(?:i hope (?:this|that|it|these)|hope (?:this|that|it) helps|let me know|please let me know|just let me know|feel free|don(?:'|’)t hesitate|ask away\b|would you like|do you want|want me to|if you(?:'|’)d like|if you want|if you need|if needed,? i can|i can also|i could also|shall i|should i also|need anything else|anything else\b|is there anything|is this what you|was this helpful|happy to help|glad (?:i could|to) help|good luck|best of luck|shpresoj|më trego|më thuaj|më njofto|nëse dëshiron|nëse do\b|nëse ke nevojë|nëse të duhet|nëse të intereson|dëshiron (?:që|të)|a do (?:që|të)|a dëshiron|mund ta bëj|mund të bëj edhe|mos hezito|mos ngurro|suksese\b|fat të mbarë)/iu;
 
 const LIST_LINE = /^[ \t]*(?:[-*+•●▪◦‣∙]|\d{1,3}[.)])[ \t]+\S/;
 const HR = /^[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
@@ -261,8 +261,8 @@ function mdToPlain(s) {
 
 export function looksMarkdown(text) {
   const t = String(text || '');
-  return /(^|\s)\*\*[^*\n]+\*\*|^\s{0,3}#{1,6}[ \t]+\S|^\s*\|.+\|\s*\n\s*\|?\s*:?-{3,}|^\s*[-*+][ \t]+\[[ xX]\][ \t]|\[[^\]\n]+\]\(https?:|^[ \t]*```/m.test(t) ||
-    (t.match(/^\s*[-*+][ \t]+\S/gm) || []).length >= 2;
+  return /(?:^|[\s("“'\[>])\*\*[^*\n]+?\*\*|^\s{0,3}#{1,6}[ \t]+\S|^\s*\|.+\|\s*\n\s*\|?\s*:?-{3,}|^\s*[-*+][ \t]+\[[ xX]\][ \t]|\[[^\]\n]+\]\(https?:|^[ \t]*```|^[ \t]{0,3}(?:---|\*\*\*|___)[ \t]*$/m.test(t) ||
+    (t.match(/^\s*(?:[-*+•]|\d{1,3}[.)])[ \t]+\S/gm) || []).length >= 2;
 }
 
 export function aiScore(text, html = '') {
@@ -315,10 +315,36 @@ export function tidyHtml(html, o = {}) {
   const tpl = document.createElement('template');
   tpl.innerHTML = String(html || '');
   const root = tpl.content;
+  // Unwrap AI chat container divs/sections/articles so blocks sit at the top level
+  for (let pass = 0; pass < 4; pass++) {
+    let unwrapped = false;
+    for (const box of [...root.querySelectorAll('div, section, article')]) {
+      if (box.closest('pre, code, table')) continue;
+      if (box.querySelector('p, div, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, pre, table, hr, section, article')) {
+        box.replaceWith(...box.childNodes);
+        unwrapped = true;
+      }
+    }
+    if (!unwrapped) break;
+  }
+  // Split double <br> breaks inside <p>/<div> into real paragraphs
+  for (const el of [...root.querySelectorAll('p, div')]) {
+    if (el.closest('pre, code, table, li, blockquote')) continue;
+    const h = el.innerHTML;
+    if (!/(?:<br\s*\/?>\s*){2,}/i.test(h)) continue;
+    const parts = h.split(/(?:<br\s*\/?>\s*){2,}/i).map((x) => x.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      el.replaceWith(...parts.map((part) => { const p = document.createElement('p'); p.innerHTML = part; return p; }));
+    }
+  }
+  for (const sup of root.querySelectorAll('sup')) {
+    if (/^\s*\[?\d{1,3}(?:\s*[,–-]\s*\d{1,3})*\]?\s*$/.test(sup.textContent)) dropChip(sup);
+  }
   for (const a of root.querySelectorAll('a[href]')) {
     const href = a.getAttribute('href') || '';
     const label = a.textContent.trim();
-    if (/utm_source=chatgpt\.com/.test(href) && label.length <= 48 && label.split(/\s+/).length <= 5 && !a.closest('li, td') ) {
+    if ((/utm_source=(?:chatgpt\.com|openai|perplexity|gemini|copilot)|[?&]source=perplexity/i.test(href) && label.length <= 48 && label.split(/\s+/).length <= 5 && !a.closest('li, td')) ||
+        (/^https?:/.test(href) && /^\[\d{1,3}\]$/.test(label))) {
       dropChip(a);
       continue;
     }

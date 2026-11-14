@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.64';
+const VERSION = '3.0.65';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -4426,7 +4426,7 @@ function declutterNote() {
   const before = el.editorText.innerHTML;
   const o = declutterOpts() || { punct: false };
   const text = el.editorText.innerText || '';
-  const md = De.looksMarkdown(text) && !el.editorText.querySelector('[data-file], [style]');
+  const md = De.looksMarkdown(text) && !el.editorText.querySelector('[data-file], img, table');
   // 1. clean AI-chat leftovers  2. make long, flat text easy to read (key points, headings, short paragraphs, lists)
   const out = sanitizeNote(De.readable(sanitizeNote(md ? markdownToHtml(De.markdown(text, o)) : De.tidyHtml(before, o))));
   const norm = (h) => h.replace(/\s+/g, ' ').trim();
