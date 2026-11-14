@@ -1,5 +1,4 @@
-// Official public Quran audio picker (MP3Quran API v3 & Quran.com QDC CDNs, CORS-enabled).
-// Provides offline-capable 114 Surah catalog + curated reciters + live 200+ reciter discovery.
+// Curated top 10 globally recognized Quran reciters with their reading styles (MP3Quran & Quran.com CDNs).
 
 export const SURAHS = [
   [1, "Al-Fatihah", "The Opener", "الفاتحة"],
@@ -123,111 +122,213 @@ export const CURATED_RECITERS = [
     id: 'mp3q:123',
     name: 'Mishary Rashid Alafasy',
     ar: 'مشاري العفاسي',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/mishary-alafasy/r1/',
-    qdcServer: 'https://download.quranicaudio.com/qdc/mishari_al_afasy/murattal/',
-    qdcPad: false,
-    qdcId: 7
-  },
-  {
-    id: 'mp3q:102',
-    name: 'Maher Al-Muaiqly',
-    ar: 'ماهر المعيقلي',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/maher-muaiqly/r1/'
-  },
-  {
-    id: 'mp3q:54',
-    name: 'Abdulrahman Al-Sudais',
-    ar: 'عبدالرحمن السديس',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/abdulrahman-sudais/r1/',
-    qdcServer: 'https://download.quranicaudio.com/qdc/abdurrahmaan_as_sudais/murattal/',
-    qdcPad: false,
-    qdcId: 3
-  },
-  {
-    id: 'mp3q:118',
-    name: 'Mahmoud Khalil Al-Hussary',
-    ar: 'محمود خليل الحصري',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r1/',
-    qdcServer: 'https://download.quranicaudio.com/qdc/khalil_al_husary/murattal/',
-    qdcPad: false,
-    qdcId: 6
-  },
-  {
-    id: 'mp3q:112',
-    name: 'Mohammed Siddiq Al-Minshawi',
-    ar: 'محمد صديق المنشاوي',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r1/',
-    qdcServer: 'https://download.quranicaudio.com/qdc/siddiq_minshawi/murattal/',
-    qdcPad: false,
-    qdcId: 9
-  },
-  {
-    id: 'mp3q:31',
-    name: 'Saud Al-Shuraim',
-    ar: 'سعود الشريم',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/saud-shuraim/r1/',
-    qdcServer: 'https://download.quranicaudio.com/qdc/saud_ash-shuraym/murattal/',
-    qdcPad: true,
-    qdcId: 10
+    styles: [
+      {
+        id: 'mp3q:123',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/mishary-alafasy/r1/',
+        qdcServer: 'https://download.quranicaudio.com/qdc/mishari_al_afasy/murattal/',
+        qdcPad: false,
+        qdcId: 7
+      },
+      {
+        id: 'mp3q:123:124',
+        style: "Al-Duri 'an Al-Kisa'i",
+        server: 'https://cdn.mp3quran.net/audio/mishary-alafasy/r2/',
+        surahList: '12,14,25,87,97,99'
+      }
+    ]
   },
   {
     id: 'mp3q:51',
     name: 'Abdulbasit Abdulsamad',
     ar: 'عبدالباسط عبدالصمد',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/abdulbasit-abdulsamad/r3/',
-    qdcServer: 'https://download.quranicaudio.com/qdc/abdul_baset/murattal/',
-    qdcPad: false,
-    qdcId: 2
+    styles: [
+      {
+        id: 'mp3q:51',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/abdulbasit-abdulsamad/r3/',
+        qdcServer: 'https://download.quranicaudio.com/qdc/abdul_baset/murattal/',
+        qdcPad: false,
+        qdcId: 2
+      },
+      {
+        id: 'mp3q:51:51',
+        style: 'Hafs · Mujawwad',
+        server: 'https://cdn.mp3quran.net/audio/abdulbasit-abdulsamad/r1/',
+        qdcServer: 'https://download.quranicaudio.com/qdc/abdul_baset/mujawwad/',
+        qdcPad: false,
+        qdcId: 1
+      },
+      {
+        id: 'mp3q:51:52',
+        style: 'Warsh · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/abdulbasit-abdulsamad/r2/'
+      }
+    ]
   },
   {
-    id: 'mp3q:92',
-    name: 'Yasser Al-Dosari',
-    ar: 'ياسر الدوسري',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/yasser-dosari/r1/'
+    id: 'mp3q:118',
+    name: 'Mahmoud Khalil Al-Hussary',
+    ar: 'محمود خليل الحصري',
+    styles: [
+      {
+        id: 'mp3q:118',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r1/',
+        qdcServer: 'https://download.quranicaudio.com/qdc/khalil_al_husary/murattal/',
+        qdcPad: false,
+        qdcId: 6
+      },
+      {
+        id: 'mp3q:118:119',
+        style: 'Hafs · Mujawwad',
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r2/'
+      },
+      {
+        id: 'mp3q:118:120',
+        style: 'Warsh · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r3/'
+      },
+      {
+        id: 'mp3q:118:270',
+        style: 'Qaloon · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r5/'
+      },
+      {
+        id: 'mp3q:118:269',
+        style: "Al-Duri 'an Abi 'Amr",
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r4/'
+      }
+    ]
+  },
+  {
+    id: 'mp3q:112',
+    name: 'Mohammed Siddiq Al-Minshawi',
+    ar: 'محمد صديق المنشاوي',
+    styles: [
+      {
+        id: 'mp3q:112',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r1/',
+        qdcServer: 'https://download.quranicaudio.com/qdc/siddiq_minshawi/murattal/',
+        qdcPad: false,
+        qdcId: 9
+      },
+      {
+        id: 'mp3q:112:113',
+        style: 'Hafs · Mujawwad',
+        server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r2/',
+        qdcServer: 'https://download.quranicaudio.com/qdc/siddiq_minshawi/mujawwad/',
+        qdcPad: false,
+        qdcId: 8
+      },
+      {
+        id: 'mp3q:112:114',
+        style: "Hafs · Teacher (Mu'allim)",
+        server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r3/'
+      },
+      {
+        id: 'mp3q:112:10924',
+        style: '1967 Studio Recording',
+        server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r4/',
+        surahList: '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,17,18,19,20,21,22,25,26,27,28,29,30,31,32,33,34,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114'
+      }
+    ]
+  },
+  {
+    id: 'mp3q:102',
+    name: 'Maher Al-Muaiqly',
+    ar: 'ماهر المعيقلي',
+    styles: [
+      {
+        id: 'mp3q:102',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/maher-muaiqly/r1/'
+      },
+      {
+        id: 'mp3q:102:133',
+        style: 'Hafs · Mujawwad',
+        server: 'https://cdn.mp3quran.net/audio/maher-muaiqly/r3/'
+      },
+      {
+        id: 'mp3q:102:103',
+        style: "Hafs · Teacher (Juz 'Amma)",
+        server: 'https://cdn.mp3quran.net/audio/maher-muaiqly/r2/',
+        surahList: '1,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114'
+      }
+    ]
+  },
+  {
+    id: 'mp3q:54',
+    name: 'Abdulrahman Al-Sudais',
+    ar: 'عبدالرحمن السديس',
+    styles: [
+      {
+        id: 'mp3q:54',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/abdulrahman-sudais/r1/',
+        qdcServer: 'https://download.quranicaudio.com/qdc/abdurrahmaan_as_sudais/murattal/',
+        qdcPad: false,
+        qdcId: 3
+      }
+    ]
+  },
+  {
+    id: 'mp3q:31',
+    name: 'Saud Al-Shuraim',
+    ar: 'سعود الشريم',
+    styles: [
+      {
+        id: 'mp3q:31',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/saud-shuraim/r1/',
+        qdcServer: 'https://download.quranicaudio.com/qdc/saud_ash-shuraym/murattal/',
+        qdcPad: true,
+        qdcId: 10
+      }
+    ]
   },
   {
     id: 'mp3q:30',
     name: 'Saad Al-Ghamdi',
     ar: 'سعد الغامدي',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/saad-ghamdi/r1/'
+    styles: [
+      {
+        id: 'mp3q:30',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/saad-ghamdi/r1/'
+      }
+    ]
   },
   {
-    id: 'mp3q:5',
-    name: 'Ahmad Al-Ajmy',
-    ar: 'أحمد بن علي العجمي',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/ahmad-ajmi/r1/'
+    id: 'mp3q:92',
+    name: 'Yasser Al-Dosari',
+    ar: 'ياسر الدوسري',
+    styles: [
+      {
+        id: 'mp3q:92',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/yasser-dosari/r1/'
+      }
+    ]
   },
   {
     id: 'mp3q:253',
     name: 'Islam Sobhi',
     ar: 'إسلام صبحي',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/islam-sobhi/r1/',
-    surahList: '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,38,41,42,43,44,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114'
-  },
-  {
-    id: 'mp3q:231',
-    name: 'Hazza Al-Balushi',
-    ar: 'هزاع البلوشي',
-    style: 'Hafs · Murattal',
-    server: 'https://cdn.mp3quran.net/audio/hazza-balushi/r1/',
-    surahList: '1,6,8,12,13,14,15,17,18,19,20,21,22,25,29,30,31,32,34,35,36,37,38,39,40,41,42,43,44,45,46,47,49,50,51,52,53,54,55,56,57,61,63,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114'
+    styles: [
+      {
+        id: 'mp3q:253',
+        style: 'Hafs · Murattal',
+        server: 'https://cdn.mp3quran.net/audio/islam-sobhi/r1/',
+        surahList: '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,38,41,42,43,44,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114'
+      }
+    ]
   }
 ];
 
 const RECITER_KEY = 'sp-quran-reciter';
-let allRecitersPromise = null;
-let cachedAllReciters = null;
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -306,51 +407,10 @@ export async function resolveFallbackAudioUrl(reciter, surahNum) {
   }
 }
 
-export async function fetchAllReciters() {
-  if (cachedAllReciters) return cachedAllReciters;
-  if (allRecitersPromise) return allRecitersPromise;
-  allRecitersPromise = (async () => {
-    try {
-      const j = await fetchQuranJson('https://www.mp3quran.net/api/v3/reciters?language=eng');
-      const byServer = new Set(CURATED_RECITERS.map((x) => normalizeServer(x.server)));
-      const merged = CURATED_RECITERS.map((x) => ({ ...x, popular: true }));
-      const extra = [];
-      for (const rec of (j.reciters || [])) {
-        const moshafs = Array.isArray(rec.moshaf) ? rec.moshaf : [];
-        for (const m of moshafs) {
-          const srv = normalizeServer(m.server);
-          if (!srv || !srv.startsWith('https://')) continue;
-          if (byServer.has(srv)) continue;
-          byServer.add(srv);
-          const styleRaw = String(m.name || '').replace(/^Rewayat\s+/i, '').trim();
-          const showStyle = moshafs.length > 1 || (styleRaw && !/^Hafs A'n Assem\s*-\s*Murattal$/i.test(styleRaw));
-          extra.push({
-            id: `mp3q:${rec.id}:${m.id}`,
-            name: rec.name,
-            ar: '',
-            style: showStyle ? styleRaw : 'Hafs · Murattal',
-            server: srv,
-            surahList: (m.surah_total || 0) >= 114 ? '' : (m.surah_list || ''),
-            popular: false
-          });
-        }
-      }
-      extra.sort((a, b) => a.name.localeCompare(b.name));
-      cachedAllReciters = [...merged, ...extra];
-      return cachedAllReciters;
-    } catch {
-      return CURATED_RECITERS.map((x) => ({ ...x, popular: true }));
-    } finally {
-      allRecitersPromise = null;
-    }
-  })();
-  return allRecitersPromise;
-}
-
 export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview, getPlayingUrl }) {
   if (!dlg) return;
 
-  if (!dlg.dataset.ready) {
+  if (!dlg.dataset.ready || !dlg.querySelector('#quran-style-select')) {
     dlg.dataset.ready = '1';
     dlg.innerHTML =
       `<div class="sheet-head">` +
@@ -363,12 +423,12 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
       `<div class="sheet-body quran-body">` +
         `<div class="quran-rec-box">` +
           `<div class="quran-rec-hdr">` +
-            `<label for="quran-rec-select">Reciter</label>` +
-            `<span class="quran-rec-badge" id="quran-rec-badge">Popular reciters</span>` +
+            `<label for="quran-rec-select">Reciter &amp; style</label>` +
+            `<span class="quran-rec-badge" id="quran-rec-badge">10 reciters</span>` +
           `</div>` +
           `<div class="quran-rec-inputs">` +
-            `<input type="search" id="quran-rec-filter" class="quran-input" placeholder="Filter all reciters (e.g. Mishary, Maher, Sudais)…" aria-label="Filter reciters">` +
             `<select id="quran-rec-select" class="quran-select" aria-label="Choose reciter"></select>` +
+            `<select id="quran-style-select" class="quran-select" aria-label="Choose reading style"></select>` +
           `</div>` +
         `</div>` +
         `<div class="quran-search-wrap">` +
@@ -379,46 +439,45 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
       `</div>`;
   }
 
-  let reciters = (cachedAllReciters || CURATED_RECITERS).map((x) => ({ ...x }));
   let savedId = '';
   try { savedId = localStorage.getItem(RECITER_KEY) || ''; } catch {}
-  let selectedReciter = reciters.find((r) => r.id === savedId) || reciters[0];
+  let selectedReciter = CURATED_RECITERS.find((r) => r.id === savedId || r.styles.some((st) => st.id === savedId)) || CURATED_RECITERS[0];
+  let selectedStyle = selectedReciter.styles.find((st) => st.id === savedId) || selectedReciter.styles[0];
 
   const recBadge = dlg.querySelector('#quran-rec-badge');
-  const recFilter = dlg.querySelector('#quran-rec-filter');
   const recSelect = dlg.querySelector('#quran-rec-select');
+  const styleSelect = dlg.querySelector('#quran-style-select');
   const surahSearch = dlg.querySelector('#quran-surah-search');
   const listEl = dlg.querySelector('#quran-list');
 
-  const getReciter = () => reciters.find((r) => r.id === recSelect.value) || selectedReciter || reciters[0];
+  const getReciter = () => CURATED_RECITERS.find((r) => r.id === recSelect.value) || selectedReciter || CURATED_RECITERS[0];
+  const getStyle = () => {
+    const rec = getReciter();
+    return rec.styles.find((st) => st.id === styleSelect.value) || rec.styles[0];
+  };
 
   const renderReciters = () => {
-    const q = normalizeLatin(recFilter.value);
-    const matches = q
-      ? reciters.filter((r) => normalizeLatin(`${r.name} ${r.ar} ${r.style}`).includes(q))
-      : reciters;
-    const prev = selectedReciter ? selectedReciter.id : recSelect.value;
-    recSelect.innerHTML = matches.length
-      ? matches.map((r) => {
-          const suffix = r.ar ? ` · ${r.ar}` : (r.style && r.style !== 'Hafs · Murattal' ? ` (${r.style})` : '');
-          return `<option value="${esc(r.id)}">${esc(r.name + suffix)}</option>`;
-        }).join('')
-      : `<option value="">No matching reciter</option>`;
-    if (matches.some((r) => r.id === prev)) {
-      recSelect.value = prev;
-    } else if (matches.length) {
-      recSelect.value = matches[0].id;
-      selectedReciter = matches[0];
-    }
+    recSelect.innerHTML = CURATED_RECITERS.map((r) => `<option value="${esc(r.id)}">${esc(`${r.name} · ${r.ar}`)}</option>`).join('');
+    recSelect.value = selectedReciter.id;
+  };
+
+  const renderStyles = () => {
+    const rec = getReciter();
+    const styles = rec.styles || [];
+    styleSelect.innerHTML = styles.map((st) => `<option value="${esc(st.id)}">${esc(st.style)}</option>`).join('');
+    const next = styles.find((st) => st.id === selectedStyle.id) || styles[0];
+    selectedStyle = next;
+    styleSelect.value = next.id;
+    styleSelect.disabled = styles.length <= 1;
     if (recBadge) {
-      recBadge.textContent = cachedAllReciters
-        ? (q ? `${matches.length} of ${reciters.length}` : `${reciters.length} reciters`)
-        : `${reciters.length} popular`;
+      recBadge.textContent = styles.length > 1
+        ? `${CURATED_RECITERS.length} reciters · ${styles.length} styles`
+        : `${CURATED_RECITERS.length} reciters`;
     }
   };
 
   const renderSurahs = () => {
-    const rec = getReciter();
+    const styleObj = getStyle();
     const rawQ = surahSearch.value.trim();
     const qLatin = normalizeLatin(rawQ);
     const qNum = /^\d+$/.test(rawQ) ? Number(rawQ) : 0;
@@ -426,14 +485,14 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
 
     const items = [];
     for (const [num, en, tr, ar] of SURAHS) {
-      if (!hasSurah(rec, num)) continue;
+      if (!hasSurah(styleObj, num)) continue;
       if (rawQ) {
         const hitNum = qNum ? num === qNum || String(num).startsWith(rawQ) : false;
         const hitLatin = qLatin && normalizeLatin(`${en} ${tr} surah ${en}`).includes(qLatin);
         const hitAr = ar.includes(rawQ);
         if (!hitNum && !hitLatin && !hitAr) continue;
       }
-      const urls = resolveSurahAudioUrls(rec, num);
+      const urls = resolveSurahAudioUrls(styleObj, num);
       const isPlaying = Boolean(playingUrl && urls.includes(playingUrl));
       items.push(
         `<div class="quran-item${isPlaying ? ' is-playing' : ''}" data-surah="${num}">` +
@@ -463,16 +522,21 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
   dlg._quranAC = ac;
   const sig = ac.signal;
 
-  recFilter.addEventListener('input', () => {
-    renderReciters();
+  recSelect.addEventListener('change', () => {
+    selectedReciter = getReciter();
+    selectedStyle = selectedReciter.styles[0];
+    try { localStorage.setItem(RECITER_KEY, selectedStyle.id); } catch {}
+    renderStyles();
     renderSurahs();
   }, { signal: sig });
 
-  recSelect.addEventListener('change', () => {
-    const rec = getReciter();
-    if (rec) {
-      selectedReciter = rec;
-      try { localStorage.setItem(RECITER_KEY, rec.id); } catch {}
+  styleSelect.addEventListener('change', () => {
+    selectedStyle = getStyle();
+    try { localStorage.setItem(RECITER_KEY, selectedStyle.id); } catch {}
+    if (recBadge) {
+      recBadge.textContent = selectedReciter.styles.length > 1
+        ? `${CURATED_RECITERS.length} reciters · ${selectedReciter.styles.length} styles`
+        : `${CURATED_RECITERS.length} reciters`;
     }
     renderSurahs();
   }, { signal: sig });
@@ -486,15 +550,19 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
     const surahNum = Number((prevBtn || addBtn).dataset.surah);
     const s = SURAHS[surahNum - 1];
     const rec = getReciter();
-    if (!s || !rec) return;
+    const styleObj = getStyle();
+    if (!s || !rec || !styleObj) return;
+    const styleSuffix = rec.styles.length > 1 && styleObj.style && styleObj.style !== 'Hafs · Murattal'
+      ? ` (${styleObj.style.replace(/^Hafs · /, '')})`
+      : '';
     const payload = {
       surahNum,
       surahNameEn: s[1],
       surahTransEn: s[2],
       surahNameAr: s[3],
-      reciter: rec,
-      reciterName: rec.name,
-      urls: resolveSurahAudioUrls(rec, surahNum)
+      reciter: styleObj,
+      reciterName: `${rec.name}${styleSuffix}`,
+      urls: resolveSurahAudioUrls(styleObj, surahNum)
     };
     if (prevBtn) {
       if (typeof onPreview === 'function') onPreview(payload);
@@ -517,20 +585,9 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
     }
   }, { once: true });
 
-  recFilter.value = '';
   surahSearch.value = '';
   renderReciters();
+  renderStyles();
   renderSurahs();
   openDialog(dlg);
-
-  // Lazy-load all 200+ MP3Quran reciters in background without resetting user's focus/scroll
-  if (!cachedAllReciters) {
-    fetchAllReciters().then((all) => {
-      if (!dlg.open || dlg._quranAC !== ac) return;
-      reciters = all;
-      const keep = selectedReciter ? selectedReciter.id : recSelect.value;
-      selectedReciter = reciters.find((r) => r.id === keep) || selectedReciter;
-      renderReciters();
-    });
-  }
 }

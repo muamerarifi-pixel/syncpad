@@ -1656,6 +1656,7 @@ html, body { overscroll-behavior-x: none; }
   background: var(--surface); color: var(--text); font: 500 13.5px var(--font); outline: 0; min-width: 0; width: 100%;
 }
 .quran-input:focus, .quran-select:focus { border-color: var(--accent); }
+.quran-select:disabled { opacity: .68; cursor: default; }
 .quran-search-wrap { position: relative; flex: none; }
 .quran-search-wrap .ic {
   position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
