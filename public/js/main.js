@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.71';
+const VERSION = '3.0.72';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1467,6 +1467,7 @@ function primaryAction(it, prog) {
     if (url) {
       const ytBtns = ytInfo(url)
         ? `<button class="yt-dl-btn" data-act="yt-mp3" aria-label="Download MP3" title="Download MP3"><svg class="ic"><use href="#i-download"/></svg><span>MP3</span></button>` +
+          `<button class="yt-dl-btn" data-act="yt-m4a" aria-label="Download M4A Audio" title="Download M4A Audio"><svg class="ic"><use href="#i-download"/></svg><span>M4A</span></button>` +
           `<button class="yt-dl-btn" data-act="yt-mp4" aria-label="Download Video" title="Download Video (MP4)"><svg class="ic"><use href="#i-download"/></svg><span>Video</span></button>`
         : '';
       return `${ytBtns}<a class="icon-btn act" href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="Open link" title="Open link"><svg class="ic"><use href="#i-link"/></svg></a>`;
@@ -1506,7 +1507,7 @@ function tileHTML(it, prog) {
   const url = it.kind === 'clip' ? singleUrl(it.data.text || '') : '';
   const isText = it.kind === 'clip' && !url;
   const ytActs = url && ytInfo(url)
-    ? `<div class="tile-yt-acts"><button class="yt-dl-btn" data-act="yt-mp3" title="Download MP3"><svg class="ic"><use href="#i-download"/></svg><span>MP3</span></button><button class="yt-dl-btn" data-act="yt-mp4" title="Download Video (MP4)"><svg class="ic"><use href="#i-download"/></svg><span>Video</span></button></div>`
+    ? `<div class="tile-yt-acts"><button class="yt-dl-btn" data-act="yt-mp3" title="Download MP3"><svg class="ic"><use href="#i-download"/></svg><span>MP3</span></button><button class="yt-dl-btn" data-act="yt-m4a" title="Download M4A Audio"><svg class="ic"><use href="#i-download"/></svg><span>M4A</span></button><button class="yt-dl-btn" data-act="yt-mp4" title="Download Video (MP4)"><svg class="ic"><use href="#i-download"/></svg><span>Video</span></button></div>`
     : '';
   return `<article class="tile${sel ? ' selected' : ''}${ui.selecting ? ' selecting' : ''}" data-id="${it.id}">
     <button class="tile-media" data-act="${isText ? 'expand-tile' : 'open'}" aria-label="Open" draggable="${!isTouch()}">
@@ -1597,9 +1598,9 @@ async function onFeedClick(e) {
     openFile(it);
   } else if (act === 'download') {
     files.download(it);
-  } else if (act === 'yt-mp3' || act === 'yt-mp4') {
+  } else if (act === 'yt-mp3' || act === 'yt-m4a' || act === 'yt-mp4') {
     const u = singleUrl(it.data.text || '');
-    if (u) downloadYoutube(u, act === 'yt-mp3' ? 'mp3' : 'mp4', dropTitle(it));
+    if (u) downloadYoutube(u, act.slice(3), dropTitle(it));
   } else if (act === 'share') {
     files.share(it).catch(() => files.download(it));
   } else if (act === 'menu') {
@@ -1629,6 +1630,7 @@ function dropMenu(anchor, it, at) {
     if (url) m.push({ icon: 'link', label: ytInfo(url) ? 'Play privately' : 'Open link', run: () => openUrl(url) });
     if (url && ytInfo(url)) {
       m.push({ icon: 'download', label: 'Download MP3', run: () => downloadYoutube(url, 'mp3', dropTitle(it)) });
+      m.push({ icon: 'download', label: 'Download M4A Audio', run: () => downloadYoutube(url, 'm4a', dropTitle(it)) });
       m.push({ icon: 'download', label: 'Download Video (MP4)', run: () => downloadYoutube(url, 'mp4', dropTitle(it)) });
     }
     if (navigator.share && isTouch()) m.push({ icon: 'share', label: 'Share…', run: () => navigator.share(url ? { url } : { text: it.data.text }).catch(() => {}) });
@@ -2687,6 +2689,7 @@ function showLinkBubble(a) {
     b.className = 'link-bubble';
     b.innerHTML = '<a class="lb-open" target="_blank" rel="noopener noreferrer"><svg class="ic"><use href="#i-link"/></svg><span class="lb-url"></span></a>' +
       '<button class="yt-dl-btn" data-yt-dl="mp3" title="Download MP3" hidden>MP3</button>' +
+      '<button class="yt-dl-btn" data-yt-dl="m4a" title="Download M4A Audio" hidden>M4A</button>' +
       '<button class="yt-dl-btn" data-yt-dl="mp4" title="Download Video (MP4)" hidden>Video</button>' +
       '<button class="icon-btn sm" data-lb="copy" title="Copy link" aria-label="Copy link"><svg class="ic"><use href="#i-copy"/></svg></button>' +
       '<button class="icon-btn sm" data-lb="unlink" title="Remove link" aria-label="Remove link"><svg class="ic"><use href="#i-x"/></svg></button>';
@@ -3440,14 +3443,18 @@ function setEditorHtml(html) {
   updateEmpty();
 }
 function ytCardActsHTML() {
-  return '<span class="lc-acts"><span class="lc-act" data-yt-dl="mp3" role="button" tabindex="0" title="Download MP3">MP3</span><span class="lc-act" data-yt-dl="mp4" role="button" tabindex="0" title="Download Video (MP4)">Video</span></span>';
+  return '<span class="lc-acts"><span class="lc-act" data-yt-dl="mp3" role="button" tabindex="0" title="Download MP3">MP3</span><span class="lc-act" data-yt-dl="m4a" role="button" tabindex="0" title="Download M4A Audio">M4A</span><span class="lc-act" data-yt-dl="mp4" role="button" tabindex="0" title="Download Video (MP4)">Video</span></span>';
 }
 function hydrateFiles(root) {
   for (const img of $$('img[data-file]', root)) if (!img.getAttribute('src')) img.src = files.src(img.dataset.file);
   for (const a of $$('a[data-file]', root)) { a.setAttribute('contenteditable', 'false'); a.removeAttribute('href'); }
   for (const a of $$('a.link-card', root)) {
     a.setAttribute('contenteditable', 'false');
-    if (ytInfo(a.href) && !a.querySelector('.lc-acts')) a.insertAdjacentHTML('beforeend', ytCardActsHTML());
+    if (ytInfo(a.href)) {
+      const acts = a.querySelector('.lc-acts');
+      if (!acts) a.insertAdjacentHTML('beforeend', ytCardActsHTML());
+      else if (!acts.querySelector('[data-yt-dl="m4a"]')) acts.outerHTML = ytCardActsHTML();
+    }
   }
 }
 function updateEmpty() {
@@ -6847,103 +6854,154 @@ function filenameFromHeader(cd, fallback) {
   if (plain && plain[1]) return plain[1].trim();
   return fallback;
 }
+async function decodeAndEncodeMp3Blob(buf) {
+  const lame = await loadLame();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = new AC();
+  let audioBuf;
+  try { audioBuf = await ac.decodeAudioData(buf.slice(0)); } finally { ac.close().catch(() => {}); }
+  const nCh = Math.min(2, audioBuf.numberOfChannels || 1);
+  const sr = audioBuf.sampleRate || 44100;
+  const enc = new lame.Mp3Encoder(nCh, sr, 128);
+  const toI16 = (f32) => {
+    const out = new Int16Array(f32.length);
+    for (let i = 0; i < f32.length; i++) {
+      const v = Math.max(-1, Math.min(1, f32[i]));
+      out[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+    }
+    return out;
+  };
+  const left = toI16(audioBuf.getChannelData(0));
+  const right = nCh === 2 ? toI16(audioBuf.getChannelData(1)) : null;
+  const chunks = [];
+  const step = 1152 * 40;
+  for (let i = 0; i < left.length; i += step) {
+    const l = left.subarray(i, i + step);
+    const mp3buf = nCh === 2 ? enc.encodeBuffer(l, right.subarray(i, i + step)) : enc.encodeBuffer(l);
+    if (mp3buf.length) chunks.push(new Uint8Array(mp3buf));
+    if (i % (step * 4) === 0) await new Promise((r) => setTimeout(r, 0));
+  }
+  const tail = enc.flush();
+  if (tail.length) chunks.push(new Uint8Array(tail));
+  return new Blob(chunks, { type: 'audio/mpeg' });
+}
 async function downloadYoutube(url, mode = 'mp4', hintTitle = '') {
   const info = ytInfo(url);
   if (!info) return;
-  const q = new URLSearchParams({
-    s: store.get('space'),
-    v: info.id,
-    mode: mode === 'mp3' ? 'audio' : 'video'
-  });
+  const apiMode = mode === 'mp4' ? 'video' : mode === 'm4a' ? 'm4a' : 'audio';
+  const q = new URLSearchParams({ s: store.get('space'), v: info.id, mode: apiMode });
   const cleanHint = String(hintTitle || '').replace(/\s+/g, ' ').trim();
   if (cleanHint && !/^https?:\/\//i.test(cleanHint)) q.set('title', cleanHint.slice(0, 90));
 
-  if (mode !== 'mp3') {
-    toast('Starting video download…');
-    try {
-      const r = await fetch(`/api/ytdl?${q}&info=1`);
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok) { toast(j.reason || 'Could not download this YouTube video.'); return; }
-      triggerBrowserDownload(`/api/ytdl?${q}`, `${j.title || cleanHint || 'youtube'}.${j.ext || 'mp4'}`);
-    } catch {
-      toast('Video download failed. Check your connection.');
+  let progToast = null;
+  const setYtToast = (msg) => {
+    if (progToast && progToast.isConnected && progToast.firstElementChild) {
+      progToast.firstElementChild.textContent = msg;
+      return;
     }
-    return;
-  }
-
-  const clearYtToasts = () => {
-    for (const t of $$('.toast', el.toasts)) if (t.firstElementChild && /Downloading & converting to MP3/.test(t.firstElementChild.textContent)) t.remove();
+    const before = new Set($$('.toast', el.toasts));
+    toast(msg, { duration: 180_000 });
+    progToast = $$('.toast', el.toasts).find((t) => !before.has(t)) || el.toasts.lastElementChild;
   };
-  toast('Downloading & converting to MP3…', { duration: 60000 });
+  const clearYtToast = () => {
+    if (progToast && progToast.isConnected) progToast.remove();
+    progToast = null;
+  };
+  const saveBlob = (blob, filename, msg) => {
+    const blobUrl = URL.createObjectURL(blob);
+    triggerBrowserDownload(blobUrl, filename);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+    clearYtToast();
+    if (msg) toast(msg);
+  };
+
+  setYtToast(mode === 'mp4' ? 'Starting video download…' : mode === 'm4a' ? 'Preparing M4A audio…' : 'Preparing MP3 download…');
   try {
-    const res = await fetch(`/api/ytdl?${q}`);
+    const r = await fetch(`/api/ytdl?${q}&info=1`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) {
+      clearYtToast();
+      toast(j.reason || `Could not download this YouTube ${mode === 'mp4' ? 'video' : 'audio'}.`);
+      return;
+    }
+
+    const baseTitle = j.title || cleanHint || `youtube-${info.id}`;
+    const streamUrl = `/api/ytdl?${q}`;
+
+    // 1. Direct MP4 video
+    if (mode === 'mp4') {
+      clearYtToast();
+      toast('Starting video download…');
+      triggerBrowserDownload(streamUrl, `${baseTitle}.${j.ext || 'mp4'}`);
+      return;
+    }
+
+    // 2. Direct M4A fast path (when YouTube allows >1 MB direct audio without PO token)
+    if (mode === 'm4a' && j.hasDirectAudio && !j.muxed) {
+      clearYtToast();
+      toast('Starting M4A download…');
+      triggerBrowserDownload(streamUrl, `${baseTitle}.${j.ext || 'm4a'}`);
+      return;
+    }
+
+    // 3. Long recordings, M4A extraction from muxed MP4, or MP3 via streaming Range + WebCodecs
+    const isMp4Container = /mp4/i.test(j.mime || '');
+    const needStreaming = j.muxed || mode === 'm4a' || (j.size && j.size > 32 * 1024 * 1024);
+    if (needStreaming && isMp4Container) {
+      let rangeUrl = streamUrl;
+      if (j.muxed) {
+        const vq = new URLSearchParams(q);
+        vq.set('mode', 'video');
+        rangeUrl = `/api/ytdl?${vq}`;
+      }
+      const { downloadMp4AsAudio } = await import('/js/mp4audio.js');
+      const out = await downloadMp4AsAudio({
+        streamUrl: rangeUrl,
+        totalSize: j.size,
+        wantMp3: mode === 'mp3',
+        loadLame,
+        onProgress: (msg) => setYtToast(msg)
+      });
+      if (out.ext === 'mp3') {
+        saveBlob(out.blob, `${baseTitle}.mp3`, 'MP3 ready — downloading');
+      } else if (mode === 'mp3' && out.blob.size <= 36 * 1024 * 1024) {
+        setYtToast('Converting audio to MP3…');
+        const mp3Blob = await decodeAndEncodeMp3Blob(await out.blob.arrayBuffer());
+        saveBlob(mp3Blob, `${baseTitle}.mp3`, 'MP3 ready — downloading');
+      } else {
+        saveBlob(out.blob, `${baseTitle}.m4a`, mode === 'mp3' ? 'Long recording saved as .m4a' : 'M4A ready — downloading');
+      }
+      return;
+    }
+
+    // 4. Short adaptive audio (<= 32 MB): fetch & convert to MP3
+    setYtToast('Downloading & converting to MP3…');
+    const res = await fetch(streamUrl);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      clearYtToasts();
+      clearYtToast();
       toast(err.reason || `Audio download failed (HTTP ${res.status}).`);
       return;
     }
-    const rawName = filenameFromHeader(res.headers.get('content-disposition'), `${cleanHint || 'youtube-' + info.id}.m4a`);
-    const baseTitle = rawName.replace(/\.[^.]+$/, '') || `youtube-${info.id}`;
+    const rawName = filenameFromHeader(res.headers.get('content-disposition'), `${baseTitle}.m4a`);
+    const resolvedTitle = rawName.replace(/\.[^.]+$/, '') || baseTitle;
     const ctype = res.headers.get('content-type') || 'audio/mp4';
     const buf = await res.arrayBuffer();
-
-    // Very long recordings (>48 MB) save directly as original audio so low-RAM phones don't stall
-    if (buf.byteLength > 48 * 1024 * 1024) {
-      const ext = /webm/i.test(ctype) ? 'webm' : /^video\/mp4/i.test(ctype) ? 'mp4' : 'm4a';
-      const blobUrl = URL.createObjectURL(new Blob([buf], { type: ctype }));
-      triggerBrowserDownload(blobUrl, `${baseTitle}.${ext}`);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
-      clearYtToasts();
-      toast(`Long audio saved as .${ext}`);
+    if (buf.byteLength > 36 * 1024 * 1024) {
+      const ext = /webm/i.test(ctype) ? 'webm' : 'm4a';
+      saveBlob(new Blob([buf], { type: ctype }), `${resolvedTitle}.${ext}`, `Long audio saved as .${ext}`);
       return;
     }
-
     try {
-      const lame = await loadLame();
-      const AC = window.AudioContext || window.webkitAudioContext;
-      const ac = new AC();
-      let audioBuf;
-      try { audioBuf = await ac.decodeAudioData(buf.slice(0)); } finally { ac.close().catch(() => {}); }
-      const nCh = Math.min(2, audioBuf.numberOfChannels || 1);
-      const sr = audioBuf.sampleRate || 44100;
-      const enc = new lame.Mp3Encoder(nCh, sr, 128);
-      const toI16 = (f32) => {
-        const out = new Int16Array(f32.length);
-        for (let i = 0; i < f32.length; i++) {
-          const v = Math.max(-1, Math.min(1, f32[i]));
-          out[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
-        }
-        return out;
-      };
-      const left = toI16(audioBuf.getChannelData(0));
-      const right = nCh === 2 ? toI16(audioBuf.getChannelData(1)) : null;
-      const chunks = [];
-      const step = 1152 * 40;
-      for (let i = 0; i < left.length; i += step) {
-        const l = left.subarray(i, i + step);
-        const mp3buf = nCh === 2 ? enc.encodeBuffer(l, right.subarray(i, i + step)) : enc.encodeBuffer(l);
-        if (mp3buf.length) chunks.push(new Uint8Array(mp3buf));
-        if (i % (step * 4) === 0) await new Promise((r) => setTimeout(r, 0));
-      }
-      const tail = enc.flush();
-      if (tail.length) chunks.push(new Uint8Array(tail));
-      const blobUrl = URL.createObjectURL(new Blob(chunks, { type: 'audio/mpeg' }));
-      triggerBrowserDownload(blobUrl, `${baseTitle}.mp3`);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
-      clearYtToasts();
-      toast('MP3 ready — downloading');
+      const mp3Blob = await decodeAndEncodeMp3Blob(buf);
+      saveBlob(mp3Blob, `${resolvedTitle}.mp3`, 'MP3 ready — downloading');
     } catch {
       const ext = /webm/i.test(ctype) ? 'webm' : 'm4a';
-      const blobUrl = URL.createObjectURL(new Blob([buf], { type: ctype }));
-      triggerBrowserDownload(blobUrl, `${baseTitle}.${ext}`);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
-      clearYtToasts();
-      toast(`Saved audio as .${ext}`);
+      saveBlob(new Blob([buf], { type: ctype }), `${resolvedTitle}.${ext}`, `Saved audio as .${ext}`);
     }
-  } catch {
-    clearYtToasts();
-    toast('MP3 download failed. Check your connection.');
+  } catch (e) {
+    clearYtToast();
+    toast((e && e.message) || 'YouTube download failed. Check your connection.');
   }
 }
 /* the player floats above the app: big, or a small corner player that keeps playing while you use SyncPad */
@@ -7022,7 +7080,7 @@ function openUrl(url) {
   if (!info) { window.open(url, '_blank', 'noopener'); return; }
   if (!yt.box) {
     const box = document.createElement('div');
-    box.innerHTML = `<div class="yt-shade"></div><div class="yt-card"><div class="yt-bar"><span class="yt-note"><svg class="ic"><use href="#i-lock"/></svg><span>Private — not saved to your YouTube history</span></span><span class="spacer"></span><button class="btn btn-sm" id="yt-dl-mp3" title="Download MP3"><svg class="ic"><use href="#i-download"/></svg><span>MP3</span></button><button class="btn btn-sm" id="yt-dl-mp4" title="Download Video (MP4)"><svg class="ic"><use href="#i-download"/></svg><span>Video</span></button><button class="btn btn-sm" id="yt-pop" title="Full screen — then swipe up and it keeps playing over your other apps"><svg class="ic"><use href="#i-fit"/></svg><span>Pop out</span></button><a class="btn btn-sm" id="yt-open" target="_blank" rel="noopener noreferrer">Open in YouTube</a><button class="icon-btn" id="yt-min" aria-label="Keep playing in the corner" title="Keep playing in the corner"><svg class="ic"><use href="#i-chev"/></svg></button><button class="icon-btn" id="yt-max" aria-label="Bigger" title="Bigger"><svg class="ic"><use href="#i-fit"/></svg></button><button class="icon-btn" id="yt-close" aria-label="Stop and close" title="Stop and close"><svg class="ic"><use href="#i-x"/></svg></button></div><div class="yt-frame"></div></div>`;
+    box.innerHTML = `<div class="yt-shade"></div><div class="yt-card"><div class="yt-bar"><span class="yt-note"><svg class="ic"><use href="#i-lock"/></svg><span>Private — not saved to your YouTube history</span></span><span class="spacer"></span><button class="btn btn-sm" id="yt-dl-mp3" title="Download MP3"><svg class="ic"><use href="#i-download"/></svg><span>MP3</span></button><button class="btn btn-sm" id="yt-dl-m4a" title="Download M4A Audio"><svg class="ic"><use href="#i-download"/></svg><span>M4A</span></button><button class="btn btn-sm" id="yt-dl-mp4" title="Download Video (MP4)"><svg class="ic"><use href="#i-download"/></svg><span>Video</span></button><button class="btn btn-sm" id="yt-pop" title="Full screen — then swipe up and it keeps playing over your other apps"><svg class="ic"><use href="#i-fit"/></svg><span>Pop out</span></button><a class="btn btn-sm" id="yt-open" target="_blank" rel="noopener noreferrer">Open in YouTube</a><button class="icon-btn" id="yt-min" aria-label="Keep playing in the corner" title="Keep playing in the corner"><svg class="ic"><use href="#i-chev"/></svg></button><button class="icon-btn" id="yt-max" aria-label="Bigger" title="Bigger"><svg class="ic"><use href="#i-fit"/></svg></button><button class="icon-btn" id="yt-close" aria-label="Stop and close" title="Stop and close"><svg class="ic"><use href="#i-x"/></svg></button></div><div class="yt-frame"></div></div>`;
     document.body.append(box);
     yt.box = box;
     box.addEventListener('click', (e) => {
@@ -7030,6 +7088,7 @@ function openUrl(url) {
       else if (e.target.closest('#yt-max')) ytMode('big');
       else if (e.target.closest('#yt-pop')) ytPopOut();
       else if (e.target.closest('#yt-dl-mp3')) { if (yt.url) downloadYoutube(yt.url, 'mp3'); }
+      else if (e.target.closest('#yt-dl-m4a')) { if (yt.url) downloadYoutube(yt.url, 'm4a'); }
       else if (e.target.closest('#yt-dl-mp4')) { if (yt.url) downloadYoutube(yt.url, 'mp4'); }
       else if (e.target.closest('#yt-close')) ytMode('');
       else if (e.target.closest('#yt-open')) ytMode('');

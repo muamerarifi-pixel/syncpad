@@ -129,7 +129,7 @@ async function fetchVisitorData(videoId) {
 }
 
 function cacheKeyUrl(videoId) {
-  return `https://yt-cache.internal/v1/${videoId}`;
+  return `https://yt-cache.internal/v2/${videoId}`;
 }
 
 async function readStreamCache(videoId) {
@@ -265,6 +265,27 @@ export async function resolveYoutubeStreams(videoId, opts = {}) {
 
   // Prefer ANDROID muxed video for video; prefer IOS audio first since ANDROID adaptive often 403s from edge IPs
   best.audios.sort((a, b) => (a.client === 'IOS' ? -1 : b.client === 'IOS' ? 1 : 0));
+
+  // Verify adaptive audio > 1.5 MB actually works near the tail (YouTube returns 403 past ~1.5 MB without PO tokens on many videos)
+  if (best.audios.length) {
+    const tested = await Promise.all(best.audios.map(async (a) => {
+      if (a.size && a.size <= 1572864) return a;
+      try {
+        const probeStart = a.size ? Math.min(a.size - 1024, Math.max(2097152, Math.floor(a.size * 0.75))) : 2097152;
+        const probe = await fetch(a.url, {
+          signal: AbortSignal.timeout(4000),
+          headers: { 'User-Agent': a.ua, 'Range': `bytes=${probeStart}-${probeStart + 1023}` }
+        });
+        const ok = probe.ok || probe.status === 206;
+        try { await probe.body?.cancel(); } catch {}
+        return ok ? a : null;
+      } catch {
+        return null;
+      }
+    }));
+    best.audios = tested.filter(Boolean);
+  }
+
   best.video = best.videos[0] || null;
   best.audio = best.audios[0] || null;
 
@@ -275,7 +296,7 @@ export async function resolveYoutubeStreams(videoId, opts = {}) {
   return best;
 }
 
-const FIRST_CHUNK = 4 * 1024 * 1024;
+const FIRST_CHUNK = 8 * 1024 * 1024;
 const NEXT_CHUNK = 8 * 1024 * 1024;
 
 function parseClientRange(header) {
@@ -302,8 +323,12 @@ export async function proxyYoutubeDownload(request, url) {
   const videoId = YT_ID_RE.test(raw) ? raw : extractYoutubeId(raw);
   if (!videoId) return new Response(JSON.stringify({ error: 'bad_video' }), { status: 400, headers: { 'content-type': 'application/json' } });
 
-  const mode = url.searchParams.get('mode') === 'audio' ? 'audio' : 'video';
+  const rawMode = url.searchParams.get('mode');
+  const mode = (rawMode === 'audio' || rawMode === 'm4a') ? 'audio' : 'video';
   let info = await resolveYoutubeStreams(videoId);
+  if (info.error) {
+    info = await resolveYoutubeStreams(videoId, { bypassCache: true });
+  }
   if (info.error) {
     return new Response(JSON.stringify({ error: info.error, reason: info.reason || '' }), {
       status: 502,
@@ -340,7 +365,9 @@ export async function proxyYoutubeDownload(request, url) {
       title,
       mime: stream.mime,
       ext,
-      size: stream.size
+      size: stream.size,
+      hasDirectAudio: Boolean(info.audios?.length),
+      muxed: /^video\//i.test(stream.mime || '')
     }), {
       headers: { 'content-type': 'application/json', 'cache-control': 'no-store' }
     });
@@ -356,10 +383,18 @@ export async function proxyYoutubeDownload(request, url) {
     let firstEnd = reqStart + FIRST_CHUNK - 1;
     if (reqEnd != null) firstEnd = Math.min(firstEnd, reqEnd);
     if (s.size) firstEnd = Math.min(firstEnd, s.size - 1);
-    const res = await fetch(s.url, {
+    let res = await fetch(s.url, {
       method,
       headers: { 'User-Agent': sUa, 'Range': `bytes=${reqStart}-${firstEnd}` }
     });
+    if (res.status === 200 && clientRange && !res.headers.get('content-range')) {
+      try { await res.body?.cancel(); } catch {}
+      const sep = s.url.includes('?') ? '&' : '?';
+      res = await fetch(`${s.url}${sep}range=${reqStart}-${firstEnd}`, {
+        method,
+        headers: { 'User-Agent': sUa }
+      });
+    }
     return { res, ua: sUa };
   };
 
