@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.84';
+const VERSION = '3.0.85';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -5056,9 +5056,15 @@ function declutterNote() {
   const flush = () => {
     if (!box.childNodes.length) return;
     const html = box.innerHTML;
-    const txt = slicePlainText(box);
-    const hasRich = !!box.querySelector('h1, h2, h3, h4, h5, h6, ul, ol, blockquote, table, pre, b, strong, i, em, u, s, code, a');
-    if (txt.trim()) out += noteFromAi(txt, hasRich ? html : '', o);
+    const hasRich = !!box.querySelector('h1, h2, h3, h4, h5, h6, ul, ol, blockquote, table, pre, b, strong, i, em, u, s, code') ||
+      [...box.querySelectorAll('a[href]')].some((a) => a.textContent.trim() !== (a.getAttribute('href') || '').trim());
+    if (hasRich) {
+      // Keep formatted HTML on the rich-HTML path so existing <b>/<i>/<ul>/<h3> styling is never stripped by a plain-text round-trip
+      if ((box.textContent || '').trim()) out += noteFromAi('', html, o);
+    } else {
+      const txt = slicePlainText(box);
+      if (txt.trim()) out += noteFromAi(txt, '', o);
+    }
     box = document.createElement('div');
   };
   const processChild = (node) => {
