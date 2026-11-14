@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.66';
+const VERSION = '3.0.67';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -738,7 +738,17 @@ function wire() {
 
   // Ctrl+Shift+V pastes exactly what was copied (no de-clutter)
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'v') ui.rawPasteUntil = Date.now() + 1500;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.shiftKey && e.key.toLowerCase() === 'v') ui.rawPasteUntil = Date.now() + 1500;
+    if (el.lock.hidden && !e.isComposing && ((mod && !e.altKey && !e.shiftKey) || (e.altKey && !mod && !e.shiftKey)) && (e.key.toLowerCase() === 'n' || e.code === 'KeyN')) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!el.menu.hidden) closeMenu();
+      if (ui.presenting) stopPresent();
+      if (el.app.classList.contains('searching')) el.app.classList.remove('searching');
+      $$('dialog[open]').forEach((d) => { try { d.close(); } catch {} });
+      newNote();
+    }
   }, true);
 
   // keyboard
@@ -772,9 +782,6 @@ function wire() {
       closeMenu();
     } else if (e.key === 'Escape' && ui.nselecting && ui.tab === 'notes' && !$('dialog[open]')) {
       exitNoteSelect();
-    } else if (e.altKey && !mod && e.key.toLowerCase() === 'n' && !$('dialog[open]')) {
-      e.preventDefault();
-      newNote();
     } else if (ui.tab === 'notes' && mod && e.key.toLowerCase() === 'a' && !$('dialog[open]') && !(e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]'))) {
       e.preventDefault();
       if (!ui.nselecting) enterNoteSelect();
