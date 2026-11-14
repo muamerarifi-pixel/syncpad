@@ -284,7 +284,7 @@ a { color: var(--link); }
 
 .empty {
   margin: auto; text-align: center; max-width: 440px; padding: 32px 20px; display: flex; flex-direction: column;
-  align-items: center; gap: 10px; color: var(--muted);
+  align-items: center; gap: 10px; color: var(--muted); user-select: none; -webkit-user-select: none;
 }
 .empty-art {
   width: 84px; height: 84px; border-radius: 26px; display: grid; place-items: center; margin-bottom: 4px;
@@ -697,6 +697,17 @@ a { color: var(--link); }
 .feed { position: relative; }
 .marquee { position: absolute; z-index: 6; border: 1px solid var(--accent); background: rgba(107, 114, 128, .14); border-radius: 4px; pointer-events: none; }
 .app.marquee-on .feed { user-select: none; -webkit-user-select: none; }
+.feed-tap-ring {
+  position: fixed; z-index: 90; width: 48px; height: 48px; margin: -24px 0 0 -24px;
+  border-radius: 999px; pointer-events: none;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  animation: spTapRing .36s cubic-bezier(.16, 1, .3, 1) forwards;
+}
+@keyframes spTapRing {
+  from { transform: scale(.35); opacity: .95; }
+  to { transform: scale(1.35); opacity: 0; }
+}
 @media (hover: hover) and (pointer: fine) { .ri, .tile { user-select: none; -webkit-user-select: none; } .ri-text { user-select: text; -webkit-user-select: text; } }
 @media (max-width: 860px) {
   .type-row { display: none; }

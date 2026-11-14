@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.62';
+const VERSION = '3.0.63';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -314,6 +314,7 @@ function wire() {
   el.typeChips.addEventListener('click', (e) => { const b = e.target.closest('[data-type]'); if (b) { haptic('tick'); setDropType(b.dataset.type); } });
   el.btnType.addEventListener('click', () => typeMenu(el.btnType));
   initMarquee();
+  initEmptyUpload();
   el.viewToggle.addEventListener('click', (e) => { const b = e.target.closest('[data-layout]'); if (b) { haptic('tick'); setLayout(b.dataset.layout); } });
   el.btnSelect.addEventListener('click', () => { haptic('tick'); (ui.selecting ? exitSelect() : enterSelect()); });
   el.btnFolderMore.addEventListener('click', () => folderMenu(el.btnFolderMore));
@@ -1712,6 +1713,118 @@ function initMarquee() {
   };
   addEventListener('pointerup', end);
   addEventListener('pointercancel', end);
+}
+
+/* ───────── double-tap or hold empty space in Drops to upload files ───────── */
+
+function initEmptyUpload() {
+  const feed = el.feed;
+  if (!feed) return;
+  let tap = null;
+  let lastTap = { t: 0, x: 0, y: 0 };
+  let lastOpen = 0;
+
+  const isEmptySpace = (t) => {
+    if (!t || ui.tab !== 'drops' || ui.selecting || (lk && lk.mode)) return false;
+    if (t.closest('article[data-id], button, a, input, textarea, select, [role="button"], .tile-more, .ri-more, .marquee')) return false;
+    return feed.contains(t);
+  };
+
+  const spawnTapRing = (x, y) => {
+    if (reducedMotion() || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    const ring = document.createElement('span');
+    ring.className = 'feed-tap-ring';
+    ring.style.left = `${x}px`;
+    ring.style.top = `${y}px`;
+    document.body.appendChild(ring);
+    setTimeout(() => ring.remove(), 380);
+  };
+
+  const triggerUpload = (x, y) => {
+    const now = Date.now();
+    if (now - lastOpen < 450) return;
+    lastOpen = now;
+    haptic('heavy');
+    spawnTapRing(x, y);
+    el.fileInput.click();
+  };
+
+  const cancelHold = () => {
+    if (!tap) return;
+    clearTimeout(tap.timer);
+  };
+
+  feed.addEventListener('pointerdown', (e) => {
+    if (e.isPrimary === false) { cancelHold(); tap = null; return; }
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (!isEmptySpace(e.target)) { tap = null; return; }
+    const fr = feed.getBoundingClientRect();
+    if (e.clientX > fr.right - 14) { tap = null; return; }
+    cancelHold();
+    const cur = {
+      id: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      pointerType: e.pointerType,
+      target: e.target,
+      moved: false,
+      fired: false,
+      timer: 0
+    };
+    cur.timer = setTimeout(() => {
+      if (tap !== cur || cur.moved || !isEmptySpace(cur.target)) return;
+      cur.fired = true;
+      ui.suppressClick = true;
+      setTimeout(() => { ui.suppressClick = false; }, 250);
+      triggerUpload(cur.x, cur.y);
+    }, 460);
+    tap = cur;
+  });
+
+  feed.addEventListener('pointermove', (e) => {
+    if (!tap || e.pointerId !== tap.id || tap.moved) return;
+    if (Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 8) {
+      tap.moved = true;
+      clearTimeout(tap.timer);
+    }
+  }, { passive: true });
+
+  const endTap = (e, cancelled) => {
+    if (!tap || e.pointerId !== tap.id) return;
+    const cur = tap;
+    clearTimeout(cur.timer);
+    tap = null;
+    if (cancelled || cur.fired || cur.moved) return;
+    if (e.pointerType !== 'mouse' && isEmptySpace(e.target)) {
+      const now = Date.now();
+      if (now - lastTap.t <= 340 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) <= 36) {
+        lastTap.t = 0;
+        e.preventDefault();
+        triggerUpload(e.clientX, e.clientY);
+      } else {
+        lastTap = { t: now, x: e.clientX, y: e.clientY };
+      }
+    }
+  };
+  feed.addEventListener('pointerup', (e) => endTap(e, false));
+  feed.addEventListener('pointercancel', (e) => endTap(e, true));
+  feed.addEventListener('scroll', () => {
+    if (tap) { tap.moved = true; clearTimeout(tap.timer); }
+  }, { passive: true });
+
+  feed.addEventListener('dblclick', (e) => {
+    if (!isEmptySpace(e.target)) return;
+    const fr = feed.getBoundingClientRect();
+    if (e.clientX > fr.right - 14) return;
+    e.preventDefault();
+    triggerUpload(e.clientX, e.clientY);
+  });
+
+  feed.addEventListener('contextmenu', (e) => {
+    if ((Date.now() - lastOpen < 450 || ui.lastPointer === 'touch') && isEmptySpace(e.target)) {
+      e.preventDefault();
+    }
+  });
 }
 
 /* ───────── photo markup: cover / draw over sensitive details ───────── */
