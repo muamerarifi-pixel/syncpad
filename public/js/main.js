@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.69';
+const VERSION = '3.0.71';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -6871,12 +6871,16 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '') {
     return;
   }
 
+  const clearYtToasts = () => {
+    for (const t of $$('.toast', el.toasts)) if (t.firstElementChild && /Downloading & converting to MP3/.test(t.firstElementChild.textContent)) t.remove();
+  };
   toast('Downloading & converting to MP3…', { duration: 60000 });
   try {
     const res = await fetch(`/api/ytdl?${q}`);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      toast(err.reason || 'Could not download audio for this YouTube video.');
+      clearYtToasts();
+      toast(err.reason || `Audio download failed (HTTP ${res.status}).`);
       return;
     }
     const rawName = filenameFromHeader(res.headers.get('content-disposition'), `${cleanHint || 'youtube-' + info.id}.m4a`);
@@ -6886,10 +6890,11 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '') {
 
     // Very long recordings (>48 MB) save directly as original audio so low-RAM phones don't stall
     if (buf.byteLength > 48 * 1024 * 1024) {
-      const ext = /webm/i.test(ctype) ? 'webm' : 'm4a';
+      const ext = /webm/i.test(ctype) ? 'webm' : /^video\/mp4/i.test(ctype) ? 'mp4' : 'm4a';
       const blobUrl = URL.createObjectURL(new Blob([buf], { type: ctype }));
       triggerBrowserDownload(blobUrl, `${baseTitle}.${ext}`);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+      clearYtToasts();
       toast(`Long audio saved as .${ext}`);
       return;
     }
@@ -6926,15 +6931,18 @@ async function downloadYoutube(url, mode = 'mp4', hintTitle = '') {
       const blobUrl = URL.createObjectURL(new Blob(chunks, { type: 'audio/mpeg' }));
       triggerBrowserDownload(blobUrl, `${baseTitle}.mp3`);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+      clearYtToasts();
       toast('MP3 ready — downloading');
     } catch {
       const ext = /webm/i.test(ctype) ? 'webm' : 'm4a';
       const blobUrl = URL.createObjectURL(new Blob([buf], { type: ctype }));
       triggerBrowserDownload(blobUrl, `${baseTitle}.${ext}`);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+      clearYtToasts();
       toast(`Saved audio as .${ext}`);
     }
   } catch {
+    clearYtToasts();
     toast('MP3 download failed. Check your connection.');
   }
 }
