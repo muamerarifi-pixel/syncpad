@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.80';
+const VERSION = '3.0.81';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -4384,8 +4384,7 @@ function noteMenu(anchor, at) {
       ? { icon: 'note', label: 'Turn into normal note', run: turnIntoPage }
       : { icon: 'canvas', label: 'Turn into canvas', run: turnIntoCanvas },
     ...(n.data.canvas ? [] : [
-      { icon: 'music', label: 'Add Quran audio (offline MP3)…', run: () => openQuranPicker() },
-      { icon: 'sparkle', label: 'De-clutter text', run: declutterNote }
+      { icon: 'music', label: 'Add Quran audio (offline MP3)…', run: () => openQuranPicker() }
     ]),
     ...(!n.data.canvas && Math.abs((currentZoom || 1) - 1) > 0.01 ? [{ icon: 'fit', label: `Reset zoom to 100% (now ${Math.round(currentZoom * 100)}%)`, run: () => el.btnZoomReset.click() }] : []),
     { icon: 'download', label: 'Download (keeps colours)', run: downloadNote }
