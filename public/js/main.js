@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.65';
+const VERSION = '3.0.66';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2446,8 +2446,11 @@ function linkPreviewData(url) {
         if (j && !j.error) {
           let isFavicon = !!j.isFavicon;
           let thumb = '';
-          if (j.image) thumb = await shrinkImage(j.image, 240);
-          else if (j.imageUrl) thumb = j.imageUrl;
+          const rawImg = j.image || j.imageUrl || '';
+          if (rawImg) thumb = await shrinkImage(rawImg, 240);
+          if (!thumb && j.imageUrl && j.imageUrl !== rawImg) {
+            thumb = await shrinkImage(j.imageUrl, 240);
+          }
           if (!thumb && host) {
             thumb = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=128`;
             isFavicon = true;
@@ -2471,9 +2474,12 @@ function linkPreviewData(url) {
 }
 
 function shrinkImage(src, max) {
-  return new Promise((resolve) => {
+  const isRemote = /^https?:\/\//i.test(src);
+  const attempt = (withCors) => new Promise((resolve) => {
     const im = new Image();
+    if (withCors && isRemote) im.crossOrigin = 'anonymous';
     im.onload = () => {
+      if (isRemote && !withCors) { resolve(src); return; }
       try {
         const k = Math.min(1, max / Math.max(im.naturalWidth || 1, im.naturalHeight || 1));
         const c = document.createElement('canvas');
@@ -2482,13 +2488,41 @@ function shrinkImage(src, max) {
         c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
         let d = c.toDataURL('image/webp', 0.72);
         if (!d.startsWith('data:image/webp')) d = c.toDataURL('image/jpeg', 0.72);
-        resolve(d.length < 60000 ? d : '');
-      } catch { resolve(''); }
+        if (d.length >= 60000) d = c.toDataURL('image/jpeg', 0.5);
+        resolve(d.length < 60000 ? d : (isRemote ? src : ''));
+      } catch {
+        resolve(isRemote ? src : '');
+      }
     };
-    im.onerror = () => resolve('');
+    im.onerror = () => resolve(null);
     im.src = src;
   });
+  return attempt(isRemote).then((res) => {
+    if (res !== null) return res;
+    if (isRemote) return attempt(false).then((r2) => r2 || '');
+    return '';
+  });
 }
+
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!img || img.tagName !== 'IMG') return;
+  if (img.classList.contains('link-media-thumb') && !img.dataset.fbTried) {
+    img.dataset.fbTried = '1';
+    try {
+      const u = new URL(img.src);
+      if (/^https?:$/.test(u.protocol)) {
+        img.classList.remove('link-media-thumb');
+        img.classList.add('fav-icon');
+        img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(u.hostname)}&sz=128`;
+        return;
+      }
+    } catch {}
+  }
+  if (img.classList.contains('link-media-thumb') || img.classList.contains('fav-icon') || img.closest('.link-card')) {
+    img.style.display = 'none';
+  }
+}, true);
 
 /* ───── links in notes: typed or pasted links become real links, with a small preview card ───── */
 const URL_RE = /(^|[\s(\[{"'])((?:https?:\/\/|www\.)[^\s<>"'`]+[^\s<>"'`.,;:!?)\]}])/gi;

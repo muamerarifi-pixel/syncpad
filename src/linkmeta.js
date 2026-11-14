@@ -172,13 +172,21 @@ export function extractHtmlMetadata(html, targetUrl) {
     // 2. Description
     result.description = findMeta(['og:description', 'twitter:description', 'description']);
 
-    // 3. Image (og:image -> twitter:image -> link image_src)
-    let rawImg = findMeta(['og:image', 'og:image:url', 'og:image:secure_url', 'twitter:image', 'twitter:image:src']);
+    // 3. Image (og:image -> twitter:image -> itemprop=image -> link image_src -> JSON-LD image)
+    let rawImg = findMeta(['og:image:secure_url', 'og:image:url', 'og:image', 'twitter:image:src', 'twitter:image', 'image']);
     if (!rawImg) {
       const linkImgMatch = html.match(/<link\s+[^>]*rel=["']image_src["'][^>]*href=["']([^"']+)["']/i) ||
                            html.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']image_src["']/i);
       if (linkImgMatch && linkImgMatch[1]) {
-        rawImg = linkImgMatch[1].trim();
+        rawImg = decodeHtmlEntities(linkImgMatch[1].trim());
+      }
+    }
+    if (!rawImg) {
+      const ldMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+      if (ldMatch && ldMatch[1]) {
+        const imgField = ldMatch[1].match(/"image"\s*:\s*(?:"(https?:\/\/[^"]+)"|\[\s*"(https?:\/\/[^"]+)"|\{\s*[^}]*"url"\s*:\s*"(https?:\/\/[^"]+)")/i);
+        const foundLd = imgField && (imgField[1] || imgField[2] || imgField[3]);
+        if (foundLd) rawImg = decodeHtmlEntities(foundLd.trim());
       }
     }
     if (rawImg) {
@@ -204,7 +212,7 @@ export function extractHtmlMetadata(html, targetUrl) {
                       html.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']apple-touch-icon(?:-precomposed)?["']/i);
     if (iconMatch && iconMatch[1]) {
       try {
-        result.favicon = new URL(iconMatch[1].trim(), targetUrl).href;
+        result.favicon = new URL(decodeHtmlEntities(iconMatch[1].trim()), targetUrl).href;
       } catch (_) {}
     }
     if (!result.image && result.favicon) {
@@ -247,7 +255,7 @@ async function getSpecialPreview(parsed, opts, signal) {
       isFavicon: false
     };
     if (opts.image) {
-      out.image = (await smallImage(mqThumb, signal)) || mqThumb;
+      out.image = await smallImage(mqThumb, signal, parsed.origin + '/');
     }
     return out;
   }
@@ -273,7 +281,7 @@ async function getSpecialPreview(parsed, opts, signal) {
             isFavicon: !photo
           };
           if (opts.image && photo) {
-            out.image = (await smallImage(photo, signal)) || photo;
+            out.image = await smallImage(photo, signal, parsed.origin + '/');
           }
           return out;
         }
@@ -330,7 +338,7 @@ async function getSpecialPreview(parsed, opts, signal) {
           isFavicon: !meta.image
         };
         if (opts.image && meta.image) {
-          out.image = (await smallImage(meta.image, signal)) || meta.image;
+          out.image = await smallImage(meta.image, signal, parsed.origin + '/');
         }
         return out;
       }
@@ -368,7 +376,7 @@ async function getSpecialPreview(parsed, opts, signal) {
           isFavicon: !meta.image
         };
         if (opts.image && meta.image) {
-          out.image = (await smallImage(meta.image, signal)) || meta.image;
+          out.image = await smallImage(meta.image, signal, parsed.origin + '/');
         }
         return out;
       }
@@ -388,12 +396,18 @@ async function getSpecialPreview(parsed, opts, signal) {
       if (rdRes.ok) {
         const rd = await rdRes.json();
         if (rd && rd.title) {
-          return {
+          const thumbUrl = rd.thumbnail_url ? decodeHtmlEntities(String(rd.thumbnail_url)) : '';
+          const out = {
             title: decodeHtmlEntities(rd.title),
             site: 'Reddit',
             desc: rd.author_name ? `Posted by u/${rd.author_name}` : '',
-            isFavicon: true
+            imageUrl: thumbUrl,
+            isFavicon: !thumbUrl
           };
+          if (opts.image && thumbUrl) {
+            out.image = await smallImage(thumbUrl, signal, parsed.origin + '/');
+          }
+          return out;
         }
       }
     } catch (_) {}
@@ -413,9 +427,33 @@ async function getSpecialPreview(parsed, opts, signal) {
           isFavicon: false
         };
         if (opts.image && vm.thumbnail_url) {
-          out.image = (await smallImage(vm.thumbnail_url, signal)) || vm.thumbnail_url;
+          out.image = await smallImage(vm.thumbnail_url, signal, parsed.origin + '/');
         }
         return out;
+      }
+    } catch (_) {}
+  }
+
+  // 7. TikTok
+  if (host.includes('tiktok.com')) {
+    try {
+      const tkRes = await safeFetchWithRedirects(`https://www.tiktok.com/oembed?url=${encodeURIComponent(href)}`, { signal });
+      if (tkRes.ok) {
+        const tk = await tkRes.json();
+        if (tk && (tk.title || tk.author_name)) {
+          const thumbUrl = tk.thumbnail_url ? decodeHtmlEntities(String(tk.thumbnail_url)) : '';
+          const out = {
+            title: decodeHtmlEntities(tk.title || `TikTok by ${tk.author_name}`),
+            site: 'TikTok',
+            desc: tk.author_name ? `By ${tk.author_name}` : '',
+            imageUrl: thumbUrl,
+            isFavicon: !thumbUrl
+          };
+          if (opts.image && thumbUrl) {
+            out.image = await smallImage(thumbUrl, signal, parsed.origin + '/');
+          }
+          return out;
+        }
       }
     } catch (_) {}
   }
@@ -431,7 +469,7 @@ export async function getLinkPreview(target, opts = {}) {
   try { parsed = new URL(target); } catch { return { error: 'invalid' }; }
   if (!['http:', 'https:'].includes(parsed.protocol) || isPrivateOrLocalHost(parsed.hostname)) return { error: 'blocked' };
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 7000);
+  const timer = setTimeout(() => controller.abort(), 10000);
   try {
     // Check specialized platform handlers first (YouTube, X, Instagram, Facebook, Reddit, etc.)
     const special = await getSpecialPreview(parsed, opts, controller.signal);
@@ -474,9 +512,9 @@ export async function getLinkPreview(target, opts = {}) {
       imageUrl: meta.image || '',
       isFavicon: !meta.image
     };
-    if (opts.image && meta.image) out.image = (await smallImage(meta.image, controller.signal)) || meta.image;
-    if (opts.image && !out.image && meta.favicon) {
-      out.image = await smallImage(meta.favicon, controller.signal);
+    if (opts.image && meta.image) out.image = await smallImage(meta.image, controller.signal, parsed.origin + '/');
+    if (opts.image && !out.image && !out.imageUrl && meta.favicon) {
+      out.image = await smallImage(meta.favicon, controller.signal, parsed.origin + '/');
       out.isFavicon = true;
     }
     return out;
@@ -489,19 +527,32 @@ export async function getLinkPreview(target, opts = {}) {
 }
 
 /** The page's preview picture as a data URL (only images, at most 600 KB) — the app shrinks it to a thumbnail */
-async function smallImage(src, signal) {
+function detectImageMime(bytes) {
+  if (!bytes || bytes.length < 12) return '';
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return 'image/gif';
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return 'image/webp';
+  if (bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0x01 && bytes[3] === 0x00) return 'image/x-icon';
+  return '';
+}
+
+async function smallImage(src, signal, referer) {
   try {
     const u = new URL(src);
     if (!['http:', 'https:'].includes(u.protocol) || isPrivateOrLocalHost(u.hostname)) return '';
-    const res = await safeFetchWithRedirects(u.href, {
-      signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 (compatible; SyncPad/2.0)',
-        'Accept': 'image/*'
-      }
-    });
-    const type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (!res.ok || !/^image\/(png|jpe?g|webp|gif|avif|x-icon|vnd\.microsoft\.icon|svg\+xml)$/.test(type)) return '';
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 (compatible; SyncPad/2.0)',
+      'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/*,*/*;q=0.8'
+    };
+    if (referer) headers['Referer'] = referer;
+    const res = await safeFetchWithRedirects(u.href, { signal, headers });
+    if (!res.ok) return '';
+    let type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const isAllowedImage = /^image\/(png|jpe?g|webp|gif|avif|x-icon|vnd\.microsoft\.icon|svg\+xml)$/.test(type);
+    const maybeBinary = !type || type === 'application/octet-stream' || type === 'binary/octet-stream';
+    if (!isAllowedImage && !maybeBinary) return '';
     const reader = res.body.getReader();
     const chunks = [];
     let total = 0;
@@ -509,10 +560,14 @@ async function smallImage(src, signal) {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > 614400) { try { reader.cancel(); } catch {} return ''; }
+      if (total > 2621440) { try { reader.cancel(); } catch {} return ''; }
       chunks.push(value);
     }
     const bytes = concat(chunks);
+    if (!isAllowedImage) {
+      type = detectImageMime(bytes);
+      if (!type) return '';
+    }
     let bin = '';
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     return `data:${type};base64,${btoa(bin)}`;
