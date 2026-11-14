@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.63';
+const VERSION = '3.0.64';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -2065,6 +2065,7 @@ function onFeedContext(e) {
       { icon: 'clip', label: 'Add files…', run: () => el.fileInput.click() },
       { icon: 'doc', label: 'New document…', run: newDocument },
       { icon: 'folder', label: 'New folder…', run: async () => { const f = await createFolder(); if (f) setDropView('f:' + f.id); } },
+      { icon: 'refresh', label: 'Sync now', run: () => { haptic('click'); refreshNow(); } },
       { icon: 'check', label: 'Select all', run: () => setSelection(new Set(visibleDrops().map((i) => i.id))) }
     ], { at });
     return;
