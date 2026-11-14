@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.59';
+const VERSION = '3.0.60';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -140,10 +140,8 @@ function updateManifest() {
     t = localStorage.getItem('sp-theme') || 'system';
   } catch {}
   const dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-  // the installed app carries BOTH colour sets (light + dark) and Android picks by the phone's own mode,
-  // so the bottom bar is never stuck in whichever theme was on when the app was installed
-  void dark; void bg;
-  el.manifestLink.href = '/app.webmanifest?s=' + encodeURIComponent(linkCode());
+  void bg;
+  el.manifestLink.href = '/app.webmanifest?s=' + encodeURIComponent(linkCode()) + '&t=' + (dark ? 'dark' : 'light');
 }
 
 const me = () => store.get('device');
@@ -4684,6 +4682,10 @@ function applyTheme() {
     m.removeAttribute('media');
     m.content = col;
   }
+  const csMeta = document.querySelector('meta[name="color-scheme"]');
+  if (csMeta) csMeta.content = scheme;
+  const sbMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+  if (sbMeta) sbMeta.content = dark ? 'black-translucent' : 'default';
   updateManifest();
   requestAnimationFrame(syncThemeColor);
 }

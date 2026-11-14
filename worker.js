@@ -14,7 +14,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 
-const VERSION = '3.0.59';
+const VERSION = '3.0.60';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -45,8 +45,9 @@ function globalStub(env) {
 
 function manifest(url) {
   const s = url.searchParams.get('s') || '';
-  // light colours on top, dark ones under color_scheme_dark: Android picks by the phone's own mode
-  const dark = false;
+  // light colours on top by default, or dark when explicitly requested (?t=dark);
+  // color_scheme_dark also lets supporting OSes switch automatically in Auto mode
+  const dark = url.searchParams.get('t') === 'dark';
   const bg = '';
   const bgColors = {
     light: { classic: '#f2e8d0', smooth: '#f7f4f0', cotton: '#f3efe6', recycled: '#e6dfd0', lined: '#f6f7f9', linen: '#ece6da', washi: '#f5f1e8', vintage: '#e5d7b8', none: '#ffffff' },

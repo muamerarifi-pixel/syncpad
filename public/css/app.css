@@ -1572,6 +1572,7 @@ html, body { overscroll-behavior-x: none; }
 /* phones: bottom tabs get a pill behind the current one */
 @media (max-width: 860px) {
   .tabbar { box-shadow: 0 -4px 14px rgba(16, 24, 40, .05); }
+  [data-theme="dark"] .tabbar { box-shadow: 0 -4px 14px rgba(0, 0, 0, .35); }
   .tabbar-btn .ic { padding: 4px 18px; border-radius: 14px; box-sizing: content-box; transition: background .15s; }
   .tabbar-btn[aria-selected="true"] .ic { background: var(--green-soft); color: var(--accent); }
   .tabbar-btn[aria-selected="true"] { color: var(--accent); }

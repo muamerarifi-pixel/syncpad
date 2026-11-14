@@ -12,5 +12,9 @@ try {
   var color = dark ? '#16181e' : '#ffffff';
   var m = document.querySelector('meta[name="theme-color"]');
   if (m) { m.removeAttribute('media'); m.content = color; }
+  var cs = document.querySelector('meta[name="color-scheme"]');
+  if (cs) cs.content = dark ? 'dark' : 'light';
+  var sb = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+  if (sb) sb.content = dark ? 'black-translucent' : 'default';
   if (localStorage.getItem('sp-pin')) document.documentElement.classList.add('locked');
 } catch (e) {}
