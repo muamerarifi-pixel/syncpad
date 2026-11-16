@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.87';
+const VERSION = '3.0.88';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -4055,6 +4055,20 @@ const bgAudio = {
     if (!timeOnly) {
       window.dispatchEvent(new CustomEvent('sp-bgaudio-sync'));
     }
+    const qDlg = $('#dlg-quran');
+    if (qDlg && qDlg.open) {
+      window.dispatchEvent(new CustomEvent('sp-bgaudio-time', {
+        detail: this.isStream && this.fileId ? {
+          url: this.streamUrl,
+          playing,
+          cur,
+          dur,
+          ratio,
+          timeLabel,
+          ayah: activeAyah
+        } : null
+      }));
+    }
 
     if (el.editorText) {
       for (const card of $$('div.audio-card[data-file]', el.editorText)) {
@@ -7917,6 +7931,25 @@ async function openQuranPicker() {
       openDialog,
       closeDialog,
       getPlayingUrl: () => bgAudio.activeStreamUrl(),
+      getStreamState: () => {
+        if (!bgAudio.isStream || !bgAudio.fileId) return null;
+        const a = bgAudio.el;
+        const curRaw = (a && Number.isFinite(a.currentTime)) ? a.currentTime : 0;
+        const cur = (bgAudio._pendingSeek != null && curRaw < 1) ? bgAudio._pendingSeek : curRaw;
+        const dur = (a && Number.isFinite(a.duration) && a.duration > 0) ? a.duration : (bgAudio._pendingDur || 0);
+        return {
+          url: bgAudio.streamUrl,
+          playing: !!(a && !a.paused),
+          cur,
+          dur,
+          ratio: dur > 0 ? Math.max(0, Math.min(1, cur / dur)) : 0,
+          timeLabel: dur > 0 ? `${fmtAudioTime(cur)} / ${fmtAudioTime(dur)}` : fmtAudioTime(cur),
+          ayah: bgAudio.currentAyah()
+        };
+      },
+      onSeek: (sec) => bgAudio.seekTo(sec),
+      onSkip: (delta) => bgAudio.seekBy(delta),
+      onScrub: (v) => { bgAudio.scrubbing = !!v; },
       onPreview: ({ surahNum, surahNameEn, surahNameAr, reciterName, urls }) => {
         const title = `${surahNum}. Surah ${surahNameEn} (${surahNameAr})`;
         bgAudio.toggleStream(urls, title, reciterName, reciterName);

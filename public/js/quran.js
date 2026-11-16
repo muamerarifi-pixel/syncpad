@@ -584,7 +584,7 @@ export function getCurrentAyahLabel(titleOrName, subTitle, curSec, durSec, onLoa
   return `Ayah ${ayah}/${data.totalAyahs}`;
 }
 
-export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview, getPlayingUrl }) {
+export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview, getPlayingUrl, getStreamState, onSeek, onSkip, onScrub }) {
   if (!dlg) return;
 
   if (!dlg.dataset.ready || !dlg.querySelector('#quran-style-select')) {
@@ -653,12 +653,20 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
     }
   };
 
+  const readStream = () => {
+    if (typeof getStreamState === 'function') return getStreamState();
+    const u = typeof getPlayingUrl === 'function' ? getPlayingUrl() : '';
+    return u ? { url: u, playing: true, cur: 0, dur: 0, ratio: 0, timeLabel: '0:00', ayah: '' } : null;
+  };
+
+  let renderedUrls = new Map();
   const renderSurahs = () => {
     const styleObj = getStyle();
     const rawQ = surahSearch.value.trim();
     const qLatin = normalizeLatin(rawQ);
     const qNum = /^\d+$/.test(rawQ) ? Number(rawQ) : 0;
-    const playingUrl = typeof getPlayingUrl === 'function' ? getPlayingUrl() : '';
+    const st = readStream();
+    renderedUrls = new Map();
 
     const items = [];
     for (const [num, en, tr, ar] of SURAHS) {
@@ -670,20 +678,37 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
         if (!hitNum && !hitLatin && !hitAr) continue;
       }
       const urls = resolveSurahAudioUrls(styleObj, num);
-      const isPlaying = Boolean(playingUrl && urls.includes(playingUrl));
+      renderedUrls.set(num, urls);
+      const isActive = Boolean(st && st.url && urls.includes(st.url));
+      const isPlaying = Boolean(isActive && st.playing);
+      const ratio = isActive ? (st.ratio || 0) : 0;
+      const pct = (ratio * 100).toFixed(2);
+      const val = Math.round(ratio * 1000);
+      const dur = isActive ? (st.dur || 0) : 0;
+      const timeLabel = isActive ? (st.timeLabel || '0:00') : '0:00';
+      const ayah = isActive ? (st.ayah || '') : '';
       items.push(
-        `<div class="quran-item${isPlaying ? ' is-playing' : ''}" data-surah="${num}">` +
-          `<span class="quran-num">${num}</span>` +
-          `<div class="quran-meta">` +
-            `<div class="quran-en"><strong>${esc(en)}</strong> <span class="quran-tr">· ${esc(tr)}</span></div>` +
-            `<div class="quran-ar" dir="rtl" lang="ar">سورة ${esc(ar)}</div>` +
+        `<div class="quran-item${isActive ? ' is-active' : ''}${isPlaying ? ' is-playing' : ''}" data-surah="${num}">` +
+          `<div class="quran-top">` +
+            `<span class="quran-num">${num}</span>` +
+            `<div class="quran-meta">` +
+              `<div class="quran-en"><strong>${esc(en)}</strong> <span class="quran-tr">· ${esc(tr)}</span></div>` +
+              `<div class="quran-ar" dir="rtl" lang="ar">سورة ${esc(ar)}</div>` +
+            `</div>` +
+            `<div class="quran-acts">` +
+              `<button type="button" class="btn btn-soft btn-sm quran-prev" data-surah="${num}" aria-label="${isPlaying ? 'Pause' : 'Listen'} ${esc(en)}" title="${isPlaying ? 'Pause preview' : 'Listen now (streams online)'}">` +
+                `<svg class="ic"><use href="#i-${isPlaying ? 'pause' : 'play'}"/></svg>` +
+                `<span>${isPlaying ? 'Pause' : 'Listen'}</span>` +
+              `</button>` +
+              `<button type="button" class="btn btn-primary btn-sm quran-add" data-surah="${num}" title="Save MP3 into note for offline & lock-screen playback">+ MP3</button>` +
+            `</div>` +
           `</div>` +
-          `<div class="quran-acts">` +
-            `<button type="button" class="btn btn-soft btn-sm quran-prev" data-surah="${num}" aria-label="${isPlaying ? 'Pause' : 'Listen'} ${esc(en)}" title="${isPlaying ? 'Pause preview' : 'Listen now (streams online)'}">` +
-              `<svg class="ic"><use href="#i-${isPlaying ? 'pause' : 'play'}"/></svg>` +
-              `<span>${isPlaying ? 'Pause' : 'Listen'}</span>` +
-            `</button>` +
-            `<button type="button" class="btn btn-primary btn-sm quran-add" data-surah="${num}" title="Save MP3 into note for offline & lock-screen playback">+ MP3</button>` +
+          `<div class="quran-prog"${isActive ? '' : ' hidden'}>` +
+            `<button type="button" class="qp-skip qp-rw" aria-label="Back 15 seconds" title="Back 15 seconds">−15s</button>` +
+            `<input type="range" class="qp-seek" min="0" max="1000" value="${val}" step="1" style="--p:${pct}%" aria-label="Surah playback position"${dur > 0 ? '' : ' disabled'}>` +
+            `<button type="button" class="qp-skip qp-fw" aria-label="Forward 15 seconds" title="Forward 15 seconds">+15s</button>` +
+            `<span class="qp-time">${esc(timeLabel)}</span>` +
+            `<span class="qp-ayah"${ayah ? '' : ' hidden'}>${esc(ayah)}</span>` +
           `</div>` +
         `</div>`
       );
@@ -691,6 +716,51 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
     listEl.innerHTML = items.length
       ? items.join('')
       : `<div class="quran-empty">No matching Surah found for “${esc(rawQ)}”.</div>`;
+  };
+
+  let scrubbing = false;
+  const syncRows = (st) => {
+    if (!dlg.open) return;
+    for (const row of listEl.querySelectorAll('.quran-item[data-surah]')) {
+      const num = Number(row.dataset.surah);
+      const urls = renderedUrls.get(num) || [];
+      const isActive = Boolean(st && st.url && urls.includes(st.url));
+      const isPlaying = Boolean(isActive && st.playing);
+      row.classList.toggle('is-active', isActive);
+      row.classList.toggle('is-playing', isPlaying);
+      const btn = row.querySelector('.quran-prev');
+      if (btn) {
+        const useEl = btn.querySelector('use');
+        if (useEl) useEl.setAttribute('href', `#i-${isPlaying ? 'pause' : 'play'}`);
+        const lbl = btn.querySelector('span');
+        if (lbl) lbl.textContent = isPlaying ? 'Pause' : 'Listen';
+        const en = (row.querySelector('.quran-en strong') || {}).textContent || '';
+        btn.setAttribute('aria-label', `${isPlaying ? 'Pause' : 'Listen'} ${en}`);
+        btn.title = isPlaying ? 'Pause preview' : 'Listen now (streams online)';
+      }
+      const prog = row.querySelector('.quran-prog');
+      if (prog) {
+        prog.hidden = !isActive;
+        if (isActive) {
+          const ratio = st.ratio || 0;
+          const pct = (ratio * 100).toFixed(2);
+          const dur = st.dur || 0;
+          const sk = prog.querySelector('.qp-seek');
+          if (sk && !scrubbing) {
+            sk.value = String(Math.round(ratio * 1000));
+            sk.style.setProperty('--p', `${pct}%`);
+            sk.disabled = dur <= 0;
+          }
+          const tm = prog.querySelector('.qp-time');
+          if (tm) tm.textContent = st.timeLabel || '0:00';
+          const ay = prog.querySelector('.qp-ayah');
+          if (ay) {
+            ay.textContent = st.ayah || '';
+            ay.hidden = !st.ayah;
+          }
+        }
+      }
+    }
   };
 
   if (dlg._quranAC) dlg._quranAC.abort();
@@ -720,6 +790,8 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
   surahSearch.addEventListener('input', renderSurahs, { signal: sig });
 
   listEl.addEventListener('click', (e) => {
+    if (e.target.closest('.qp-rw')) { if (typeof onSkip === 'function') onSkip(-15); return; }
+    if (e.target.closest('.qp-fw')) { if (typeof onSkip === 'function') onSkip(15); return; }
     const prevBtn = e.target.closest('.quran-prev');
     const addBtn = e.target.closest('.quran-add');
     if (!prevBtn && !addBtn) return;
@@ -742,7 +814,7 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
     };
     if (prevBtn) {
       if (typeof onPreview === 'function') onPreview(payload);
-      setTimeout(renderSurahs, 30);
+      setTimeout(() => syncRows(readStream()), 30);
       return;
     }
     if (addBtn) {
@@ -752,8 +824,36 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
     }
   }, { signal: sig });
 
-  const onBgSync = () => { if (dlg.open) renderSurahs(); };
+  listEl.addEventListener('pointerdown', (e) => {
+    if (e.target && e.target.classList && e.target.classList.contains('qp-seek')) {
+      scrubbing = true;
+      if (typeof onScrub === 'function') onScrub(true);
+    }
+  }, { signal: sig, capture: true });
+  const endScrub = () => {
+    if (!scrubbing) return;
+    scrubbing = false;
+    if (typeof onScrub === 'function') onScrub(false);
+  };
+  listEl.addEventListener('pointerup', endScrub, { signal: sig, capture: true });
+  listEl.addEventListener('pointercancel', endScrub, { signal: sig, capture: true });
+  listEl.addEventListener('change', (e) => {
+    if (e.target && e.target.classList && e.target.classList.contains('qp-seek')) endScrub();
+  }, { signal: sig });
+  listEl.addEventListener('input', (e) => {
+    const sk = e.target;
+    if (!sk || !sk.classList || !sk.classList.contains('qp-seek')) return;
+    const st = readStream();
+    if (!st || !(st.dur > 0)) return;
+    const pct = Number(sk.value) / 10;
+    sk.style.setProperty('--p', `${pct}%`);
+    if (typeof onSeek === 'function') onSeek((Number(sk.value) / 1000) * st.dur);
+  }, { signal: sig });
+
+  const onBgSync = () => syncRows(readStream());
+  const onBgTime = (e) => syncRows((e && e.detail) || readStream());
   window.addEventListener('sp-bgaudio-sync', onBgSync, { signal: sig });
+  window.addEventListener('sp-bgaudio-time', onBgTime, { signal: sig });
   dlg.addEventListener('close', () => {
     if (dlg._quranAC === ac) {
       ac.abort();
