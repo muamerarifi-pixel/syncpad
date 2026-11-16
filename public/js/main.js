@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.86';
+const VERSION = '3.0.87';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -3483,6 +3483,29 @@ function fmtAudioTime(s) {
 }
 const AUDIO_POS = 'sp-audio-pos';
 const AUDIO_LAST = 'sp-audio-last';
+let quranMod = null;
+let quranModP = null;
+function ensureQuranMod() {
+  if (quranMod) return quranMod;
+  if (!quranModP) {
+    quranModP = import('/js/quran.js').then((m) => {
+      quranMod = m;
+      bgAudio.syncSession();
+      bgAudio.syncUI();
+      return m;
+    }).catch(() => { quranModP = null; });
+  }
+  return null;
+}
+function quranAyahLabel(title, sub, curSec, durSec) {
+  if (!title || !/\bSurah\s+/i.test(title)) return '';
+  const m = ensureQuranMod();
+  if (!m || typeof m.getCurrentAyahLabel !== 'function') return '';
+  return m.getCurrentAyahLabel(title, sub || '', curSec, durSec, () => {
+    bgAudio.syncSession();
+    bgAudio.syncUI();
+  });
+}
 const bgAudio = {
   el: null,
   fileId: '',
@@ -3500,6 +3523,7 @@ const bgAudio = {
   _seekRetries: 0,
   _wantPlay: false,
   _lastSaveAt: 0,
+  _metaAyah: '',
   _posCache: null,
   posMap() {
     if (this._posCache) return this._posCache;
@@ -3691,6 +3715,7 @@ const bgAudio = {
       }
       this.saveCurrentPos(false);
       this.syncPosition();
+      if (this.currentAyah() !== this._metaAyah) this.syncSession();
       this.syncUI(true);
     });
     a.addEventListener('error', () => {
@@ -3861,14 +3886,26 @@ const bgAudio = {
     }
     this.syncUI();
   },
+  currentAyah() {
+    if (!this.fileId) return '';
+    const a = this.el;
+    const curRaw = (a && Number.isFinite(a.currentTime)) ? a.currentTime : 0;
+    const cur = (this._pendingSeek != null && curRaw < 1) ? this._pendingSeek : curRaw;
+    const dur = (a && Number.isFinite(a.duration) && a.duration > 0) ? a.duration : (this._pendingDur || 0);
+    return quranAyahLabel(this.title, this.streamSub, cur, dur);
+  },
   syncSession() {
     if (!('mediaSession' in navigator) || !this.fileId) return;
     try {
       const off = !this.isStream && files.isOffline(this.fileId);
+      const ayah = this.currentAyah();
+      this._metaAyah = ayah;
+      const baseArtist = (this.isStream && this.streamArtist) ? this.streamArtist : 'SyncPad';
+      const baseAlbum = this.isStream ? 'Streaming preview' : (off ? 'Offline audio' : 'SyncPad audio');
       navigator.mediaSession.metadata = new MediaMetadata({
         title: this.title || 'Audio',
-        artist: (this.isStream && this.streamArtist) ? this.streamArtist : 'SyncPad',
-        album: this.isStream ? 'Streaming preview' : (off ? 'Offline audio' : 'SyncPad audio'),
+        artist: ayah ? `${ayah} · ${baseArtist}` : baseArtist,
+        album: ayah ? `${ayah} · ${baseAlbum}` : baseAlbum,
         artwork: [
           { src: `${location.origin}/icons/icon-192.png`, sizes: '192x192', type: 'image/png' },
           { src: `${location.origin}/icons/icon-512.png`, sizes: '512x512', type: 'image/png' }
@@ -3980,6 +4017,7 @@ const bgAudio = {
     const timeLabel = dur > 0 ? `${fmtAudioTime(cur)} / ${fmtAudioTime(dur)}` : fmtAudioTime(cur);
 
     const bar = this.ensureBar();
+    const activeAyah = this.fileId ? this.currentAyah() : '';
     if (bar) {
       const wasHidden = bar.hidden;
       bar.hidden = !this.fileId;
@@ -3989,17 +4027,16 @@ const bgAudio = {
         if (pb) pb.setAttribute('href', playing ? '#i-pause' : '#i-play');
         const abPlay = bar.querySelector('.ab-play');
         if (abPlay) abPlay.setAttribute('aria-label', playing ? 'Pause audio' : 'Play audio');
-        if (!timeOnly || wasHidden) {
+        if (!timeOnly || wasHidden || bar.dataset.ayah !== activeAyah) {
+          bar.dataset.ayah = activeAyah;
           const tEl = bar.querySelector('.ab-title');
           if (tEl) tEl.textContent = this.title || 'Audio';
           const sEl = bar.querySelector('.ab-sub');
           if (sEl) {
-            if (this.isStream) {
-              sEl.textContent = this.streamSub || 'Streaming preview';
-            } else {
-              const off = files.isOffline(this.fileId);
-              sEl.textContent = off ? `${this.ext} · Offline ✓` : this.ext;
-            }
+            const baseSub = this.isStream
+              ? (this.streamSub || 'Streaming preview')
+              : (files.isOffline(this.fileId) ? `${this.ext} · Offline ✓` : this.ext);
+            sEl.textContent = activeAyah ? `${activeAyah} · ${baseSub}` : baseSub;
           }
         }
         const tm = bar.querySelector('.ab-time');
@@ -4010,6 +4047,8 @@ const bgAudio = {
           sk.style.setProperty('--p', `${pct}%`);
           sk.disabled = dur <= 0;
         }
+      } else {
+        bar.dataset.ayah = '';
       }
     }
 
@@ -4027,12 +4066,20 @@ const bgAudio = {
         const cRatio = cDur > 0 ? Math.max(0, Math.min(1, cCur / cDur)) : 0;
         const cPct = (cRatio * 100).toFixed(2);
         const cLabel = active ? timeLabel : (saved ? (cDur > 0 ? `${fmtAudioTime(cCur)} / ${fmtAudioTime(cDur)}` : fmtAudioTime(cCur)) : '0:00');
+        const cIt = store.items.get(cid);
+        const cName = card.dataset.name || (cIt && cIt.data && cIt.data.name) || '';
+        const cAyah = active ? activeAyah : (saved ? quranAyahLabel(cName, '', cCur, cDur) : '');
         card.classList.toggle('is-active', active);
         card.classList.toggle('is-playing', !!(active && playing));
         const u = card.querySelector('.ac-play use');
         if (u) u.setAttribute('href', active && playing ? '#i-pause' : '#i-play');
         const pb = card.querySelector('.ac-play');
         if (pb) pb.setAttribute('aria-label', active && playing ? 'Pause audio' : 'Play audio');
+        const ayEl = card.querySelector('.ac-ayah');
+        if (ayEl) {
+          ayEl.textContent = cAyah;
+          ayEl.hidden = !cAyah;
+        }
         const tm = card.querySelector('.ac-time');
         if (tm) tm.textContent = cLabel;
         const sk = card.querySelector('.ac-seek');
@@ -4082,6 +4129,7 @@ function hydrateAudioCard(card) {
           `<span class="ac-ext">${esc(ext)}</span>` +
           `${sizeTxt ? `<span class="ac-sz">${esc(sizeTxt)}</span>` : ''}` +
           `<button type="button" class="ac-off${off ? ' is-on' : ''}" title="${off ? 'Saved on this device for offline playback' : 'Save on this device for offline playback'}">${off ? 'Offline ✓' : 'Save offline'}</button>` +
+          `<span class="ac-ayah" hidden></span>` +
         `</div>` +
       `</div>` +
       `<button type="button" class="icon-btn sm ac-dl" title="Save copy to Downloads" aria-label="Save copy to Downloads"><svg class="ic"><use href="#i-download"/></svg></button>` +
@@ -7861,7 +7909,9 @@ async function openQuranPicker() {
   try {
     const dlg = $('#dlg-quran');
     if (!dlg) return;
-    const { openQuranModal } = await import('/js/quran.js');
+    const mod = await import('/js/quran.js');
+    quranMod = mod;
+    const { openQuranModal } = mod;
     openQuranModal({
       dlg,
       openDialog,

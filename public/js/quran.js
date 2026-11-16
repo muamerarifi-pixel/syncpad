@@ -1,4 +1,4 @@
-// Curated top 10 globally recognized Quran reciters with their reading styles (MP3Quran & Quran.com CDNs).
+// Curated global Quran reciters with their reading styles & ayah timing sources (MP3Quran, Quran.com, Way2Quran, Archive.org).
 
 export const SURAHS = [
   [1, "Al-Fatihah", "The Opener", "الفاتحة"],
@@ -129,13 +129,15 @@ export const CURATED_RECITERS = [
         server: 'https://cdn.mp3quran.net/audio/mishary-alafasy/r1/',
         qdcServer: 'https://download.quranicaudio.com/qdc/mishari_al_afasy/murattal/',
         qdcPad: false,
-        qdcId: 7
+        qdcId: 7,
+        timingRead: 123
       },
       {
         id: 'mp3q:123:124',
         style: "Al-Duri 'an Al-Kisa'i",
         server: 'https://cdn.mp3quran.net/audio/mishary-alafasy/r2/',
-        surahList: '12,14,25,87,97,99'
+        surahList: '12,14,25,87,97,99',
+        timingRef: 123
       }
     ]
   },
@@ -150,7 +152,8 @@ export const CURATED_RECITERS = [
         server: 'https://cdn.mp3quran.net/audio/abdulbasit-abdulsamad/r3/',
         qdcServer: 'https://download.quranicaudio.com/qdc/abdul_baset/murattal/',
         qdcPad: false,
-        qdcId: 2
+        qdcId: 2,
+        timingRead: 53
       },
       {
         id: 'mp3q:51:51',
@@ -158,12 +161,14 @@ export const CURATED_RECITERS = [
         server: 'https://cdn.mp3quran.net/audio/abdulbasit-abdulsamad/r1/',
         qdcServer: 'https://download.quranicaudio.com/qdc/abdul_baset/mujawwad/',
         qdcPad: false,
-        qdcId: 1
+        qdcId: 1,
+        timingRead: 51
       },
       {
         id: 'mp3q:51:52',
         style: 'Warsh · Murattal',
-        server: 'https://cdn.mp3quran.net/audio/abdulbasit-abdulsamad/r2/'
+        server: 'https://cdn.mp3quran.net/audio/abdulbasit-abdulsamad/r2/',
+        timingRef: 53
       }
     ]
   },
@@ -178,27 +183,32 @@ export const CURATED_RECITERS = [
         server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r1/',
         qdcServer: 'https://download.quranicaudio.com/qdc/khalil_al_husary/murattal/',
         qdcPad: false,
-        qdcId: 6
+        qdcId: 6,
+        timingRead: 118
       },
       {
         id: 'mp3q:118:119',
         style: 'Hafs · Mujawwad',
-        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r2/'
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r2/',
+        timingRead: 119
       },
       {
         id: 'mp3q:118:120',
         style: 'Warsh · Murattal',
-        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r3/'
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r3/',
+        timingRead: 120
       },
       {
         id: 'mp3q:118:270',
         style: 'Qaloon · Murattal',
-        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r5/'
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r5/',
+        timingRead: 270
       },
       {
         id: 'mp3q:118:269',
         style: "Al-Duri 'an Abi 'Amr",
-        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r4/'
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-husary/r4/',
+        timingRead: 269
       }
     ]
   },
@@ -213,7 +223,8 @@ export const CURATED_RECITERS = [
         server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r1/',
         qdcServer: 'https://download.quranicaudio.com/qdc/siddiq_minshawi/murattal/',
         qdcPad: false,
-        qdcId: 9
+        qdcId: 9,
+        timingRead: 112
       },
       {
         id: 'mp3q:112:113',
@@ -221,18 +232,22 @@ export const CURATED_RECITERS = [
         server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r2/',
         qdcServer: 'https://download.quranicaudio.com/qdc/siddiq_minshawi/mujawwad/',
         qdcPad: false,
-        qdcId: 8
+        qdcId: 8,
+        timingQdc: 8,
+        timingRef: 51
       },
       {
         id: 'mp3q:112:114',
         style: "Hafs · Teacher (Mu'allim)",
-        server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r3/'
+        server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r3/',
+        timingRef: 112
       },
       {
         id: 'mp3q:112:10924',
         style: '1967 Studio Recording',
         server: 'https://cdn.mp3quran.net/audio/muhammad-minshawi/r4/',
-        surahList: '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,17,18,19,20,21,22,25,26,27,28,29,30,31,32,33,34,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114'
+        surahList: '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,17,18,19,20,21,22,25,26,27,28,29,30,31,32,33,34,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114',
+        timingRef: 112
       }
     ]
   },
@@ -244,91 +259,82 @@ export const CURATED_RECITERS = [
       {
         id: 'mp3q:102',
         style: 'Hafs · Murattal',
-        server: 'https://cdn.mp3quran.net/audio/maher-muaiqly/r1/'
+        server: 'https://cdn.mp3quran.net/audio/maher-muaiqly/r1/',
+        timingRef: 123
       },
       {
         id: 'mp3q:102:133',
         style: 'Hafs · Mujawwad',
-        server: 'https://cdn.mp3quran.net/audio/maher-muaiqly/r3/'
+        server: 'https://cdn.mp3quran.net/audio/maher-muaiqly/r3/',
+        timingRead: 133
       },
       {
         id: 'mp3q:102:103',
         style: "Hafs · Teacher (Juz 'Amma)",
         server: 'https://cdn.mp3quran.net/audio/maher-muaiqly/r2/',
-        surahList: '1,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114'
+        surahList: '1,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114',
+        timingRef: 123
       }
     ]
   },
   {
-    id: 'mp3q:54',
-    name: 'Abdulrahman Al-Sudais',
-    ar: 'عبدالرحمن السديس',
+    id: 'mp3q:125',
+    name: 'Mustafa Ismail',
+    ar: 'مصطفى إسماعيل',
     styles: [
       {
-        id: 'mp3q:54',
+        id: 'mp3q:125:288',
+        style: 'Hafs · Mujawwad',
+        server: 'https://cdn.mp3quran.net/audio/mustafa-ismail/r2/',
+        timingRead: 288
+      },
+      {
+        id: 'mp3q:125',
         style: 'Hafs · Murattal',
-        server: 'https://cdn.mp3quran.net/audio/abdulrahman-sudais/r1/',
-        qdcServer: 'https://download.quranicaudio.com/qdc/abdurrahmaan_as_sudais/murattal/',
-        qdcPad: false,
-        qdcId: 3
+        server: 'https://cdn.mp3quran.net/audio/mustafa-ismail/r1/',
+        timingRef: 123
       }
     ]
   },
   {
-    id: 'mp3q:31',
-    name: 'Saud Al-Shuraim',
-    ar: 'سعود الشريم',
+    id: 'mp3q:121',
+    name: 'Mahmoud Ali Al-Banna',
+    ar: 'محمود علي البنا',
     styles: [
       {
-        id: 'mp3q:31',
+        id: 'mp3q:121:122',
+        style: 'Hafs · Mujawwad',
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-banna/r2/',
+        timingRead: 122
+      },
+      {
+        id: 'mp3q:121',
         style: 'Hafs · Murattal',
-        server: 'https://cdn.mp3quran.net/audio/saud-shuraim/r1/',
-        qdcServer: 'https://download.quranicaudio.com/qdc/saud_ash-shuraym/murattal/',
-        qdcPad: true,
-        qdcId: 10
+        server: 'https://cdn.mp3quran.net/audio/mahmoud-banna/r1/',
+        timingRef: 123
       }
     ]
   },
   {
-    id: 'mp3q:30',
-    name: 'Saad Al-Ghamdi',
-    ar: 'سعد الغامدي',
+    id: 'custom:kadhimi-old',
+    name: 'Aamir Al-Kadhimi (Old)',
+    ar: 'عامر الكاظمي',
     styles: [
       {
-        id: 'mp3q:30',
-        style: 'Hafs · Murattal',
-        server: 'https://cdn.mp3quran.net/audio/saad-ghamdi/r1/'
-      }
-    ]
-  },
-  {
-    id: 'mp3q:92',
-    name: 'Yasser Al-Dosari',
-    ar: 'ياسر الدوسري',
-    styles: [
-      {
-        id: 'mp3q:92',
-        style: 'Hafs · Murattal',
-        server: 'https://cdn.mp3quran.net/audio/yasser-dosari/r1/'
-      }
-    ]
-  },
-  {
-    id: 'mp3q:253',
-    name: 'Islam Sobhi',
-    ar: 'إسلام صبحي',
-    styles: [
-      {
-        id: 'mp3q:253',
-        style: 'Hafs · Murattal',
-        server: 'https://cdn.mp3quran.net/audio/islam-sobhi/r1/',
-        surahList: '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,38,41,42,43,44,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114'
+        id: 'custom:kadhimi-old',
+        style: 'Hafs · Murattal (Old)',
+        server: 'https://media.way2quran.com/amer-al-kazemi/hafs-an-asim/',
+        fallbackServer: 'https://archive.org/download/Amer-AlKazemy/',
+        timingRef: 123
       }
     ]
   }
 ];
 
 const RECITER_KEY = 'sp-quran-reciter';
+const TIMING_CACHE = 'sp-quran-timings';
+const timingMem = new Map();
+const timingPending = new Map();
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -388,6 +394,8 @@ export function resolveSurahAudioUrls(reciter, surahNum) {
   const pad3 = String(n).padStart(3, '0');
   const srv = normalizeServer(reciter && reciter.server);
   if (srv) push(`${srv}${pad3}.mp3`);
+  const fb = normalizeServer(reciter && reciter.fallbackServer);
+  if (fb) push(`${fb}${pad3}.mp3`);
   if (reciter && reciter.qdcServer) {
     const qSrv = normalizeServer(reciter.qdcServer);
     const file = reciter.qdcPad ? `${pad3}.mp3` : `${n}.mp3`;
@@ -407,6 +415,175 @@ export async function resolveFallbackAudioUrl(reciter, surahNum) {
   }
 }
 
+export function parseQuranAudioMeta(titleOrName, subTitle = '') {
+  const s = String(titleOrName || '').trim();
+  if (!s) return null;
+  let surahNum = 0;
+  let recRaw = String(subTitle || '').trim();
+  const fm = s.match(/^(\d{1,3})\s*-\s*Surah\s+[^(]+?\((.+)\)(?:\.[^.]+)?$/i);
+  if (fm) {
+    surahNum = Number(fm[1]);
+    recRaw = fm[2].trim();
+  } else {
+    const sm = s.match(/^(\d{1,3})\.\s*Surah\s+/i);
+    if (sm) surahNum = Number(sm[1]);
+  }
+  if (!surahNum || surahNum < 1 || surahNum > 114) return null;
+
+  const recNorm = normalizeLatin(recRaw);
+  let matchedStyle = null;
+  for (const r of CURATED_RECITERS) {
+    const rNorm = normalizeLatin(r.name);
+    if (recNorm === rNorm || recNorm.startsWith(rNorm + ' ') || recNorm.startsWith(rNorm + ' (')) {
+      const rest = recNorm.slice(rNorm.length).replace(/^\s*\((.+)\)\s*$/, '$1').trim();
+      matchedStyle = r.styles.find((st) => {
+        const stNorm = normalizeLatin(st.style);
+        const stShort = normalizeLatin(st.style.replace(/^Hafs · /, ''));
+        return rest ? (stNorm === rest || stShort === rest) : true;
+      }) || r.styles[0];
+      break;
+    }
+  }
+  if (matchedStyle) {
+    return {
+      surahNum,
+      styleId: matchedStyle.id,
+      timingRead: matchedStyle.timingRead || 0,
+      timingQdc: matchedStyle.timingQdc || 0,
+      timingRef: matchedStyle.timingRef || 123
+    };
+  }
+  const isMujawwad = /mujawwad/i.test(recRaw);
+  return {
+    surahNum,
+    styleId: '',
+    timingRead: 0,
+    timingQdc: 0,
+    timingRef: isMujawwad ? 51 : 123
+  };
+}
+
+function normalizeTimingRows(rawRows, scaled) {
+  if (!Array.isArray(rawRows) || !rawRows.length) return null;
+  const rows = rawRows
+    .map((r) => ({
+      ayah: Number(r.ayah) || 0,
+      start: Number(r.start_time ?? r.start) || 0,
+      end: Number(r.end_time ?? r.end) || 0
+    }))
+    .filter((r) => Number.isFinite(r.start) && r.end >= r.start)
+    .sort((a, b) => a.start - b.start);
+  if (!rows.length) return null;
+  const totalMs = Math.max(rows[rows.length - 1].end, 1);
+  const totalAyahs = Math.max(1, ...rows.map((r) => r.ayah));
+  return { rows, totalMs, totalAyahs, scaled: !!scaled };
+}
+
+async function readCachedTiming(cacheKey) {
+  try {
+    if (!('caches' in window)) return null;
+    const c = await caches.open(TIMING_CACHE);
+    const hit = await c.match(`https://timing.local/${encodeURIComponent(cacheKey)}`);
+    if (!hit) return null;
+    return await hit.json();
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedTiming(cacheKey, data) {
+  try {
+    if (!('caches' in window) || !data) return;
+    const c = await caches.open(TIMING_CACHE);
+    await c.put(
+      `https://timing.local/${encodeURIComponent(cacheKey)}`,
+      new Response(JSON.stringify(data), { headers: { 'content-type': 'application/json' } })
+    );
+  } catch {}
+}
+
+async function loadTimingData(meta) {
+  const s = meta.surahNum;
+  const attempts = [];
+  if (meta.timingRead) attempts.push({ kind: 'mp3q', id: meta.timingRead, scaled: false });
+  if (meta.timingQdc) attempts.push({ kind: 'qdc', id: meta.timingQdc, scaled: false });
+  if (meta.timingRef) attempts.push({ kind: 'mp3q', id: meta.timingRef, scaled: true });
+
+  for (const att of attempts) {
+    const key = `${att.kind}:${att.id}:${s}`;
+    const cached = await readCachedTiming(key);
+    const parsedCached = normalizeTimingRows(cached, att.scaled);
+    if (parsedCached) return parsedCached;
+
+    try {
+      let raw = null;
+      if (att.kind === 'mp3q') {
+        const j = await fetchQuranJson(`https://www.mp3quran.net/api/v3/ayat_timing?surah=${s}&read=${att.id}`);
+        if (Array.isArray(j) && j.length) {
+          raw = j.map((x) => ({ ayah: Number(x.ayah) || 0, start: Number(x.start_time) || 0, end: Number(x.end_time) || 0 }));
+        }
+      } else {
+        const j = await fetchQuranJson(`https://api.quran.com/api/v4/chapter_recitations/${att.id}/${s}?segments=true`);
+        const ts = j && j.audio_file && j.audio_file.timestamps;
+        if (Array.isArray(ts) && ts.length) {
+          raw = ts.map((x) => ({
+            ayah: Number(String(x.verse_key || '').split(':')[1]) || 0,
+            start: Number(x.timestamp_from) || 0,
+            end: Number(x.timestamp_to) || 0
+          }));
+        }
+      }
+      const normalized = normalizeTimingRows(raw, att.scaled);
+      if (normalized) {
+        await writeCachedTiming(key, raw);
+        return normalized;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function timingCacheKey(meta) {
+  return `${meta.surahNum}:${meta.timingRead || 0}:${meta.timingQdc || 0}:${meta.timingRef || 123}`;
+}
+
+export function getCurrentAyahLabel(titleOrName, subTitle, curSec, durSec, onLoaded) {
+  const meta = parseQuranAudioMeta(titleOrName, subTitle);
+  if (!meta) return '';
+  const key = timingCacheKey(meta);
+  let data = timingMem.get(key);
+  if (!data) {
+    if (!timingPending.has(key)) {
+      const p = loadTimingData(meta)
+        .then((res) => {
+          if (res) {
+            timingMem.set(key, res);
+            if (typeof onLoaded === 'function') onLoaded();
+          }
+        })
+        .catch(() => {})
+        .finally(() => timingPending.delete(key));
+      timingPending.set(key, p);
+    }
+    return '';
+  }
+  const rows = data.rows;
+  if (!rows.length) return '';
+  if (data.scaled && !(durSec > 0)) return '';
+  const tMs = data.scaled
+    ? (Math.max(0, curSec) / durSec) * data.totalMs
+    : Math.max(0, curSec) * 1000;
+
+  let lo = 0, hi = rows.length - 1, idx = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].start <= tMs) { idx = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  const ayah = Math.max(1, Math.min(data.totalAyahs, rows[idx].ayah || 1));
+  return `Ayah ${ayah}/${data.totalAyahs}`;
+}
+
 export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview, getPlayingUrl }) {
   if (!dlg) return;
 
@@ -424,7 +601,7 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
         `<div class="quran-rec-box">` +
           `<div class="quran-rec-hdr">` +
             `<label for="quran-rec-select">Reciter &amp; style</label>` +
-            `<span class="quran-rec-badge" id="quran-rec-badge">10 reciters</span>` +
+            `<span class="quran-rec-badge" id="quran-rec-badge">8 reciters</span>` +
           `</div>` +
           `<div class="quran-rec-inputs">` +
             `<select id="quran-rec-select" class="quran-select" aria-label="Choose reciter"></select>` +
@@ -516,7 +693,6 @@ export function openQuranModal({ dlg, openDialog, closeDialog, onAdd, onPreview,
       : `<div class="quran-empty">No matching Surah found for “${esc(rawQ)}”.</div>`;
   };
 
-  // Rebind listeners cleanly on each open using a controller so handlers use the latest callbacks
   if (dlg._quranAC) dlg._quranAC.abort();
   const ac = new AbortController();
   dlg._quranAC = ac;

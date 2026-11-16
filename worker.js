@@ -15,7 +15,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 import { proxyYoutubeDownload } from './src/ytdl.js';
 
-const VERSION = '3.0.86';
+const VERSION = '3.0.87';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -1128,7 +1128,7 @@ function serveType(type, download) {
   return { type: t === 'text/plain' ? 'text/plain; charset=utf-8' : t, disposition: 'inline' };
 }
 
-const QURAN_HOST_RE = /^([a-z0-9-]+\.)?(mp3quran\.net|quranicaudio\.com|quran\.com|qurancdn\.com)$/i;
+const QURAN_HOST_RE = /^([a-z0-9-]+\.)?(mp3quran\.net|quranicaudio\.com|quran\.com|qurancdn\.com|way2quran\.com|archive\.org)$/i;
 async function proxyQuranRequest(request, url) {
   const raw = url.searchParams.get('u') || '';
   let target;
