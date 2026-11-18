@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.91';
+const VERSION = '3.0.92';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -4148,7 +4148,6 @@ const bgAudio = {
           const note = store.items.get(this.noteId);
           if (note && note.kind === 'note' && !note.data.trashed) { setTab('notes'); openNote(this.noteId); return; }
         }
-        if (this.isStream) { openQuranPicker(); return; }
         setTab('drops');
       }
     });
@@ -4231,20 +4230,6 @@ const bgAudio = {
 
     if (!timeOnly) {
       window.dispatchEvent(new CustomEvent('sp-bgaudio-sync'));
-    }
-    const qDlg = $('#dlg-quran');
-    if (qDlg && qDlg.open) {
-      window.dispatchEvent(new CustomEvent('sp-bgaudio-time', {
-        detail: this.isStream && this.fileId ? {
-          url: this.streamUrl,
-          playing,
-          cur,
-          dur,
-          ratio,
-          timeLabel,
-          ayah: activeAyah
-        } : null
-      }));
     }
 
     if (el.editorText) {
@@ -4871,7 +4856,6 @@ function noteMenu(anchor, at) {
       ? { icon: 'note', label: 'Turn into normal note', run: turnIntoPage }
       : { icon: 'canvas', label: 'Turn into canvas', run: turnIntoCanvas },
     ...(n.data.canvas ? [] : [
-      { icon: 'music', label: 'Add Quran audio (offline MP3)…', run: () => openQuranPicker() },
       { icon: 'sparkle', label: 'Clean AI text', run: declutterNote }
     ]),
     ...(!n.data.canvas && Math.abs((currentZoom || 1) - 1) > 0.01 ? [{ icon: 'fit', label: `Reset zoom to 100% (now ${Math.round(currentZoom * 100)}%)`, run: () => el.btnZoomReset.click() }] : []),
@@ -5129,7 +5113,6 @@ function format(kind, btn) {
   if (kind === 'heading') return toggleHeading();
   if (kind === 'link') return addLink();
   if (kind === 'attach') { saveSel(); return el.noteFileInput.click(); }
-  if (kind === 'quran') { saveSel(); return openQuranPicker(); }
   if (kind === 'case') {
     el.editorText.focus();
     const mode = cycleCase(el.editorText);
@@ -7118,7 +7101,6 @@ function newMenu(anchor) {
     { icon: 'pen', label: 'New note', run: () => newNote() },
     { icon: 'task', label: 'New checklist', run: () => { newNote(); setTimeout(() => { makeChecklist(); onEditorInput(); }, 40); } },
     { icon: 'canvas', label: 'New canvas — draw and place anything', run: () => newNote({ canvas: true }) },
-    { icon: 'music', label: 'Quran audio note (offline MP3)…', run: () => { newNote(); openQuranPicker(); } },
     { icon: 'clip', label: 'Add files to all devices…', run: () => el.fileInput.click() },
     { icon: 'doc', label: 'New document (Word or PDF)', run: newDocument },
     { icon: 'book', label: 'Import e-book or document as a note…', run: () => el.importInput.click() }
@@ -8107,106 +8089,6 @@ function createNoteAudioTask({ targetNoteId, initTitle, anchorEl = null }) {
     setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
   };
   return { setStatus, setTitle, saveAudioInPlace, clearPending, clearProgToast };
-}
-
-async function openQuranPicker() {
-  try {
-    const dlg = $('#dlg-quran');
-    if (!dlg) return;
-    const mod = await import('/js/quran.js');
-    quranMod = mod;
-    const { openQuranModal } = mod;
-    openQuranModal({
-      dlg,
-      openDialog,
-      closeDialog,
-      getPlayingUrl: () => bgAudio.activeStreamUrl(),
-      getStreamState: () => {
-        if (!bgAudio.isStream || !bgAudio.fileId) return null;
-        const a = bgAudio.el;
-        const curRaw = (a && Number.isFinite(a.currentTime)) ? a.currentTime : 0;
-        const cur = (bgAudio._pendingSeek != null && curRaw < 1) ? bgAudio._pendingSeek : curRaw;
-        const dur = (a && Number.isFinite(a.duration) && a.duration > 0) ? a.duration : (bgAudio._pendingDur || 0);
-        return {
-          url: bgAudio.streamUrl,
-          playing: !!(a && !a.paused),
-          cur,
-          dur,
-          ratio: dur > 0 ? Math.max(0, Math.min(1, cur / dur)) : 0,
-          timeLabel: dur > 0 ? `${fmtAudioTime(cur)} / ${fmtAudioTime(dur)}` : fmtAudioTime(cur),
-          ayah: bgAudio.currentAyah()
-        };
-      },
-      onSeek: (sec) => bgAudio.seekTo(sec),
-      onSkip: (delta) => bgAudio.seekBy(delta),
-      onScrub: (v) => { bgAudio.scrubbing = !!v; },
-      onPreview: ({ surahNum, surahNameEn, surahNameAr, reciterName, urls }) => {
-        const title = `${surahNum}. Surah ${surahNameEn} (${surahNameAr})`;
-        bgAudio.toggleStream(urls, title, reciterName, reciterName);
-      },
-      onAdd: (payload) => {
-        downloadQuranToNote(payload);
-      }
-    });
-  } catch (e) {
-    toast((e && e.message) || 'Could not open Quran audio picker.');
-  }
-}
-
-async function downloadQuranToNote({ surahNum, surahNameEn, surahNameAr, reciter, reciterName, urls }) {
-  const active = openNoteItem();
-  if (ui.tab !== 'notes' || !active || active.data.canvas) newNote();
-  const targetNote = openNoteItem();
-  const targetNoteId = targetNote && !targetNote.data.canvas ? targetNote.id : null;
-  const displayTitle = `Surah ${surahNameEn} (${surahNameAr}) — ${reciterName}`;
-  if (targetNoteId && ui.tab === 'notes' && ui.noteId === targetNoteId) {
-    applyLinkTitleToNote(displayTitle, '');
-  }
-  const anc = ui.savedRange && ui.savedRange.commonAncestorContainer;
-  const anchorEl = (anc && anc !== el.editorText && el.editorText.contains(anc))
-    ? (anc.nodeType === 1 ? anc : anc.parentElement)
-    : null;
-  const task = createNoteAudioTask({
-    targetNoteId,
-    initTitle: `${surahNum}. ${surahNameEn} — ${reciterName}`,
-    anchorEl
-  });
-  task.setStatus('Connecting to Quran CDN…', 5);
-  try {
-    const [{ downloadRangeBlob }, { resolveFallbackAudioUrl }] = await Promise.all([
-      import('/js/mp4audio.js'),
-      import('/js/quran.js')
-    ]);
-    const candidates = [...(urls || [])];
-    if (reciter && reciter.qdcId) {
-      const extraUrl = await resolveFallbackAudioUrl(reciter, surahNum);
-      if (extraUrl && !candidates.includes(extraUrl)) candidates.push(extraUrl);
-    }
-    let blob = null;
-    let lastErr = null;
-    for (const streamUrl of candidates) {
-      try {
-        blob = await downloadRangeBlob({
-          streamUrl,
-          totalSize: 0,
-          mime: 'audio/mpeg',
-          onProgress: (msg, pct) => task.setStatus(msg, pct)
-        });
-        if (blob && blob.size > 0) break;
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    if (!blob || !blob.size) throw lastErr || new Error('Could not download Quran audio');
-    const padNum = String(surahNum).padStart(3, '0');
-    const safeRec = String(reciterName || 'Reciter').replace(/[\\/:*?"<>|]/g, '').trim();
-    const filename = `${padNum} - Surah ${surahNameEn} (${safeRec}).mp3`;
-    await task.saveAudioInPlace(blob, filename, 'audio/mpeg', `Surah ${surahNameEn} saved offline in note`);
-  } catch (e) {
-    task.clearPending();
-    task.clearProgToast();
-    toast((e && e.message) || 'Could not download this Surah. Try another reciter.');
-  }
 }
 
 async function downloadYoutube(url, mode = 'mp4', hintTitle = '', opts = {}) {
