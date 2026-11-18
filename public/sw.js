@@ -1,5 +1,5 @@
 /* SyncPad v2 service worker: offline app shell, cached file previews, Android share target */
-const VERSION = 'v3.0.92';
+const VERSION = 'v3.0.93';
 const SHELL_CACHE = 'sp-shell-' + VERSION;
 const FILE_CACHE = 'sp-files';
 const ASSET_CACHE = 'sp-assets-1'; // big libraries (PDF, Word, spreadsheets) and fonts: kept across app updates
@@ -27,8 +27,8 @@ const SHELL = [
   '/vendor/marked.esm.js',
   '/vendor/purify.min.js',
   '/vendor/qrcode.mjs',
-  '/icons/favicon.svg?v=2',
-  '/icons/icon-192.png'
+  '/icons/favicon.svg?v=3',
+  '/icons/icon-192.png?v=3'
 ];
 
 self.addEventListener('install', (event) => {
@@ -248,8 +248,8 @@ async function onPush() {
             tag: 'remind-' + n.id,
             renotify: true,
             requireInteraction: true,
-            icon: '/icons/icon-192.png',
-            badge: '/icons/icon-192.png',
+            icon: '/icons/icon-192.png?v=3',
+            badge: '/icons/icon-192.png?v=3',
             data: { url: '/?note=' + n.id }
           });
         }
@@ -273,8 +273,8 @@ async function onPush() {
     body,
     tag: 'syncpad-drops',
     renotify: true,
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
+    icon: '/icons/icon-192.png?v=3',
+    badge: '/icons/icon-192.png?v=3',
     data: { url: '/' }
   });
 }

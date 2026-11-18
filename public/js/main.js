@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.92';
+const VERSION = '3.0.93';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -4084,8 +4084,8 @@ const bgAudio = {
         artist: ayah ? `${ayah} · ${baseArtist}` : baseArtist,
         album: ayah ? `${ayah} · ${baseAlbum}` : baseAlbum,
         artwork: [
-          { src: `${location.origin}/icons/icon-192.png`, sizes: '192x192', type: 'image/png' },
-          { src: `${location.origin}/icons/icon-512.png`, sizes: '512x512', type: 'image/png' }
+          { src: `${location.origin}/icons/icon-192.png?v=3`, sizes: '192x192', type: 'image/png' },
+          { src: `${location.origin}/icons/icon-512.png?v=3`, sizes: '512x512', type: 'image/png' }
         ]
       });
       navigator.mediaSession.playbackState = (!this.el || this.el.paused) ? 'paused' : 'playing';
@@ -7498,7 +7498,7 @@ function showReminder(n, missedAt = 0) {
     toast(`🔔 ${missed}${title}`, { action: 'Open', onAction: () => openNote(n.id), duration: missed ? 30000 : 15000 });
   } else if ('Notification' in window && Notification.permission === 'granted') {
     // rings on this device by itself, even offline; the same tag means a server push for it replaces, not doubles, it
-    navigator.serviceWorker.ready.then((reg) => reg.showNotification('🔔 ' + title, { body: missed + noteSnippet(noteText(n), 140), tag: 'remind-' + n.id, requireInteraction: true, icon: '/icons/icon-192.png', data: { url: '/?note=' + n.id } })).catch(() => {});
+    navigator.serviceWorker.ready.then((reg) => reg.showNotification('🔔 ' + title, { body: missed + noteSnippet(noteText(n), 140), tag: 'remind-' + n.id, requireInteraction: true, icon: '/icons/icon-192.png?v=3', data: { url: '/?note=' + n.id } })).catch(() => {});
   }
 }
 

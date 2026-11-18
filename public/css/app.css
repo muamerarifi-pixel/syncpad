@@ -2784,7 +2784,7 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
 [data-theme="dark"] .ti[data-k="pdf"] { background: rgba(230, 70, 70, .2); color: #f28b8b; }
 [data-theme="dark"] .ti[data-k="sheet"] { background: rgba(40, 170, 90, .2); color: #6fd69a; }
 [data-theme="dark"] :is(.ti[data-k="doc"], .ti[data-k="archive"], .ti[data-k="audio"], .ti[data-k="slides"]) { background: rgba(140, 120, 255, .2); color: #b6a8ff; }
-.logo img { border-radius: 9px; }
+.logo img { border-radius: 0; }
 
 /* 3.0.42: read aloud */
 .listen-pill { position: fixed; z-index: 90; display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px 8px 11px; border-radius: 999px; border: 0; background: var(--accent); color: #fff; font: 700 14px var(--font); box-shadow: 0 6px 18px rgba(11, 138, 87, .35); cursor: pointer; }
