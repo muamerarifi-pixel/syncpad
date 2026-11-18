@@ -674,7 +674,10 @@ a { color: var(--link); }
 .chip.add { border-style: dashed; }
 @media (max-width: 860px) {
   .drops-side { display: none; }
-  .drop-chips { display: flex; padding: 0 12px 8px; }
+  .drop-chips { display: flex; flex-wrap: wrap; overflow-x: visible; row-gap: 6px; padding: 0 12px 8px; }
+  .drop-chips .chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; }
+  .drop-chips .chip .ic { margin-right: 0; vertical-align: 0; flex: none; }
+  .drop-chips .chip > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .drops-head { padding: 10px 12px 6px; }
   .dh-title h2 { font-size: 18px; }
   .dh-count { display: none; }
@@ -688,7 +691,7 @@ a { color: var(--link); }
 
 /* type filter + selection box */
 .type-row { width: 100%; max-width: 1000px; margin: 0 auto; padding: 0 20px; flex: none; }
-.chips.type-chips { padding: 8px 0 0; }
+.chips.type-chips { padding: 8px 0 0; flex-wrap: wrap; overflow-x: visible; }
 .chip .cnt { color: var(--faint); font-weight: 700; margin-left: 2px; }
 .chip[aria-pressed="true"] .cnt { color: var(--accent-text); }
 .type-btn { display: none; }

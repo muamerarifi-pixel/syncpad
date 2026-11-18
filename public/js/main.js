@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.89';
+const VERSION = '3.0.90';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -1290,11 +1290,11 @@ function renderDropsNav(all) {
       ? fl.map((f) => nav('f:' + f.id, f.data.name || 'Folder', 'folder', countLoc('f:' + f.id), f.id)).join('') +
         (isTouch() ? '' : '<p class="nav-hint">Drag drops onto a folder to move them. Drag across empty space to select several.</p>')
       : '<button class="nav-empty" data-act="new-folder"><svg class="ic"><use href="#i-plus"/></svg>New folder</button>');
-  const chip = (loc, label) => `<button class="chip" data-view="${loc}" aria-pressed="${ui.dloc === loc}">${label}</button>`;
+  const chip = (loc, icon, label, n) => `<button class="chip" data-view="${loc}" aria-pressed="${ui.dloc === loc}"><svg class="ic"><use href="#i-${icon}"/></svg><span>${label}</span>${n ? `<span class="cnt">${n}</span>` : ''}</button>`;
   el.dropChips.innerHTML = [
-    chip('home', `<svg class="ic"><use href="#i-drops"/></svg>Home`),
-    ...fl.map((f) => chip('f:' + f.id, `<svg class="ic"><use href="#i-folder"/></svg>${esc(f.data.name || 'Folder')}`)),
-    '<button class="chip add" data-act="new-folder"><svg class="ic"><use href="#i-plus"/></svg>Folder</button>'
+    chip('home', 'drops', 'Home', countLoc('home')),
+    ...fl.map((f) => chip('f:' + f.id, 'folder', esc(f.data.name || 'Folder'), countLoc('f:' + f.id))),
+    '<button class="chip add" data-act="new-folder"><svg class="ic"><use href="#i-plus"/></svg><span>Folder</span></button>'
   ].join('');
   // type filter: chips on a computer, one button on a phone
   const here = ui.query ? all : all.filter((i) => inLocation(i));
