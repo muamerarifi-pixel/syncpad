@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.90';
+const VERSION = '3.0.91';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -231,9 +231,9 @@ function wire() {
   for (const b of $$('[data-tab]')) if (b.tagName === 'BUTTON') b.addEventListener('click', () => { if (ui.tab !== b.dataset.tab) haptic('tick'); setTab(b.dataset.tab); });
 
   // search
-  el.search.addEventListener('input', () => { ui.query = el.search.value.trim(); renderLists(); });
+  el.search.addEventListener('input', () => { ui.query = el.search.value.trim(); ui.notesListScroll = 0; renderLists(); });
   el.search.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { el.search.value = ''; ui.query = ''; renderLists(); el.search.blur(); }
+    if (e.key === 'Escape') { el.search.value = ''; ui.query = ''; ui.notesListScroll = 0; renderLists(); el.search.blur(); }
   });
   el.search.addEventListener('blur', () => { if (!el.search.value) el.app.classList.remove('searching'); });
   el.btnSearch.addEventListener('click', () => { el.app.classList.add('searching'); el.search.focus(); });
@@ -370,6 +370,11 @@ function wire() {
   document.fonts?.ready.then(() => layoutNoteGrid());
   // pictures arriving later change a card's height: re-pack the grid
   el.noteList.addEventListener('load', (e) => { if (e.target.tagName === 'IMG') { clearTimeout(ui.gridT); ui.gridT = setTimeout(layoutNoteGrid, 60); } }, true);
+  el.noteList.addEventListener('scroll', () => {
+    if (!ui.restoringListScroll && el.noteList.clientHeight > 0 && el.noteList.offsetParent !== null && !el.app.classList.contains('editor-leaving')) {
+      ui.notesListScroll = el.noteList.scrollTop;
+    }
+  }, { passive: true });
   el.feed.addEventListener('scroll', () => {
     ui.atBottom = el.feed.scrollHeight - el.feed.scrollTop - el.feed.clientHeight < 60;
   }, { passive: true });
@@ -413,6 +418,7 @@ function wire() {
     const c = e.target.closest('.chip');
     if (!c) return;
     ui.tag = ui.tag === c.dataset.tag ? null : c.dataset.tag;
+    ui.notesListScroll = 0;
     renderNotesList();
     triggerAnim(el.noteList, 'view-swap', ['view-swap'], 160);
   });
@@ -2917,6 +2923,7 @@ function onFolderChipClick(e) {
   const next = c.dataset.nf === 'all' ? null : c.dataset.nf;
   const changed = ui.nfolder !== next;
   ui.nfolder = next;
+  if (changed) ui.notesListScroll = 0;
   renderNotesList();
   if (changed) triggerAnim(el.noteList, 'view-swap', ['view-swap'], 160);
 }
@@ -3189,7 +3196,33 @@ async function pasteFromClipboard() {
   pasteIntoEditor({ clipboardData: dt, preventDefault() {} });
 }
 
+function saveNotesListScroll() {
+  if (!el.noteList || ui.restoringListScroll) return;
+  if (el.noteList.clientHeight > 0 && el.noteList.offsetParent !== null) {
+    ui.notesListScroll = el.noteList.scrollTop;
+  }
+}
+function restoreNotesListScroll() {
+  const L = el.noteList;
+  const target = ui.notesListScroll || 0;
+  clearTimeout(ui.notesListScrollT);
+  if (!L || target <= 0 || L.clientHeight <= 0) { ui.restoringListScroll = false; return; }
+  ui.restoringListScroll = true;
+  const apply = () => {
+    layoutNoteGrid();
+    const max = Math.max(0, L.scrollHeight - L.clientHeight);
+    L.scrollTop = Math.min(max, target);
+  };
+  apply();
+  requestAnimationFrame(() => {
+    apply();
+    ui.notesListScrollT = setTimeout(() => { apply(); ui.restoringListScroll = false; }, 60);
+  });
+}
+
 function renderNotesList() {
+  saveNotesListScroll();
+  ui.restoringListScroll = true;
   const all = notesSorted();
   const tags = new Map();
   for (const n of all) for (const t of noteTags(noteText(n))) tags.set(t, (tags.get(t) || 0) + 1);
@@ -3217,6 +3250,7 @@ function renderNotesList() {
   renderNoteSelectBar();
   if (!list.length) {
     el.noteList.innerHTML = `<div class="list-empty">${q || ui.tag ? 'No notes match.' : ui.nfolder ? 'No notes in this folder yet.<br>Drag notes onto the folder, or use ⋯ → Move to folder.' : 'No notes yet.<br>Notes sync to all your devices as you type.'}</div>`;
+    ui.restoringListScroll = false;
     return;
   }
   el.noteList.innerHTML = list
@@ -3229,6 +3263,7 @@ function renderNotesList() {
     </button>`; })
     .join('');
   layoutNoteGrid();
+  restoreNotesListScroll();
 }
 
 /** grid view: each card takes only the height it needs, cards pack like a masonry wall */
@@ -3236,12 +3271,14 @@ function layoutNoteGrid() {
   const L = el.noteList;
   if (!L.classList.contains('view-grid')) { L.classList.remove('masonry'); return; }
   if (!L.offsetWidth) return;
+  const prevTop = L.scrollTop;
   L.classList.add('masonry');
   const items = [...L.querySelectorAll(':scope > .note-item')];
   for (const b of items) b.style.gridRowEnd = '';
   const gap = parseFloat(getComputedStyle(L).columnGap) || 8;
   const hs = items.map((b) => b.offsetHeight); // layout height: a pinch's scale never skews it
   items.forEach((b, i) => { b.style.gridRowEnd = `span ${Math.max(1, Math.ceil((hs[i] + gap) / 2))}`; });
+  if (prevTop > 0) L.scrollTop = prevTop;
 }
 
 /** pictures and files inside a note (normal or canvas), for the list */
@@ -3373,6 +3410,7 @@ document.addEventListener('scroll', (e) => {
 }, true);
 
 function openNote(id, { focus = true } = {}) {
+  saveNotesListScroll();
   clearTimeout(ui.editorLeaveT);
   ui.editorLeaveT = 0;
   clearTimeout(ui.sideLeaveT);
@@ -3504,16 +3542,19 @@ function closeEditor(fromLayer = false, skipAnim = false) {
   if (mobileClosing && !skipAnim && !reducedMotion()) {
     el.app.classList.remove('editing');
     el.app.classList.add('editor-leaving');
+    restoreNotesListScroll();
     ui.editorLeaveT = setTimeout(() => {
       ui.editorLeaveT = 0;
       el.app.classList.remove('editor-leaving');
       renderEditor(true);
+      restoreNotesListScroll();
       requestAnimationFrame(syncThemeColor);
     }, 145);
     return;
   }
   el.app.classList.remove('editing', 'editor-leaving');
   renderEditor(true);
+  restoreNotesListScroll();
   if (wasOpen && !isMobileLayout()) triggerAnim(el.notesPane, 'pane-in', ['pane-in'], 180);
   requestAnimationFrame(syncThemeColor);
 }
