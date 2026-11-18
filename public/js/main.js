@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.88';
+const VERSION = '3.0.89';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -291,7 +291,7 @@ function wire() {
     c.after = Number(el.setPinAfter.value);
     localStorage.setItem('sp-pin', JSON.stringify(c));
   });
-  for (const inp of [el.fileInput, el.noteFileInput]) inp.addEventListener('click', expectAway);
+  for (const inp of [el.fileInput, el.noteFileInput, el.noteImageInput]) if (inp) inp.addEventListener('click', expectAway);
   if (navigator.share) {
     const nativeShare = navigator.share.bind(navigator);
     navigator.share = (data) => { expectAway(); return nativeShare(data); };
@@ -307,6 +307,7 @@ function wire() {
   if (el.btnUpload) el.btnUpload.addEventListener('click', () => { haptic('click'); el.fileInput.click(); });
   el.fileInput.addEventListener('change', () => { sendFiles([...el.fileInput.files]); el.fileInput.value = ''; });
   el.noteFileInput.addEventListener('change', () => { attachToNote([...el.noteFileInput.files]); el.noteFileInput.value = ''; });
+  if (el.noteImageInput) el.noteImageInput.addEventListener('change', () => { attachToNote([...el.noteImageInput.files], ui.savedRange); el.noteImageInput.value = ''; });
 
   // home screen: filters, folders, layout, selecting
   el.feedInner.addEventListener('click', onFeedClick);
@@ -471,6 +472,70 @@ function wire() {
     e.preventDefault();
     if (!n.data.canvas) saveSel();
     noteMenu(el.btnNoteMore, { x: e.clientX, y: e.clientY });
+  });
+  const isNoteEmptySpace = (target, x, y) => {
+    const n = openNoteItem();
+    if (!n || n.data.canvas || ui.presenting || !el.editor.contains(target)) return false;
+    if (target.closest('button, a, img, video, audio, input, select, textarea, .fmt-bar, .edit-toggle, .tts-bar, .editor-bar, .editor-foot, .audio-card, .audio-pending, .link-card, table, pre, .note-canvas, .conflict-bar')) return false;
+    if (target === el.editor || target === el.editorText) {
+      if (document.caretRangeFromPoint) {
+        const r = document.caretRangeFromPoint(x, y);
+        if (!r || !el.editorText.contains(r.startContainer)) return true;
+        if (r.startContainer.nodeType !== 3 || !r.startContainer.nodeValue.trim()) return true;
+        const cr = r.getBoundingClientRect();
+        if (cr && (Math.abs(x - cr.left) > 28 || y < cr.top - 8 || y > cr.bottom + 8)) return true;
+        return false;
+      }
+      return true;
+    }
+    const blk = target.closest('p, div, h1, h2, h3, li, blockquote');
+    if (blk && el.editorText.contains(blk) && !blk.textContent.trim() && !blk.querySelector('img, [data-file], .audio-card, .link-card')) return true;
+    if (document.caretRangeFromPoint) {
+      const r = document.caretRangeFromPoint(x, y);
+      if (!r || !el.editorText.contains(r.startContainer)) return true;
+      if (r.startContainer.nodeType !== 3 || !r.startContainer.nodeValue.trim()) return true;
+      const cr = r.getBoundingClientRect();
+      if (cr && (Math.abs(x - cr.left) > 28 || y < cr.top - 8 || y > cr.bottom + 8)) return true;
+    }
+    return false;
+  };
+  const pickNoteImageAt = (x, y) => {
+    if (!el.noteImageInput) return;
+    ui.savedRange = rangeFromPoint(x, y) || ui.savedRange;
+    haptic('tick');
+    el.noteImageInput.click();
+  };
+  let tapStart = null;
+  let lastEmptyTap = null;
+  let lastTouchAttach = 0;
+  el.editor.addEventListener('touchstart', (e) => {
+    tapStart = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() } : null;
+  }, { passive: true });
+  el.editor.addEventListener('touchend', (e) => {
+    if (!tapStart || e.touches.length) { tapStart = null; return; }
+    const ct = e.changedTouches[0];
+    const now = Date.now();
+    const moved = Math.hypot(ct.clientX - tapStart.x, ct.clientY - tapStart.y);
+    const dt = now - tapStart.t;
+    tapStart = null;
+    if (moved > 18 || dt > 300 || !isNoteEmptySpace(e.target, ct.clientX, ct.clientY)) {
+      lastEmptyTap = null;
+      return;
+    }
+    if (lastEmptyTap && now - lastEmptyTap.t < 320 && Math.hypot(ct.clientX - lastEmptyTap.x, ct.clientY - lastEmptyTap.y) < 30) {
+      lastEmptyTap = null;
+      lastTouchAttach = now;
+      e.preventDefault();
+      pickNoteImageAt(ct.clientX, ct.clientY);
+    } else {
+      lastEmptyTap = { t: now, x: ct.clientX, y: ct.clientY };
+    }
+  });
+  el.editor.addEventListener('dblclick', (e) => {
+    if (Date.now() - lastTouchAttach < 500) return;
+    if (!isNoteEmptySpace(e.target, e.clientX, e.clientY)) return;
+    e.preventDefault();
+    pickNoteImageAt(e.clientX, e.clientY);
   });
   ui.imgTools = new ImageTools({
     editor: el.editorText,
@@ -3080,9 +3145,17 @@ function positionPasteChip() {
     chip.style.right = 'auto';
     chip.style.top = r.top - chip.offsetHeight - 8 + 'px';
   } else {
-    chip.style.left = 'auto';
-    chip.style.right = '12px';
-    chip.style.top = (vv ? vv.offsetTop + vv.height : innerHeight) - chip.offsetHeight - 10 + 'px';
+    const doneBtn = document.getElementById('edit-toggle');
+    const dr = doneBtn && !doneBtn.hidden ? doneBtn.getBoundingClientRect() : null;
+    if (dr && dr.width > 0 && dr.height > 0) {
+      chip.style.left = 'auto';
+      chip.style.right = Math.max(12, Math.round(innerWidth - dr.left + 8)) + 'px';
+      chip.style.top = Math.round(dr.top + (dr.height - chip.offsetHeight) / 2) + 'px';
+    } else {
+      chip.style.left = 'auto';
+      chip.style.right = '12px';
+      chip.style.top = (vv ? vv.offsetTop + vv.height : innerHeight) - chip.offsetHeight - 10 + 'px';
+    }
   }
 }
 async function pasteFromClipboard() {
@@ -3217,21 +3290,82 @@ function restoreNotePos(id) {
 }
 let notePosT = 0;
 let editBtnT = 0;
-/* phones: while only reading a note, swipe right to go back to the notes list */
+/* phones: interactive swipe right to go back to the notes list */
 (() => {
-  let sx = 0, sy = 0, st = 0, ok = false;
+  let sx = 0, sy = 0, st = 0, dx = 0, arm = false, active = false, lockedOut = false;
+  const resetPane = () => {
+    el.app.classList.remove('swiping-back');
+    el.editorPane.style.transform = '';
+    el.editorPane.style.transition = '';
+    el.editorPane.style.animation = '';
+    el.editorPane.style.willChange = '';
+  };
   document.addEventListener('touchstart', (e) => {
-    ok = e.touches.length === 1 && ui.readMode && isMobileLayout() && el.editor.contains(e.target) && !e.target.closest('.fmt-bar, .tts-bar, .edit-toggle, img, table, pre, .zoom-stage');
-    if (!ok) return;
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now();
+    arm = e.touches.length === 1 &&
+      isMobileLayout() &&
+      el.app.classList.contains('editing') &&
+      !ui.presenting &&
+      !el.app.classList.contains('kb-open') &&
+      el.editor.contains(e.target) &&
+      !e.target.closest('.fmt-bar, .tts-bar, .edit-toggle, input[type="range"], .ac-seek, .ab-seek, .qp-seek, img, table, pre, .zoom-stage, .note-canvas');
+    active = false;
+    lockedOut = false;
+    dx = 0;
+    if (!arm) return;
+    sx = e.touches[0].clientX;
+    sy = e.touches[0].clientY;
+    st = Date.now();
   }, { passive: true, capture: true });
-  document.addEventListener('touchend', (e) => {
-    if (!ok || e.touches.length) return;
-    ok = false;
-    const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
-    const sel = getSelection();
-    if (dx > 90 && Math.abs(dy) < dx * 0.5 && Date.now() - st < 800 && (!sel || sel.isCollapsed) && ui.readMode) el.btnEditorBack.click();
-  }, { passive: true, capture: true });
+
+  document.addEventListener('touchmove', (e) => {
+    if (!arm || lockedOut || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    dx = t.clientX - sx;
+    const dy = t.clientY - sy;
+    if (!active) {
+      if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx) * 0.85) { lockedOut = true; return; }
+      if (dx < -12) { lockedOut = true; return; }
+      if (dx > 14 && dx > Math.abs(dy) * 1.3) {
+        const sel = getSelection();
+        if (sel && !sel.isCollapsed) { lockedOut = true; return; }
+        active = true;
+        el.app.classList.add('swiping-back');
+        el.editorPane.style.animation = 'none';
+        el.editorPane.style.transition = 'none';
+        el.editorPane.style.willChange = 'transform';
+      } else {
+        return;
+      }
+    }
+    e.preventDefault();
+    el.editorPane.style.transform = `translate3d(${Math.max(0, dx)}px, 0, 0)`;
+  }, { passive: false, capture: true });
+
+  const finishSwipe = (e) => {
+    if (!arm) return;
+    arm = false;
+    if (!active) return;
+    active = false;
+    const w = el.editorPane.clientWidth || innerWidth;
+    const ct = e.changedTouches && e.changedTouches[0];
+    const finalDx = Math.max(0, ct ? ct.clientX - sx : dx);
+    const vx = finalDx / Math.max(16, Date.now() - st);
+    const shouldClose = e.type !== 'touchcancel' && (finalDx > Math.min(110, w * 0.3) || (vx > 0.42 && finalDx > 38));
+    if (shouldClose) {
+      el.editorPane.style.transition = 'transform 185ms cubic-bezier(.22, 1, .36, 1)';
+      el.editorPane.style.transform = `translate3d(${w}px, 0, 0)`;
+      setTimeout(() => {
+        resetPane();
+        closeEditor(false, true);
+      }, 190);
+    } else {
+      el.editorPane.style.transition = 'transform 180ms cubic-bezier(.22, 1, .36, 1)';
+      el.editorPane.style.transform = 'translate3d(0, 0, 0)';
+      setTimeout(resetPane, 185);
+    }
+  };
+  document.addEventListener('touchend', finishSwipe, { passive: true, capture: true });
+  document.addEventListener('touchcancel', finishSwipe, { passive: true, capture: true });
 })();
 document.addEventListener('scroll', (e) => {
   if (e.target !== el.editorText) return;
@@ -3293,6 +3427,7 @@ function renderEditToggle() {
     ? '<svg class="ic"><use href="#i-pen"/></svg><span>Edit</span>'
     : '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Done</span>';
   b.classList.toggle('done', !ui.readMode);
+  requestAnimationFrame(positionPasteChip);
 }
 function setReadMode(on) {
   ui.readMode = on;
@@ -3311,6 +3446,7 @@ function setReadMode(on) {
     }
   }
   renderEditToggle();
+  requestAnimationFrame(positionPasteChip);
 }
 
 function newNote(opts) {
@@ -3345,7 +3481,7 @@ function openNoteItem() {
   return store.items.get(ui.noteId) || (ui.newNote && ui.newNote.id === ui.noteId ? ui.newNote : null);
 }
 
-function closeEditor(fromLayer = false) {
+function closeEditor(fromLayer = false, skipAnim = false) {
   try { const sel = getSelection(); if (sel && el.editorText.contains(sel.anchorNode)) sel.removeAllRanges(); } catch {}
   if (ui.hideListen) ui.hideListen();
   saveNote.flush();
@@ -3365,7 +3501,7 @@ function closeEditor(fromLayer = false) {
   ui.newNote = null;
   renderNotesList();
   applyNotesList();
-  if (mobileClosing && !reducedMotion()) {
+  if (mobileClosing && !skipAnim && !reducedMotion()) {
     el.app.classList.remove('editing');
     el.app.classList.add('editor-leaving');
     ui.editorLeaveT = setTimeout(() => {
@@ -5132,7 +5268,20 @@ async function attachToNote(list, point, at) {
       return `<a data-file="${it.id}" class="file-chip" contenteditable="false">📎 ${esc(it.data.name)}</a>&nbsp;`;
     })
     .join('');
-  exec('insertHTML', html);
+  if (ui.readMode || !el.editorText.isContentEditable) {
+    const r = ui.savedRange && el.editorText.contains(ui.savedRange.commonAncestorContainer) ? ui.savedRange.cloneRange() : null;
+    const frag = document.createRange().createContextualFragment(html);
+    if (r) {
+      r.deleteContents();
+      r.insertNode(frag);
+    } else {
+      const p = document.createElement('p');
+      p.append(frag);
+      el.editorText.append(p);
+    }
+  } else {
+    exec('insertHTML', html);
+  }
   hydrateFiles(el.editorText);
   onEditorInput();
 }

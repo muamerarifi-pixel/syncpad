@@ -3015,6 +3015,7 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
 
 @media (max-width: 860px) {
   .app.editing .editor-pane { display: flex; animation: spSlideInRight var(--dur-md) var(--ease-out); }
+  .app.swiping-back .editor-pane { animation: none !important; background-color: var(--surface) !important; box-shadow: -10px 0 28px rgba(0, 0, 0, .14); }
   .app.editor-leaving .editor-pane {
     display: flex; pointer-events: none;
     animation: spSlideOutRight 145ms var(--ease-in) forwards;
