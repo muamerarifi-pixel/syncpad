@@ -732,7 +732,6 @@ public class MainActivity extends Activity {
 
                 if (Build.VERSION.SDK_INT >= 29) {
                     w.setNavigationBarContrastEnforced(false);
-                    w.setStatusBarContrastEnforced(false);
                 }
 
                 if (Build.VERSION.SDK_INT >= 30) {
