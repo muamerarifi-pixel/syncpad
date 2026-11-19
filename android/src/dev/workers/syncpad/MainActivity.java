@@ -106,8 +106,8 @@ public class MainActivity extends Activity {
         int nightMask = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
         boolean systemDark = nightMask == Configuration.UI_MODE_NIGHT_YES;
         boolean dark = prefs.contains("dark") ? prefs.getBoolean("dark", systemDark) : systemDark;
-        String barHex = prefs.getString("barHex", dark ? "#16181e" : "#ffffff");
-        String bgHex = prefs.getString("bgHex", dark ? "#0e1014" : "#fcfcfd");
+        String barHex = prefs.getString("barHex", dark ? "#0d0f13" : "#f5f6f8");
+        String bgHex = prefs.getString("bgHex", dark ? "#0d0f13" : "#f5f6f8");
         applySystemBars(dark, barHex, bgHex);
     }
 
@@ -130,8 +130,8 @@ public class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences(PREFS_UI, MODE_PRIVATE);
         int nightMask = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
         boolean dark = prefs.getBoolean("dark", nightMask == Configuration.UI_MODE_NIGHT_YES);
-        String bgHex = prefs.getString("bgHex", dark ? "#0e1014" : "#fcfcfd");
-        webView.setBackgroundColor(parseColorSafe(bgHex, dark ? 0xFF0E1014 : 0xFFFCFCFD));
+        String bgHex = prefs.getString("bgHex", dark ? "#0d0f13" : "#f5f6f8");
+        webView.setBackgroundColor(parseColorSafe(bgHex, dark ? 0xFF0D0F13 : 0xFFF5F6F8));
 
         rootContainer.removeAllViews();
         rootContainer.addView(webView);
@@ -720,8 +720,8 @@ public class MainActivity extends Activity {
             public void run() {
                 Window w = getWindow();
                 if (w == null) return;
-                int barColor = parseColorSafe(barHex, dark ? 0xFF16181E : 0xFFFFFFFF);
-                int bgColor = parseColorSafe(bodyHex, dark ? 0xFF0E1014 : 0xFFFCFCFD);
+                int barColor = parseColorSafe(barHex, dark ? 0xFF0D0F13 : 0xFFF5F6F8);
+                int bgColor = parseColorSafe(bodyHex, dark ? 0xFF0D0F13 : 0xFFF5F6F8);
 
                 w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
                 w.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
@@ -732,6 +732,7 @@ public class MainActivity extends Activity {
 
                 if (Build.VERSION.SDK_INT >= 29) {
                     w.setNavigationBarContrastEnforced(false);
+                    w.setStatusBarContrastEnforced(false);
                 }
 
                 if (Build.VERSION.SDK_INT >= 30) {
@@ -759,8 +760,8 @@ public class MainActivity extends Activity {
             try {
                 getSharedPreferences(PREFS_UI, MODE_PRIVATE).edit()
                         .putBoolean("dark", dark)
-                        .putString("barHex", barHex != null ? barHex : (dark ? "#16181e" : "#ffffff"))
-                        .putString("bgHex", bodyHex != null ? bodyHex : (dark ? "#0e1014" : "#fcfcfd"))
+                        .putString("barHex", barHex != null ? barHex : (dark ? "#0d0f13" : "#f5f6f8"))
+                        .putString("bgHex", bodyHex != null ? bodyHex : (dark ? "#0d0f13" : "#f5f6f8"))
                         .apply();
             } catch (Exception ignored) {}
             applySystemBars(dark, barHex, bodyHex);

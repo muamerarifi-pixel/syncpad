@@ -2183,7 +2183,7 @@ html, body { overscroll-behavior-x: none; }
   --ease: cubic-bezier(.2, .8, .2, 1);
   --glass: color-mix(in srgb, var(--surface) 86%, transparent);
   --qn-h: 56px;
-  --bar: var(--surface);
+  --bar: var(--bg);
 }
 [data-theme="dark"] {
   --bg: #0d0f13;

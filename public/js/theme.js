@@ -9,15 +9,15 @@ try {
   delete document.documentElement.dataset.bg;
   var w = localStorage.getItem('sp-wall') || 'aurora';
   if (w !== 'none') document.documentElement.dataset.wall = w; else delete document.documentElement.dataset.wall;
-  var color = dark ? '#16181e' : '#ffffff';
+  var color = dark ? '#0d0f13' : '#f5f6f8';
   var m = document.querySelector('meta[name="theme-color"]');
   if (m) { m.removeAttribute('media'); m.content = color; }
   var cs = document.querySelector('meta[name="color-scheme"]');
   if (cs) cs.content = dark ? 'dark' : 'light';
   var sb = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-  if (sb) sb.content = dark ? 'black-translucent' : 'default';
+  if (sb) sb.content = 'black-translucent';
   if (window.SyncPadAndroid && window.SyncPadAndroid.setTheme) {
-    window.SyncPadAndroid.setTheme(dark, color, dark ? '#0e1014' : '#fcfcfd');
+    window.SyncPadAndroid.setTheme(dark, color, color);
   }
   if (localStorage.getItem('sp-pin')) document.documentElement.classList.add('locked');
 } catch (e) {}

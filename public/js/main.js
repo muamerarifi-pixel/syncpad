@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.93';
+const VERSION = '3.0.94';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -5983,8 +5983,8 @@ function applyTheme() {
   if (bg && bg !== 'none') document.documentElement.dataset.bg = bg;
   else delete document.documentElement.dataset.bg;
   const bgColors = {
-    light: { classic: '#f2e8d0', smooth: '#f7f4f0', cotton: '#f3efe6', recycled: '#e6dfd0', lined: '#f6f7f9', linen: '#ece6da', washi: '#f5f1e8', vintage: '#e5d7b8', none: '#ffffff' },
-    dark: { classic: '#262119', smooth: '#181b22', cotton: '#1e2028', recycled: '#2a261f', lined: '#181b22', linen: '#21252d', washi: '#1c2028', vintage: '#2a2015', none: '#16181e' }
+    light: { classic: '#f2e8d0', smooth: '#f7f4f0', cotton: '#f3efe6', recycled: '#e6dfd0', lined: '#f6f7f9', linen: '#ece6da', washi: '#f5f1e8', vintage: '#e5d7b8', none: '#f5f6f8' },
+    dark: { classic: '#262119', smooth: '#181b22', cotton: '#1e2028', recycled: '#2a261f', lined: '#181b22', linen: '#21252d', washi: '#1c2028', vintage: '#2a2015', none: '#0d0f13' }
   };
   const scheme = dark ? 'dark' : 'light';
   const col = (bg && bgColors[scheme][bg]) || bgColors[scheme].none;
@@ -5995,9 +5995,9 @@ function applyTheme() {
   const csMeta = document.querySelector('meta[name="color-scheme"]');
   if (csMeta) csMeta.content = scheme;
   const sbMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-  if (sbMeta) sbMeta.content = dark ? 'black-translucent' : 'default';
+  if (sbMeta) sbMeta.content = 'black-translucent';
   if (window.SyncPadAndroid?.setTheme) {
-    window.SyncPadAndroid.setTheme(dark, col, dark ? '#0e1014' : '#fcfcfd');
+    window.SyncPadAndroid.setTheme(dark, col, col);
   }
   updateManifest();
   requestAnimationFrame(syncThemeColor);
@@ -7849,8 +7849,8 @@ function syncThemeColor() {
   if (c) for (const m of document.querySelectorAll('meta[name="theme-color"]')) if (m.content !== c) m.content = c;
   if (window.SyncPadAndroid?.setTheme) {
     const isDark = document.documentElement.dataset.theme === 'dark';
-    const bg = solidColor(document.body) || (isDark ? '#0e1014' : '#fcfcfd');
-    window.SyncPadAndroid.setTheme(isDark, c || (isDark ? '#16181e' : '#ffffff'), bg);
+    const bg = solidColor(document.body) || (isDark ? '#0d0f13' : '#f5f6f8');
+    window.SyncPadAndroid.setTheme(isDark, c || bg, bg);
   }
 }
 /** an element's background as plain #rrggbb (status bars don't understand transparency or color-mix) */

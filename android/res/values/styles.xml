@@ -7,6 +7,6 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
     </style>
-    <color name="sp_bg">#fcfcfd</color>
-    <color name="sp_bar">#ffffff</color>
+    <color name="sp_bg">#f5f6f8</color>
+    <color name="sp_bar">#f5f6f8</color>
 </resources>
