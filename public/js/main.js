@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.96';
+const VERSION = '3.0.97';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -291,7 +291,11 @@ function wire() {
     c.after = Number(el.setPinAfter.value);
     localStorage.setItem('sp-pin', JSON.stringify(c));
   });
-  for (const inp of [el.fileInput, el.noteFileInput, el.noteImageInput]) if (inp) inp.addEventListener('click', expectAway);
+  if (el.fileDirectInput && /Android/i.test(navigator.userAgent) && !window.SyncPadAndroid) {
+    // Chromium Android treats application/octet-stream as GENERIC_TYPE: omits Camera/Camcorder chooser intents while keeping Files at */*
+    el.fileDirectInput.accept = 'application/octet-stream';
+  }
+  for (const inp of [el.fileInput, el.fileDirectInput, el.noteFileInput, el.noteImageInput]) if (inp) inp.addEventListener('click', expectAway);
   if (navigator.share) {
     const nativeShare = navigator.share.bind(navigator);
     navigator.share = (data) => { expectAway(); return nativeShare(data); };
@@ -306,6 +310,7 @@ function wire() {
   if (el.btnAddFiles) el.btnAddFiles.addEventListener('click', () => { haptic('click'); el.fileInput.click(); });
   if (el.btnUpload) el.btnUpload.addEventListener('click', () => { haptic('click'); el.fileInput.click(); });
   el.fileInput.addEventListener('change', () => { sendFiles([...el.fileInput.files]); el.fileInput.value = ''; });
+  if (el.fileDirectInput) el.fileDirectInput.addEventListener('change', () => { sendFiles([...el.fileDirectInput.files]); el.fileDirectInput.value = ''; });
   el.noteFileInput.addEventListener('change', () => { attachToNote([...el.noteFileInput.files]); el.noteFileInput.value = ''; });
   if (el.noteImageInput) el.noteImageInput.addEventListener('change', () => { attachToNote([...el.noteImageInput.files], ui.savedRange); el.noteImageInput.value = ''; });
 
@@ -1872,7 +1877,7 @@ function initEmptyUpload() {
     lastOpen = now;
     haptic('heavy');
     spawnTapRing(x, y);
-    el.fileInput.click();
+    (el.fileDirectInput || el.fileInput).click();
   };
 
   const cancelHold = () => {
