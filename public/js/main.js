@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.97';
+const VERSION = '3.0.98';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -736,6 +736,10 @@ function wire() {
       ui.epubUrls = null;
       el.viewerMarkup.innerHTML = ui.markupBtnHtml;
     }
+    el.dlgViewer.style.background = '';
+    el.dlgViewer.style.transition = '';
+    const vbar = el.dlgViewer.querySelector('.viewer-bar');
+    if (vbar) { vbar.style.opacity = ''; vbar.style.transition = ''; }
     el.viewerBody.innerHTML = '';
     el.viewerBody.classList.remove('is-zoom', 'is-docv');
     ui.viewing = null;
@@ -5639,6 +5643,109 @@ function setupPhotoSwipe(it) {
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && Date.now() - st < 700) stepPhoto(dx < 0 ? 1 : -1);
   }, { passive: true });
 }
+function setupImageSwipeDown() {
+  const stage = el.viewerBody.querySelector('.zoom-stage');
+  if (!stage) return;
+  const vbar = el.dlgViewer.querySelector('.viewer-bar');
+  const getChrome = () => [vbar, el.viewerBody.querySelector('.zoom-bar'), el.viewerBody.querySelector('.photo-nav')].filter(Boolean);
+  let active = false, locked = null, sx = 0, sy = 0, st = 0, lastDy = 0, closing = false;
+
+  const reset = (animate) => {
+    const tr = animate ? 'transform .22s cubic-bezier(.2,.8,.2,1), opacity .22s ease' : '';
+    stage.style.transition = tr;
+    stage.style.transform = '';
+    stage.style.opacity = '';
+    el.dlgViewer.style.transition = animate ? 'background .22s ease' : '';
+    el.dlgViewer.style.background = '';
+    for (const c of getChrome()) {
+      c.style.transition = animate ? 'opacity .22s ease' : '';
+      c.style.opacity = '';
+    }
+    if (animate) {
+      setTimeout(() => {
+        if (!active && !closing) {
+          stage.style.transition = '';
+          el.dlgViewer.style.transition = '';
+          for (const c of getChrome()) c.style.transition = '';
+        }
+      }, 240);
+    }
+  };
+
+  stage.addEventListener('touchstart', (e) => {
+    if (closing) return;
+    if (e.touches.length !== 1 || !ui.zoom || !ui.zoom.atFit()) {
+      if (active) { active = false; locked = null; reset(true); }
+      return;
+    }
+    active = true;
+    locked = null;
+    lastDy = 0;
+    sx = e.touches[0].clientX;
+    sy = e.touches[0].clientY;
+    st = Date.now();
+  }, { passive: true });
+
+  stage.addEventListener('touchmove', (e) => {
+    if (!active || closing) return;
+    if (e.touches.length !== 1 || !ui.zoom || !ui.zoom.atFit()) {
+      active = false; locked = null; reset(true);
+      return;
+    }
+    const dx = e.touches[0].clientX - sx;
+    const dy = e.touches[0].clientY - sy;
+    if (!locked) {
+      if (Math.hypot(dx, dy) < 10) return;
+      if (dy > 0 && dy > Math.abs(dx) * 1.25) {
+        locked = 'down';
+        stage.style.transition = '';
+        el.dlgViewer.style.transition = '';
+        for (const c of getChrome()) c.style.transition = '';
+      } else {
+        locked = 'other';
+        return;
+      }
+    }
+    if (locked !== 'down') return;
+    lastDy = Math.max(0, dy);
+    const scale = Math.max(0.84, 1 - lastDy / 1400);
+    const bgAlpha = Math.max(0.15, 1 - lastDy / 360);
+    const chromeAlpha = Math.max(0, 1 - lastDy / 140);
+    stage.style.transform = `translate3d(0, ${lastDy}px, 0) scale(${scale})`;
+    el.dlgViewer.style.background = `rgba(8, 9, 12, ${bgAlpha.toFixed(3)})`;
+    for (const c of getChrome()) c.style.opacity = chromeAlpha.toFixed(3);
+  }, { passive: true });
+
+  const end = () => {
+    if (!active || closing) return;
+    const wasDown = locked === 'down';
+    const dy = lastDy;
+    const dt = Math.max(1, Date.now() - st);
+    const vy = dy / dt;
+    active = false;
+    locked = null;
+    if (!wasDown) return;
+    if (dy > 95 || (dy > 45 && vy > 0.45)) {
+      closing = true;
+      stage.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
+      stage.style.transform = `translate3d(0, ${Math.round(window.innerHeight * 0.45)}px, 0) scale(0.82)`;
+      stage.style.opacity = '0';
+      el.dlgViewer.style.transition = 'background .18s ease-out';
+      el.dlgViewer.style.background = 'rgba(8, 9, 12, 0)';
+      for (const c of getChrome()) { c.style.transition = 'opacity .15s ease-out'; c.style.opacity = '0'; }
+      setTimeout(() => {
+        if (el.dlgViewer.open) el.dlgViewer.close();
+      }, 175);
+    } else {
+      reset(true);
+    }
+  };
+  stage.addEventListener('touchend', end, { passive: true });
+  stage.addEventListener('touchcancel', () => {
+    if (!active || closing) return;
+    active = false; locked = null; reset(true);
+  }, { passive: true });
+}
 addEventListener('keydown', (e) => {
   if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && el.dlgViewer && el.dlgViewer.open && !e.target.closest('input, textarea, [contenteditable="true"]')) {
     if (stepPhoto(e.key === 'ArrowRight' ? 1 : -1)) e.preventDefault();
@@ -5683,6 +5790,7 @@ async function openFile(it) {
     const pct = el.viewerBody.querySelector('.zoom-pct');
     ui.zoom = new ZoomView(el.viewerBody.querySelector('.zoom-stage'), el.viewerBody.querySelector('img'), (label) => { pct.textContent = label; });
     setupPhotoSwipe(it);
+    setupImageSwipeDown();
   }
   if (textual) {
     try {
