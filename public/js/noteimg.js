@@ -11,8 +11,8 @@ const ALIGNS = [
 ];
 
 export class ImageTools {
-  constructor({ editor, onChange, onView, onMarkup, toast }) {
-    Object.assign(this, { ed: editor, onChange, onView, onMarkup, toast });
+  constructor({ editor, onChange, onView, onMarkup, onCopy, toast }) {
+    Object.assign(this, { ed: editor, onChange, onView, onMarkup, onCopy, toast });
     this.img = null;
     this.extra = new Set(); // more pictures selected together with this.img
     this.picking = false;
@@ -26,6 +26,7 @@ export class ImageTools {
       `<button class="icon-btn sm" data-act="bigger" title="Bigger" aria-label="Bigger"><b>+</b></button>` +
       `<button class="icon-btn sm img-move" data-act="move" title="Drag to move the picture" aria-label="Move">${ic('cursor')}</button>` +
       `<button class="icon-btn sm" data-act="markup" title="Draw, mark up or write on the picture" aria-label="Draw on the picture">${ic('pen')}</button>` +
+      `<button class="icon-btn sm" data-act="copy" title="Copy image" aria-label="Copy image">${ic('copy')}</button>` +
       `<button class="icon-btn sm" data-act="pick" title="Select more pictures (or Shift+click)" aria-label="Select more pictures">${ic('select')}</button>` +
       `<button class="icon-btn sm" data-act="view" title="Open" aria-label="Open">${ic('eye')}</button>` +
       `<button class="icon-btn sm" data-act="del" title="Remove from the note" aria-label="Remove from the note">${ic('trash')}</button>`;
@@ -59,6 +60,7 @@ export class ImageTools {
     editor.addEventListener('keydown', (e) => {
       if (!this.img) return;
       if (e.key === 'Escape') this.select(null);
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && !this.chip && this.onCopy) { e.preventDefault(); this.onCopy(this.img); }
       else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.bar.querySelector('[data-act="del"]').click(); }
       else this.select(null);
     });
@@ -104,6 +106,8 @@ export class ImageTools {
     if (pk) pk.setAttribute('aria-pressed', String(this.picking));
     const mk = this.bar.querySelector('[data-act="markup"]');
     if (mk) mk.hidden = this.chip || this.extra.size > 0 || !this.onMarkup;
+    const cp = this.bar.querySelector('[data-act="copy"]');
+    if (cp) cp.hidden = this.chip || this.extra.size > 0 || !this.onCopy;
   }
   position() {
     if (!this.img) return;
@@ -169,6 +173,7 @@ export class ImageTools {
       }
       this.changed();
     } else if (act === 'view') this.onView(im);
+    else if (act === 'copy') { if (this.onCopy && !this.chip) this.onCopy(im); }
     else if (act === 'markup') { if (this.onMarkup && !this.chip) this.onMarkup(im); }
     else if (act === 'pick') {
       this.picking = !this.picking;

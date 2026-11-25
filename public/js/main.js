@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.98';
+const VERSION = '3.0.99';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -552,6 +552,7 @@ function wire() {
     editor: el.editorText,
     onChange: onEditorInput,
     onView: (im) => { const it = store.items.get(im.dataset.file); if (it) openFile(it); },
+    onCopy: canCopyImage() ? (im) => { const it = store.items.get(im.dataset.file); if (it) copyImageItem(it); } : null,
     onMarkup: async (im) => {
       const r = await markupFile(im.dataset.file);
       if (!r || !im.isConnected) return;
@@ -698,6 +699,7 @@ function wire() {
 
   // viewer
   el.viewerDownload.addEventListener('click', () => ui.viewing && files.download(ui.viewing));
+  el.viewerCopy.addEventListener('click', () => ui.viewing && copyImageItem(ui.viewing));
   el.viewerShare.addEventListener('click', () => ui.viewing && files.share(ui.viewing).catch(() => {}));
   ui.markupBtnHtml = el.viewerMarkup.innerHTML;
   el.viewerMarkup.addEventListener('click', async () => {
@@ -754,6 +756,11 @@ function wire() {
     else ui.zoom.fit();
   });
   el.dlgViewer.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && ui.viewing && fileKind(ui.viewing.data.type, ui.viewing.data.name) === 'image' && canCopyImage()) {
+      e.preventDefault();
+      copyImageItem(ui.viewing);
+      return;
+    }
     if (!ui.zoom || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === '+' || e.key === '=') ui.zoom.zoomBy(1.6);
     else if (e.key === '-') ui.zoom.zoomBy(1 / 1.6);
@@ -1568,6 +1575,15 @@ function metaParts(it, prog) {
   return parts.join('<span class="sep"></span>') + extra;
 }
 
+function canCopyImage() {
+  return !!(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write);
+}
+function copyImageItem(it) {
+  return files.copyImage(it)
+    .then(() => toast('Image copied'))
+    .catch(() => toast('Copy is not supported for this image.'));
+}
+
 function primaryAction(it, prog) {
   if (it.kind === 'clip') {
     const url = singleUrl(it.data.text || '');
@@ -1583,10 +1599,13 @@ function primaryAction(it, prog) {
   }
   if (prog) return '';
   const kind = fileKind(it.data.type, it.data.name);
+  const copyBtn = kind === 'image' && canCopyImage()
+    ? `<button class="icon-btn act" data-act="copy-img" aria-label="Copy image" title="Copy image"><svg class="ic"><use href="#i-copy"/></svg></button>`
+    : '';
   if (isIOS() && (kind === 'image' || kind === 'video') && files.canShare()) {
-    return `<button class="icon-btn act" data-act="share" aria-label="Save to Photos" title="Save"><svg class="ic"><use href="#i-download"/></svg></button>`;
+    return `${copyBtn}<button class="icon-btn act" data-act="share" aria-label="Save to Photos" title="Save"><svg class="ic"><use href="#i-download"/></svg></button>`;
   }
-  return `<button class="icon-btn act" data-act="download" aria-label="Download" title="Download"><svg class="ic"><use href="#i-download"/></svg></button>`;
+  return `${copyBtn}<button class="icon-btn act" data-act="download" aria-label="Download" title="Download"><svg class="ic"><use href="#i-download"/></svg></button>`;
 }
 
 function rowHTML(it, prog) {
@@ -1690,6 +1709,8 @@ async function onFeedClick(e) {
   if (act === 'copy') {
     await copyText(it.data.text || '');
     toast('Copied');
+  } else if (act === 'copy-img') {
+    await copyImageItem(it);
   } else if (act === 'expand') {
     if (e.target.closest('a')) return;
     ui.expanded.has(it.id) ? ui.expanded.delete(it.id) : ui.expanded.add(it.id);
@@ -1718,6 +1739,7 @@ async function onFeedClick(e) {
 function openTextViewer(it) {
   ui.viewing = null;
   el.viewerTitle.textContent = 'Message';
+  el.viewerCopy.hidden = true;
   el.viewerShare.hidden = true;
   el.viewerDownload.hidden = true;
   el.viewerMarkup.hidden = true;
@@ -2051,6 +2073,7 @@ async function openDocViewer(it, dk) {
   ui.docSource = null;
   el.viewerDownload.hidden = false;
   el.viewerTitle.textContent = it.data.name;
+  el.viewerCopy.hidden = true;
   el.viewerShare.hidden = !files.canShare();
   el.viewerMarkup.hidden = !(dk === 'pdf' ? canEditPdf(it) : canEditDoc(it));
   if (files.canShare()) files.prefetch(it);
@@ -5767,6 +5790,7 @@ async function openFile(it) {
   el.viewerDownload.hidden = false;
   el.viewerMarkup.hidden = !canMarkup(it) && !canEditPdf(it);
   el.viewerTitle.textContent = d.name;
+  el.viewerCopy.hidden = !(kind === 'image' && canCopyImage());
   el.viewerShare.hidden = !files.canShare();
   if (files.canShare()) files.prefetch(it);
   let html = '';
@@ -7722,6 +7746,7 @@ async function openEpubViewer(it) {
   if (!blob) { toast('Could not load this e-book. Check your connection.'); return; }
   ui.viewing = it;
   el.viewerTitle.textContent = it.data.name;
+  el.viewerCopy.hidden = true;
   el.viewerShare.hidden = !navigator.share;
   el.viewerDownload.hidden = false;
   el.viewerMarkup.hidden = false;

@@ -312,11 +312,13 @@ export class Files extends EventTarget {
   async copyImage(item) {
     const png = (async () => {
       const blob = await this.blobOf(item);
+      if (!blob) throw new Error('missing');
       if (blob.type === 'image/png') return blob;
       const bmp = await createImageBitmap(blob);
       const c = document.createElement('canvas');
       c.width = bmp.width; c.height = bmp.height;
       c.getContext('2d').drawImage(bmp, 0, 0);
+      if (bmp.close) bmp.close();
       return new Promise((res) => c.toBlob(res, 'image/png'));
     })();
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
