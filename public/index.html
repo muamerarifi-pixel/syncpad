@@ -306,7 +306,7 @@
     <div class="drop-card">
       <svg class="ic ic-xl"><use href="#i-upload"/></svg>
       <strong id="drop-overlay-title">Drop to send to all your devices</strong>
-      <span>Any file type · up to 200 MB each</span>
+      <span id="drop-overlay-sub">Files, folders, images, or links · up to 200 MB each</span>
     </div>
   </div>
 
@@ -735,6 +735,28 @@
       <div class="row end">
         <button class="btn" data-close value="no">Cancel</button>
         <button class="btn btn-primary" id="confirm-ok">OK</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Share-to-SyncPad destination picker -->
+  <dialog class="sheet sheet-sm share-dest-sheet" id="dlg-share-dest" aria-labelledby="share-dest-title">
+    <div class="sheet-head">
+      <h2 id="share-dest-title">Save shared item</h2>
+      <button class="icon-btn" data-close aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="sheet-body share-dest-body">
+      <div class="share-dest-summary muted" id="share-dest-summary"></div>
+      <button class="btn btn-primary share-dest-home" id="share-dest-home" type="button">
+        <svg class="ic"><use href="#i-drops"/></svg><span>Drop to Home</span>
+      </button>
+      <div id="share-dest-folders-wrap" hidden>
+        <div class="share-dest-label">Folders</div>
+        <div class="share-dest-chips" id="share-dest-folders"></div>
+      </div>
+      <div id="share-dest-notes-wrap">
+        <div class="share-dest-label">Append to a note</div>
+        <div class="share-dest-notes" id="share-dest-notes"></div>
       </div>
     </div>
   </dialog>

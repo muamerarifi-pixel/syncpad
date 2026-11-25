@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.0.99';
+const VERSION = '3.1.0';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -111,6 +111,7 @@ async function boot() {
   takeShared(params.shared);
   initLaunchQueue();
   if (params.note && store.items.get(params.note)) whenUnlocked(() => openNote(params.note));
+  if (params.action) whenUnlocked(() => handleLaunchAction(params.action));
   whenUnlocked(() => bgAudio.restoreLast());
   scheduleLocalReminders();
   setTimeout(indexBacklog, 6000);
@@ -136,7 +137,6 @@ async function boot() {
   window.__spReceiveAndroidShare = (payload) => {
     if (!payload) return;
     whenUnlocked(async () => {
-      setTab('drops');
       const list = [];
       for (const f of payload.files || []) {
         if (!f || !f.base64) continue;
@@ -147,12 +147,8 @@ async function boot() {
           list.push(new File([u8], f.name || 'shared-file', { type: f.type || 'application/octet-stream' }));
         } catch {}
       }
-      if (list.length) await sendFiles(list);
-      if (payload.text && String(payload.text).trim()) sendClip(String(payload.text).trim());
-      if (list.length || (payload.text && String(payload.text).trim())) {
-        haptic('success');
-        toast('Sent to your devices');
-      }
+      const text = payload.text && String(payload.text).trim() ? String(payload.text).trim() : '';
+      if (list.length || text) handleIncomingShare({ files: list, text });
     });
   };
   if (Array.isArray(window.__spAndroidShareQueue)) {
@@ -169,7 +165,7 @@ async function boot() {
 function readParams() {
   const q = new URLSearchParams(location.search);
   const h = new URLSearchParams(location.hash.replace(/^#/, ''));
-  return { join: h.get('join') || q.get('join'), s: q.get('s'), shared: q.has('shared'), removed: q.has('removed'), note: q.get('note') };
+  return { join: h.get('join') || q.get('join'), s: q.get('s'), shared: q.has('shared'), removed: q.has('removed'), note: q.get('note'), action: q.get('action') };
 }
 
 function cleanUrl() {
@@ -332,17 +328,53 @@ function wire() {
   el.btnSelect.addEventListener('click', () => { haptic('tick'); (ui.selecting ? exitSelect() : enterSelect()); });
   el.btnFolderMore.addEventListener('click', () => folderMenu(el.btnFolderMore));
   el.selectBar.addEventListener('click', onSelectBar);
-  // drag drops onto a folder (desktop)
+  // drag drops onto a folder (internal) OR drag directly out to desktop apps (Explorer, Discord, WhatsApp, email)
   el.feedInner.addEventListener('dragstart', (e) => {
     const row = e.target.closest && e.target.closest('[data-id]');
     if (!row) return;
     const ids = ui.selecting && ui.selected.has(row.dataset.id) ? [...ui.selected] : [row.dataset.id];
     e.dataTransfer.setData('application/x-syncpad', JSON.stringify(ids));
-    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.effectAllowed = 'copyMove';
+    if (ids.length === 1) {
+      const it = store.items.get(ids[0]);
+      if (it && it.kind === 'file') {
+        const absUrl = new URL(files.url(it.id, true), location.origin).href;
+        const mime = it.data.type || 'application/octet-stream';
+        const safeName = (it.data.name || 'file').replace(/[:/\\*?"<>|]/g, '_');
+        try { e.dataTransfer.setData('DownloadURL', `${mime}:${safeName}:${absUrl}`); } catch {}
+        e.dataTransfer.setData('text/uri-list', absUrl);
+        e.dataTransfer.setData('text/plain', absUrl);
+        if (fileKind(it.data.type, it.data.name) === 'image') {
+          e.dataTransfer.setData('text/html', `<img src="${esc(absUrl)}" alt="${esc(safeName)}">`);
+        }
+      } else if (it && it.kind === 'clip') {
+        const txt = it.data.text || '';
+        const u = singleUrl(txt);
+        if (txt) e.dataTransfer.setData('text/plain', txt);
+        if (u) e.dataTransfer.setData('text/uri-list', u);
+      }
+    }
     ui.dragDrop = row.dataset.id;
     el.app.classList.add('dragging-drop');
   });
   el.feedInner.addEventListener('dragend', () => el.app.classList.remove('dragging-drop'));
+  // drag images/files out of notes straight to desktop apps
+  el.editorText.addEventListener('dragstart', (e) => {
+    const im = e.target.closest && e.target.closest('img[data-file], a[data-file]');
+    if (!im) return;
+    const it = store.items.get(im.dataset.file);
+    if (!it || it.kind !== 'file') return;
+    const absUrl = new URL(files.url(it.id, true), location.origin).href;
+    const mime = it.data.type || 'application/octet-stream';
+    const safeName = (it.data.name || 'file').replace(/[:/\\*?"<>|]/g, '_');
+    e.dataTransfer.effectAllowed = 'copy';
+    try { e.dataTransfer.setData('DownloadURL', `${mime}:${safeName}:${absUrl}`); } catch {}
+    e.dataTransfer.setData('text/uri-list', absUrl);
+    e.dataTransfer.setData('text/plain', absUrl);
+    if (fileKind(it.data.type, it.data.name) === 'image') {
+      e.dataTransfer.setData('text/html', `<img src="${esc(absUrl)}" alt="${esc(safeName)}">`);
+    }
+  });
   el.dropsSide.addEventListener('dragover', (e) => {
     const t = e.target.closest('[data-folder-drop]');
     const internal = [...e.dataTransfer.types].includes('application/x-syncpad');
@@ -592,6 +624,7 @@ function wire() {
   setupTabSwipe();
   fitToKeyboard();
   setupPasteChip();
+  setupReturnPastePill();
   el.btnShowList.addEventListener('click', () => toggleNotesList(true));
   el.btnPresent.addEventListener('click', startPresent);
   applyNotesList();
@@ -770,13 +803,17 @@ function wire() {
   markup = new Markup(el.dlgMarkup);
   collage = new Collage(el.dlgCollage);
 
-  // drag & drop anywhere
+  // drag & drop anywhere (improved: folders, dragged web images, note-item targets, folder targets)
   let depth = 0;
+  const clearDropHighlights = () => {
+    for (const n of $$('.drop-target', el.dropsSide)) n.classList.remove('drop-target');
+    for (const n of $$('.note-item.drop-on', el.noteList)) n.classList.remove('drop-on');
+  };
   const dragKind = (e) => {
     const t = e.dataTransfer ? [...e.dataTransfer.types] : [];
-    if (t.includes('application/x-syncpad')) return null;
+    if (t.includes('application/x-syncpad') || t.includes('application/x-syncpad-note')) return null;
     if (t.includes('Files')) return 'files';
-    if (t.includes('text/uri-list') || t.includes('text/plain')) return 'text';
+    if (t.includes('text/uri-list') || t.includes('text/html') || t.includes('text/plain')) return 'text';
     return null;
   };
   addEventListener('dragenter', (e) => {
@@ -793,57 +830,120 @@ function wire() {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setAnimatedVisible(el.dropOverlay, true, 140);
+    clearDropHighlights();
     const fd = e.target.closest && e.target.closest('[data-folder-drop]');
-    const fdName = fd && store.items.get(fd.dataset.folderDrop) && store.items.get(fd.dataset.folderDrop).data.name;
-    el.dropOverlayTitle.textContent = overNoteEditor(e.target) ? 'Drop to attach to this note'
-      : fdName ? `Drop into “${fdName}”`
-      : currentFolder() && ui.tab === 'drops' ? `Drop into “${viewTitle()}”` : 'Drop to send to all your devices';
+    const noteRow = e.target.closest && e.target.closest('#note-list .note-item[data-id]');
+    if (fd) fd.classList.add('drop-target');
+    if (noteRow) noteRow.classList.add('drop-on');
+    const fdItem = fd && store.items.get(fd.dataset.folderDrop);
+    const fdName = fdItem ? fdItem.data.name : (fd && fd.dataset.folderDrop === '' ? 'Home' : null);
+    const noteItem = noteRow && store.items.get(noteRow.dataset.id);
+    const noteName = noteItem ? noteTitle(noteText(noteItem)) : null;
+    const itemCount = e.dataTransfer && e.dataTransfer.items ? e.dataTransfer.items.length : 0;
+    const what = k === 'files' ? (itemCount > 1 ? `${itemCount} items` : 'file or folder') : 'link, image, or text';
+    el.dropOverlayTitle.textContent = overNoteEditor(e.target) ? `Drop ${what} into this note`
+      : noteName ? `Drop ${what} into “${noteName}”`
+      : fdName ? `Drop ${what} into “${fdName}”`
+      : currentFolder() && ui.tab === 'drops' ? `Drop ${what} into “${viewTitle()}”`
+      : `Drop ${what} to send to all your devices`;
+    if (el.dropOverlaySub) {
+      el.dropOverlaySub.textContent = k === 'files'
+        ? 'Files & folders supported · up to 200 MB each'
+        : 'Web images, links, and text snippets supported';
+    }
   });
   addEventListener('dragleave', (e) => {
     if (!dragKind(e)) return;
     depth = Math.max(0, depth - 1);
-    if (depth === 0 || !e.relatedTarget) setAnimatedVisible(el.dropOverlay, false, 120);
+    if (depth === 0 || !e.relatedTarget) {
+      clearDropHighlights();
+      setAnimatedVisible(el.dropOverlay, false, 120);
+    }
   });
-  addEventListener('drop', (e) => {
+  addEventListener('drop', async (e) => {
     const k = dragKind(e);
     depth = 0;
+    clearDropHighlights();
     setAnimatedVisible(el.dropOverlay, false, 120);
     if (!k) return;
     if (k === 'text' && e.target.closest && e.target.closest('textarea, input, [contenteditable="true"]')) return;
     e.preventDefault();
-    const fl = [...e.dataTransfer.files];
+    const target = e.target;
+    const cx = e.clientX, cy = e.clientY;
+    const fd = target.closest && target.closest('[data-folder-drop]');
+    const noteRow = target.closest && target.closest('#note-list .note-item[data-id]');
+    const inEditor = overNoteEditor(target);
+    const htmlData = e.dataTransfer.getData('text/html');
+    const uriData = e.dataTransfer.getData('text/uri-list');
+    const plainData = e.dataTransfer.getData('text/plain');
+    let fl = await collectDroppedFiles(e.dataTransfer);
+    if (!fl.length && (htmlData || uriData)) {
+      const webImg = await extractDraggedImageFile(htmlData, uriData);
+      if (webImg) fl = [webImg];
+    }
     if (fl.length) {
-      const fd = e.target.closest && e.target.closest('[data-folder-drop]');
-      if (overNoteEditor(e.target)) attachToNote(fl, rangeFromPoint(e.clientX, e.clientY), { clientX: e.clientX, clientY: e.clientY });
-      else sendFiles(fl, fd ? fd.dataset.folderDrop : undefined);
+      if (inEditor) attachToNote(fl, rangeFromPoint(cx, cy), { clientX: cx, clientY: cy });
+      else if (noteRow && store.items.get(noteRow.dataset.id)) {
+        openNote(noteRow.dataset.id, { focus: false });
+        await attachToNote(fl);
+        toast(`Attached to “${noteTitle(noteText(store.items.get(noteRow.dataset.id)))}”`);
+      } else {
+        const destFolder = fd ? (fd.dataset.folderDrop || null) : undefined;
+        await sendFiles(fl, destFolder);
+      }
       return;
     }
-    const text = e.dataTransfer.getData('text/uri-list').split('\n').find((l) => l && !l.startsWith('#')) || e.dataTransfer.getData('text/plain');
-    if (text && text.trim()) { setTab('drops'); sendClip(declutterDrop(text, e.dataTransfer.getData('text/html'))); }
+    const rawText = (uriData || '').split('\n').find((l) => l && !l.startsWith('#')) || plainData;
+    if (rawText && rawText.trim()) {
+      const cleaned = declutterDrop(rawText, htmlData);
+      if (inEditor) {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', cleaned);
+        if (htmlData) dt.setData('text/html', htmlData);
+        el.editorText.focus();
+        pasteIntoEditor({ clipboardData: dt, preventDefault() {} });
+      } else if (noteRow && store.items.get(noteRow.dataset.id)) {
+        await appendSharedToNote(noteRow.dataset.id, [], cleaned);
+      } else {
+        const destFolder = fd ? (fd.dataset.folderDrop || null) : currentFolder();
+        setTab('drops');
+        await sendClip(cleaned, destFolder);
+        toast(singleUrl(cleaned) ? 'Link dropped' : 'Text dropped');
+      }
+    }
   });
 
-  // paste anywhere
+  // global paste anywhere (Ctrl+V works without clicking an input first)
   document.addEventListener('paste', (e) => {
     const fl = [...((e.clipboardData && e.clipboardData.files) || [])];
     const t = e.target;
     const editable = t && t.closest && t.closest('textarea, input, [contenteditable]');
+    const activeNote = ui.tab === 'notes' && openNoteItem() && !el.app.classList.contains('list-only') && !$('dialog[open]');
     if (t && el.editorText.contains(t)) {
       if (fl.length) { e.preventDefault(); attachToNote(fl); } else pasteIntoEditor(e);
       return;
     }
     if (fl.length) {
+      if (!editable && activeNote) { e.preventDefault(); attachToNote(fl); return; }
       if (!editable || t === el.composerInput) { e.preventDefault(); sendFiles(fl); }
       return;
     }
     if (t === el.composerInput) { cleanComposerPaste(e); return; }
-    if (!editable && ui.tab === 'drops') {
-      const text = e.clipboardData.getData('text');
-      if (text) {
+    if (!editable && !$('dialog[open]')) {
+      const text = e.clipboardData && e.clipboardData.getData('text');
+      if (text && text.trim()) {
         e.preventDefault();
-        el.composerInput.value += declutterDrop(text, e.clipboardData.getData('text/html'));
-        autosize();
-        updateSend();
-        el.composerInput.focus();
+        const html = e.clipboardData.getData('text/html');
+        if (activeNote) {
+          el.editorText.focus();
+          pasteIntoEditor(e);
+          toast('Pasted into note');
+        } else {
+          const cleaned = declutterDrop(text, html);
+          setTab('drops');
+          sendClip(cleaned);
+          toast(singleUrl(cleaned) ? 'Link dropped' : 'Text dropped');
+        }
       }
     }
   });
@@ -6338,12 +6438,303 @@ async function takeShared(explicit) {
     db.close();
   } catch {}
   if (!entries.length) { if (explicit) toast('Nothing was received from the share menu.'); return; }
-  setTab('drops');
+  const allFiles = [];
+  const texts = [];
   for (const e of entries) {
-    if (e.files && e.files.length) await sendFiles(e.files);
-    if (e.text) sendClip(e.text);
+    if (e.files && e.files.length) allFiles.push(...e.files);
+    if (e.text && String(e.text).trim()) texts.push(String(e.text).trim());
   }
-  toast('Sent to your devices');
+  if (!allFiles.length && !texts.length) return;
+  handleIncomingShare({ files: allFiles, text: texts.join('\n') });
+}
+
+/* ───────── cross-app helpers: folder/web-image drag-in, shortcuts, return-paste pill, share sheet ───────── */
+
+async function collectDroppedFiles(dt) {
+  if (!dt) return [];
+  const items = dt.items ? [...dt.items] : [];
+  const entries = items
+    .map((it) => (it.webkitGetAsEntry ? it.webkitGetAsEntry() : null))
+    .filter(Boolean);
+  if (!entries.length || !entries.some((en) => en.isDirectory)) {
+    return [...(dt.files || [])].filter((f) => f && (f.size > 0 || f.type));
+  }
+  const out = [];
+  const SKIP = /^(desktop\.ini|thumbs\.db|\.ds_store)$/i;
+  const walk = async (entry) => {
+    if (out.length >= 200) return;
+    if (entry.isFile) {
+      await new Promise((res) => {
+        entry.file((f) => {
+          if (f && !SKIP.test(f.name) && (f.size > 0 || f.type)) out.push(f);
+          res();
+        }, () => res());
+      });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      while (out.length < 200) {
+        const batch = await new Promise((res) => reader.readEntries(res, () => res([])));
+        if (!batch.length) break;
+        for (const child of batch) await walk(child);
+      }
+    }
+  };
+  for (const en of entries) await walk(en);
+  return out;
+}
+
+async function extractDraggedImageFile(html, uriList) {
+  let src = '';
+  if (html) {
+    const m = /<img[^>]+src=["']([^"']+)["']/i.exec(html);
+    if (m) src = m[1].replace(/&amp;/g, '&');
+  }
+  if (!src && uriList) {
+    const u = uriList.split('\n').find((l) => l && !l.startsWith('#')) || '';
+    if (/^data:image\//i.test(u) || /\.(png|jpe?g|gif|webp|avif|bmp)(\?.*)?$/i.test(u)) src = u.trim();
+  }
+  if (!src) return null;
+  try {
+    if (src.startsWith('data:image/')) {
+      const res = await fetch(src);
+      const blob = await res.blob();
+      const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace(/[^a-z0-9]/gi, '').slice(0, 5);
+      return new File([blob], `Image ${new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '.')}.${ext}`, { type: blob.type || 'image/png' });
+    }
+    if (/^https?:\/\//i.test(src)) {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 3200);
+      const res = await fetch(src, { mode: 'cors', signal: ctl.signal }).finally(() => clearTimeout(timer));
+      if (!res.ok) return null;
+      const ct = res.headers.get('content-type') || '';
+      if (!ct.startsWith('image/')) return null;
+      const blob = await res.blob();
+      if (!blob.size) return null;
+      const ext = (ct.split('/')[1] || 'png').split(';')[0].replace('jpeg', 'jpg').replace(/[^a-z0-9]/gi, '').slice(0, 5);
+      let name = '';
+      try { name = decodeURIComponent(new URL(src).pathname.split('/').pop() || ''); } catch {}
+      if (!name || !/\.[a-z0-9]{2,5}$/i.test(name)) name = `Image ${new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '.')}.${ext}`;
+      return new File([blob], name, { type: blob.type || ct });
+    }
+  } catch {}
+  return null;
+}
+
+function handleLaunchAction(action) {
+  if (action === 'note') {
+    newNote();
+  } else if (action === 'drop') {
+    setTab('drops');
+    el.composerInput.focus();
+    try { expectAway(); el.fileInput.click(); } catch {}
+  } else if (action === 'paste') {
+    setTab('drops');
+    showReturnPastePill(10000);
+  }
+}
+
+let returnPasteT = 0;
+function setupReturnPastePill() {
+  const pill = document.createElement('div');
+  pill.className = 'return-paste-pill';
+  pill.id = 'return-paste-pill';
+  pill.hidden = true;
+  pill.innerHTML = `<button type="button" class="rp-act"><svg class="ic"><use href="#i-paste"/></svg><span>Paste from clipboard</span></button><button type="button" class="rp-close" aria-label="Dismiss"><svg class="ic"><use href="#i-x"/></svg></button>`;
+  document.body.appendChild(pill);
+  ui.returnPastePill = pill;
+  const hide = () => { clearTimeout(returnPasteT); pill.hidden = true; };
+  pill.querySelector('.rp-close').addEventListener('click', hide);
+  pill.querySelector('.rp-act').addEventListener('click', () => { hide(); pasteClipboardAnywhere(); });
+  pill.addEventListener('mouseenter', () => clearTimeout(returnPasteT));
+  pill.addEventListener('mouseleave', () => { if (!pill.hidden) returnPasteT = setTimeout(hide, 3500); });
+
+  let awayAt = 0;
+  const markAway = () => { if (!awayAt) awayAt = Date.now(); };
+  const onBack = () => {
+    const dt = awayAt ? Date.now() - awayAt : 0;
+    awayAt = 0;
+    if (dt < 1500) return;
+    if (!el.lock.hidden || ui.presenting || $('dialog[open]')) return;
+    if (lk && lk.away && Date.now() - lk.away < 15000) return;
+    if (!(navigator.clipboard && (navigator.clipboard.read || navigator.clipboard.readText))) return;
+    showReturnPastePill(6500);
+  };
+  document.addEventListener('visibilitychange', () => (document.hidden ? markAway() : onBack()));
+  addEventListener('blur', markAway);
+  addEventListener('focus', onBack);
+}
+
+function showReturnPastePill(ms = 6500) {
+  const pill = ui.returnPastePill;
+  if (!pill) return;
+  clearTimeout(returnPasteT);
+  pill.hidden = false;
+  returnPasteT = setTimeout(() => { pill.hidden = true; }, ms);
+}
+
+async function pasteClipboardAnywhere() {
+  const fl = [];
+  let text = '';
+  let html = '';
+  try {
+    if (navigator.clipboard && navigator.clipboard.read) {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const img = it.types.find((ty) => ty.startsWith('image/'));
+        if (img) {
+          const b = await it.getType(img);
+          const ext = (img.split('/')[1] || 'png').replace('jpeg', 'jpg');
+          fl.push(new File([b], `Pasted ${new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '.')}.${ext}`, { type: img }));
+          continue;
+        }
+        if (it.types.includes('text/html')) html = await (await it.getType('text/html')).text();
+        if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+      }
+    } else if (navigator.clipboard && navigator.clipboard.readText) {
+      text = await navigator.clipboard.readText();
+    }
+  } catch {
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) text = await navigator.clipboard.readText();
+    } catch {
+      toast('Allow SyncPad to read the clipboard, then try again.');
+      return;
+    }
+  }
+  if (!fl.length && !text.trim() && !html.trim()) { toast('Nothing copied in clipboard'); return; }
+  const activeNote = ui.tab === 'notes' && openNoteItem() && !el.app.classList.contains('list-only') && !$('dialog[open]');
+  if (activeNote) {
+    if (fl.length) {
+      await attachToNote(fl);
+      haptic('success');
+      toast('Pasted into note');
+      return;
+    }
+    const dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    if (html) dt.setData('text/html', html);
+    el.editorText.focus();
+    pasteIntoEditor({ clipboardData: dt, preventDefault() {} });
+    haptic('success');
+    toast('Pasted into note');
+    return;
+  }
+  if (fl.length) {
+    await sendFiles(fl);
+    haptic('success');
+    toast('Pasted to Drops');
+    return;
+  }
+  const cleaned = declutterDrop(text, html);
+  setTab('drops');
+  await sendClip(cleaned);
+  haptic('success');
+  toast(singleUrl(cleaned) ? 'Link pasted to Drops' : 'Pasted to Drops');
+}
+
+async function appendSharedToNote(noteId, fileList, text) {
+  if (noteId === '__new__') newNote();
+  else openNote(noteId, { focus: false });
+  const n = openNoteItem();
+  if (!n) return;
+  if (text && text.trim()) {
+    const p = document.createElement('div');
+    const u = singleUrl(text.trim());
+    if (u) {
+      const a = document.createElement('a');
+      a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = u;
+      p.appendChild(a);
+    } else {
+      p.textContent = text.trim();
+    }
+    el.editorText.appendChild(p);
+    onEditorInput();
+  }
+  if (fileList && fileList.length) {
+    const r = document.createRange();
+    r.selectNodeContents(el.editorText);
+    r.collapse(false);
+    await attachToNote(fileList, r);
+  }
+  haptic('success');
+  toast(noteId === '__new__' ? 'Saved in new note' : `Added to “${noteTitle(noteText(n))}”`);
+}
+
+function handleIncomingShare({ files: fileList = [], text = '' }) {
+  const dlg = el.dlgShareDest;
+  if (!dlg) {
+    (async () => {
+      setTab('drops');
+      if (fileList.length) await sendFiles(fileList, null);
+      if (text) await sendClip(text, null);
+      haptic('success');
+      toast('Saved to Home');
+    })();
+    return;
+  }
+  const parts = [];
+  if (fileList.length) {
+    const imgs = fileList.filter((f) => (f.type || '').startsWith('image/')).length;
+    if (imgs === fileList.length) parts.push(`${imgs} ${imgs === 1 ? 'photo' : 'photos'}`);
+    else parts.push(fileList.length === 1 ? fileList[0].name : `${fileList.length} files`);
+  }
+  if (text) {
+    const u = singleUrl(text);
+    parts.push(u ? u.replace(/^https?:\/\//i, '').slice(0, 48) : text.slice(0, 48));
+  }
+  el.shareDestSummary.textContent = parts.join(' · ');
+
+  let handled = false;
+  const saveToDrops = async (folderId, label) => {
+    if (handled) return;
+    handled = true;
+    if (dlg.open) dlg.close();
+    setTab('drops');
+    if (folderId) { ui.dloc = 'f:' + folderId; renderDrops(); }
+    else { ui.dloc = 'home'; renderDrops(); }
+    if (fileList.length) await sendFiles(fileList, folderId || null);
+    if (text) await sendClip(text, folderId || null);
+    haptic('success');
+    toast(`Saved to ${label}`);
+  };
+  const saveToNote = async (noteId) => {
+    if (handled) return;
+    handled = true;
+    if (dlg.open) dlg.close();
+    await appendSharedToNote(noteId, fileList, text);
+  };
+
+  el.shareDestHome.onclick = () => saveToDrops(null, 'Home');
+
+  const fList = folders();
+  el.shareDestFoldersWrap.hidden = !fList.length;
+  el.shareDestFolders.innerHTML = fList.map((f) =>
+    `<button type="button" class="share-dest-chip" data-f="${f.id}"><svg class="ic"><use href="#i-folder"/></svg><span>${esc(f.data.name)}</span></button>`
+  ).join('');
+  el.shareDestFolders.onclick = (e) => {
+    const b = e.target.closest('[data-f]');
+    if (!b) return;
+    const f = store.items.get(b.dataset.f);
+    saveToDrops(b.dataset.f, f ? `“${f.data.name}”` : 'folder');
+  };
+
+  const recentNotes = notesSorted(false).slice(0, 6);
+  el.shareDestNotes.innerHTML =
+    `<button type="button" class="share-dest-note" data-n="__new__"><svg class="ic"><use href="#i-note-plus"/></svg><span>New note with this</span></button>` +
+    recentNotes.map((n) =>
+      `<button type="button" class="share-dest-note" data-n="${n.id}"><svg class="ic"><use href="#i-note"/></svg><span>${esc(noteTitle(noteText(n)))}</span></button>`
+    ).join('');
+  el.shareDestNotes.onclick = (e) => {
+    const b = e.target.closest('[data-n]');
+    if (b) saveToNote(b.dataset.n);
+  };
+
+  const onClose = () => {
+    dlg.removeEventListener('close', onClose);
+    if (!handled) saveToDrops(null, 'Home');
+  };
+  dlg.addEventListener('close', onClose);
+  openDialog(dlg);
 }
 
 async function importV1() {

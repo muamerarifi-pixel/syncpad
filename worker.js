@@ -15,7 +15,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { getLinkPreview, isPrivateOrLocalHost } from './src/linkmeta.js';
 import { proxyYoutubeDownload } from './src/ytdl.js';
 
-const VERSION = '3.0.99';
+const VERSION = '3.1.0';
 const CHUNK = 1024 * 1024;                 // bytes per stored chunk (DO row limit is 2 MB)
 const MAX_FILE = 200 * 1024 * 1024;        // 200 MB per file
 const GLOBAL_CAP = 3 * 1024 * 1024 * 1024; // 3 GB across all spaces (account free tier: 5 GB)
@@ -122,7 +122,30 @@ function manifest(url) {
         method: 'POST',
         enctype: 'multipart/form-data',
         params: { title: 'title', text: 'text', url: 'url', files: [{ name: 'files', accept: ['*/*'] }] }
-      }
+      },
+      shortcuts: [
+        {
+          name: 'Quick Drop',
+          short_name: 'Drop',
+          description: 'Upload files or photos to SyncPad',
+          url: '/?action=drop',
+          icons: [{ src: '/icons/icon-192.png?v=3', sizes: '192x192', type: 'image/png' }]
+        },
+        {
+          name: 'New Note',
+          short_name: 'New note',
+          description: 'Start a new note right away',
+          url: '/?action=note',
+          icons: [{ src: '/icons/icon-192.png?v=3', sizes: '192x192', type: 'image/png' }]
+        },
+        {
+          name: 'Paste Clipboard',
+          short_name: 'Paste',
+          description: 'Drop what you just copied',
+          url: '/?action=paste',
+          icons: [{ src: '/icons/icon-192.png?v=3', sizes: '192x192', type: 'image/png' }]
+        }
+      ]
     }),
     { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' } }
   );
