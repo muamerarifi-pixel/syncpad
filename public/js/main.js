@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.1.0';
+const VERSION = '3.1.1';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -624,7 +624,6 @@ function wire() {
   setupTabSwipe();
   fitToKeyboard();
   setupPasteChip();
-  setupReturnPastePill();
   el.btnShowList.addEventListener('click', () => toggleNotesList(true));
   el.btnPresent.addEventListener('click', startPresent);
   applyNotesList();
@@ -6529,47 +6528,8 @@ function handleLaunchAction(action) {
     try { expectAway(); el.fileInput.click(); } catch {}
   } else if (action === 'paste') {
     setTab('drops');
-    showReturnPastePill(10000);
+    pasteClipboardAnywhere();
   }
-}
-
-let returnPasteT = 0;
-function setupReturnPastePill() {
-  const pill = document.createElement('div');
-  pill.className = 'return-paste-pill';
-  pill.id = 'return-paste-pill';
-  pill.hidden = true;
-  pill.innerHTML = `<button type="button" class="rp-act"><svg class="ic"><use href="#i-paste"/></svg><span>Paste from clipboard</span></button><button type="button" class="rp-close" aria-label="Dismiss"><svg class="ic"><use href="#i-x"/></svg></button>`;
-  document.body.appendChild(pill);
-  ui.returnPastePill = pill;
-  const hide = () => { clearTimeout(returnPasteT); pill.hidden = true; };
-  pill.querySelector('.rp-close').addEventListener('click', hide);
-  pill.querySelector('.rp-act').addEventListener('click', () => { hide(); pasteClipboardAnywhere(); });
-  pill.addEventListener('mouseenter', () => clearTimeout(returnPasteT));
-  pill.addEventListener('mouseleave', () => { if (!pill.hidden) returnPasteT = setTimeout(hide, 3500); });
-
-  let awayAt = 0;
-  const markAway = () => { if (!awayAt) awayAt = Date.now(); };
-  const onBack = () => {
-    const dt = awayAt ? Date.now() - awayAt : 0;
-    awayAt = 0;
-    if (dt < 1500) return;
-    if (!el.lock.hidden || ui.presenting || $('dialog[open]')) return;
-    if (lk && lk.away && Date.now() - lk.away < 15000) return;
-    if (!(navigator.clipboard && (navigator.clipboard.read || navigator.clipboard.readText))) return;
-    showReturnPastePill(6500);
-  };
-  document.addEventListener('visibilitychange', () => (document.hidden ? markAway() : onBack()));
-  addEventListener('blur', markAway);
-  addEventListener('focus', onBack);
-}
-
-function showReturnPastePill(ms = 6500) {
-  const pill = ui.returnPastePill;
-  if (!pill) return;
-  clearTimeout(returnPasteT);
-  pill.hidden = false;
-  returnPasteT = setTimeout(() => { pill.hidden = true; }, ms);
 }
 
 async function pasteClipboardAnywhere() {

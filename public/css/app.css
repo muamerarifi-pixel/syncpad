@@ -3089,28 +3089,6 @@ html .nav-item:not(.on):hover { background: color-mix(in srgb, var(--accent) 9%,
 .yt-float:not([hidden]) .yt-shade { animation: spFadeIn var(--dur-sm) var(--ease-out); }
 .yt-float:not([hidden]):not(.mini) .yt-card { animation: spFadeIn var(--dur-md) var(--ease-out); }
 
-/* Floating return-from-app paste pill */
-.return-paste-pill {
-  position: fixed; left: 50%; bottom: calc(max(16px, var(--safe-b)) + 74px); transform: translateX(-50%);
-  z-index: 85; display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 4px;
-  border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text);
-  box-shadow: var(--shadow-lg); animation: spSheetUp 220ms var(--ease-out);
-}
-.return-paste-pill[hidden] { display: none; }
-.return-paste-pill .rp-act {
-  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px;
-  border: 0; border-radius: 999px; background: var(--accent); color: #fff;
-  font: 600 13.5px/1 var(--font); cursor: pointer; white-space: nowrap;
-}
-.return-paste-pill .rp-act:hover { filter: brightness(1.06); }
-.return-paste-pill .rp-act .ic { width: 16px; height: 16px; }
-.return-paste-pill .rp-close {
-  display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
-  border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer;
-}
-.return-paste-pill .rp-close:hover { background: var(--surface-2); color: var(--text); }
-.return-paste-pill .rp-close .ic { width: 15px; height: 15px; }
-
 /* Share-to-SyncPad destination sheet */
 .share-dest-body { display: flex; flex-direction: column; gap: 14px; }
 .share-dest-summary { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
