@@ -12,7 +12,7 @@ import { Markup } from './markup.js';
 import { Collage } from './collage.js';
 import { ZoomView } from './zoom.js';
 import * as De from './declutter.js';
-import { ZipWriter, namer } from './backup.js';
+import { ZipWriter, namer, readZipEntries, extractZipEntry } from './backup.js';
 import { speak, warmUp as warmVoice } from './speak.js';
 import { NoteCanvas, renderStatic as renderCanvasStatic, fallback as canvasFallback, fromHtml as canvasFromHtml } from './canvas.js';
 import { ImageTools } from './noteimg.js';
@@ -23,7 +23,7 @@ import { touchReorder, slot, between } from './reorder.js';
 import { BIG, splitHtml, textOf, partId } from './bignote.js';
 import { createKeyboard } from './keyboard.js';
 
-const VERSION = '3.1.1';
+const VERSION = '3.1.2';
 const KEY_RE = /^[A-Za-z0-9_-]{20,64}$/;
 const store = new Store();
 let sync;
@@ -291,7 +291,7 @@ function wire() {
     // Chromium Android treats application/octet-stream as GENERIC_TYPE: omits Camera/Camcorder chooser intents while keeping Files at */*
     el.fileDirectInput.accept = 'application/octet-stream';
   }
-  for (const inp of [el.fileInput, el.fileDirectInput, el.noteFileInput, el.noteImageInput]) if (inp) inp.addEventListener('click', expectAway);
+  for (const inp of [el.fileInput, el.folderInput, el.fileDirectInput, el.noteFileInput, el.noteImageInput]) if (inp) inp.addEventListener('click', expectAway);
   if (navigator.share) {
     const nativeShare = navigator.share.bind(navigator);
     navigator.share = (data) => { expectAway(); return nativeShare(data); };
@@ -304,8 +304,20 @@ function wire() {
   });
   el.composer.addEventListener('submit', (e) => { e.preventDefault(); sendText(); });
   if (el.btnAddFiles) el.btnAddFiles.addEventListener('click', () => { haptic('click'); el.fileInput.click(); });
+  if (el.btnAddFolder) {
+    const canPickFolder = !!(el.folderInput && 'webkitdirectory' in el.folderInput);
+    el.btnAddFolder.hidden = !canPickFolder;
+    el.btnAddFolder.addEventListener('click', () => { haptic('click'); el.folderInput.click(); });
+  }
   if (el.btnUpload) el.btnUpload.addEventListener('click', () => { haptic('click'); el.fileInput.click(); });
   el.fileInput.addEventListener('change', () => { sendFiles([...el.fileInput.files]); el.fileInput.value = ''; });
+  if (el.folderInput) el.folderInput.addEventListener('change', async () => {
+    const fl = [...el.folderInput.files];
+    el.folderInput.value = '';
+    if (!fl.length) return;
+    const z = await packFolderFileList(fl);
+    if (z) sendFiles([z]);
+  });
   if (el.fileDirectInput) el.fileDirectInput.addEventListener('change', () => { sendFiles([...el.fileDirectInput.files]); el.fileDirectInput.value = ''; });
   el.noteFileInput.addEventListener('change', () => { attachToNote([...el.noteFileInput.files]); el.noteFileInput.value = ''; });
   if (el.noteImageInput) el.noteImageInput.addEventListener('change', () => { attachToNote([...el.noteImageInput.files], ui.savedRange); el.noteImageInput.value = ''; });
@@ -2320,6 +2332,7 @@ function onFeedContext(e) {
   if (!it) {
     openMenu(null, [
       { icon: 'clip', label: 'Add files…', run: () => el.fileInput.click() },
+      ...(el.folderInput && 'webkitdirectory' in el.folderInput ? [{ icon: 'folder', label: 'Upload folder…', run: () => el.folderInput.click() }] : []),
       { icon: 'doc', label: 'New document…', run: newDocument },
       { icon: 'folder', label: 'New folder…', run: async () => { const f = await createFolder(); if (f) setDropView('f:' + f.id); } },
       { icon: 'refresh', label: 'Sync now', run: () => { haptic('click'); refreshNow(); } },
@@ -5881,6 +5894,7 @@ async function openFile(it) {
   const textual = (kind === 'doc' || kind === 'code') && d.size <= 1024 * 1024 &&
     (/^text\/|json|xml|javascript/.test(d.type || '') || /^(txt|md|csv|tsv|json|js|mjs|ts|css|html?|py|xml|ya?ml|sh|log|ini|sql|dart|kt|java|c|cpp|h|go|rs|php|rb)$/.test(extOf(d.name)));
   if (extOf(d.name) === 'epub' || /epub/.test(d.type || '')) { openEpubViewer(it); return; }
+  if (extOf(d.name) === 'zip' || d.type === 'application/zip' || d.type === 'application/x-zip-compressed') { openZipViewer(it); return; }
   const dk = docKindOf(kind, d.name);
   if (dk) { openDocViewer(it, dk); return; }
   if (kind === 'audio') { bgAudio.playFile(it.id, d.parent || null); return; }
@@ -6449,6 +6463,162 @@ async function takeShared(explicit) {
 
 /* ───────── cross-app helpers: folder/web-image drag-in, shortcuts, return-paste pill, share sheet ───────── */
 
+async function packDirectoryEntry(dirEntry) {
+  const filesList = [];
+  const dirsList = [];
+  let totalBytes = 0;
+  const maxBytes = files.maxFile;
+  const rootName = (dirEntry.name || 'Folder').replace(/[\\/:*?"<>|]/g, '_');
+
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) {
+      await new Promise((res) => {
+        entry.file((f) => {
+          if (f) {
+            totalBytes += f.size || 0;
+            filesList.push({ path: `${prefix}${f.name}`, file: f });
+          }
+          res();
+        }, () => res());
+      });
+    } else if (entry.isDirectory) {
+      const subPrefix = `${prefix}${entry.name}/`;
+      const reader = entry.createReader();
+      let hadChild = false;
+      while (true) {
+        const batch = await new Promise((res) => reader.readEntries(res, () => res([])));
+        if (!batch.length) break;
+        hadChild = true;
+        for (const child of batch) await walk(child, subPrefix);
+      }
+      if (!hadChild) dirsList.push(subPrefix);
+    }
+  };
+
+  await walk(dirEntry, '');
+  if (!filesList.length && !dirsList.length) {
+    toast(`Folder “${rootName}” is empty.`);
+    return null;
+  }
+  if (totalBytes > maxBytes) {
+    toast(`Folder “${rootName}” is ${fmtBytes(totalBytes)} — limit is ${fmtBytes(maxBytes)} per upload.`);
+    return null;
+  }
+  toast(`Packing folder “${rootName}” (${filesList.length} ${filesList.length === 1 ? 'file' : 'files'})…`, { duration: 2500 });
+  const zip = new ZipWriter();
+  for (const d of dirsList) await zip.addDir(d, Date.now());
+  for (const item of filesList) await zip.add(item.path, item.file, item.file.lastModified);
+  const blob = zip.finish();
+  if (blob.size > maxBytes) {
+    toast(`Folder “${rootName}” exceeds the ${fmtBytes(maxBytes)} limit.`);
+    return null;
+  }
+  return new File([blob], `${rootName}.zip`, { type: 'application/zip' });
+}
+
+async function packFolderFileList(fileList) {
+  if (!fileList || !fileList.length) return null;
+  const firstRel = fileList[0].webkitRelativePath || '';
+  const rootName = (firstRel.split('/')[0] || 'Folder').replace(/[\\/:*?"<>|]/g, '_');
+  const totalBytes = fileList.reduce((s, f) => s + (f.size || 0), 0);
+  const maxBytes = files.maxFile;
+  if (totalBytes > maxBytes) {
+    toast(`Folder “${rootName}” is ${fmtBytes(totalBytes)} — limit is ${fmtBytes(maxBytes)} per upload.`);
+    return null;
+  }
+  toast(`Packing folder “${rootName}” (${fileList.length} ${fileList.length === 1 ? 'file' : 'files'})…`, { duration: 2500 });
+  const zip = new ZipWriter();
+  for (const f of fileList) {
+    const rel = f.webkitRelativePath ? f.webkitRelativePath.replace(/^\/+/, '') : `${rootName}/${f.name}`;
+    await zip.add(rel, f, f.lastModified);
+  }
+  const blob = zip.finish();
+  if (blob.size > maxBytes) {
+    toast(`Folder “${rootName}” exceeds the ${fmtBytes(maxBytes)} limit.`);
+    return null;
+  }
+  return new File([blob], `${rootName}.zip`, { type: 'application/zip' });
+}
+
+async function openZipViewer(it) {
+  ui.viewing = it;
+  el.viewerTitle.textContent = it.data.name;
+  el.viewerDownload.hidden = false;
+  el.viewerCopy.hidden = true;
+  el.viewerMarkup.hidden = true;
+  el.viewerShare.hidden = !files.canShare();
+  if (files.canShare()) files.prefetch(it);
+  if (ui.zoom) { ui.zoom.destroy(); ui.zoom = null; }
+  el.viewerBody.classList.remove('is-zoom', 'is-docv');
+  el.viewerBody.innerHTML = `<div class="zip-view"><div class="zip-empty">Loading folder contents…</div></div>`;
+  openDialog(el.dlgViewer);
+  let blob;
+  try { blob = await files.blobOf(it); } catch {}
+  if (ui.viewing !== it) return;
+  if (!blob) {
+    el.viewerBody.innerHTML = `<div class="zip-view"><div class="zip-empty">Could not load this archive. Use Download to save it.</div></div>`;
+    return;
+  }
+  let entries;
+  try { entries = await readZipEntries(blob); } catch {
+    el.viewerBody.innerHTML = `<div class="zip-view"><div class="zip-empty">Preview unavailable for this archive. Use Download above to save it intact.</div></div>`;
+    return;
+  }
+  if (ui.viewing !== it) return;
+  const fileEntries = entries.filter((e) => !e.isDir);
+  const totalSize = fileEntries.reduce((s, e) => s + (e.size || 0), 0);
+  entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+  const box = document.createElement('div');
+  box.className = 'zip-view';
+  const head = document.createElement('div');
+  head.className = 'zip-head';
+  head.innerHTML = `<strong>${fileEntries.length} ${fileEntries.length === 1 ? 'file' : 'files'}</strong><span>· ${fmtBytes(totalSize)}</span>` +
+    (entries.length > 8 ? `<input class="zip-search" type="search" placeholder="Filter files…" aria-label="Filter files">` : '');
+  const list = document.createElement('div');
+  list.className = 'zip-list';
+  box.append(head, list);
+  el.viewerBody.innerHTML = '';
+  el.viewerBody.append(box);
+
+  const renderRows = (q = '') => {
+    const term = q.trim().toLowerCase();
+    const shown = term ? entries.filter((e) => e.name.toLowerCase().includes(term)) : entries;
+    if (!shown.length) { list.innerHTML = '<div class="zip-empty">No matching files.</div>'; return; }
+    list.innerHTML = shown.map((e) => {
+      const idx = entries.indexOf(e);
+      if (e.isDir) {
+        return `<div class="zip-row is-dir"><svg class="ic"><use href="#i-folder"/></svg><span class="zip-path" title="${esc(e.name)}">${esc(e.name)}</span></div>`;
+      }
+      const ic = kindIcon(fileKind('', e.name));
+      return `<div class="zip-row"><svg class="ic"><use href="#i-${ic}"/></svg><span class="zip-path" title="${esc(e.name)}">${esc(e.name)}</span><span class="zip-size">${fmtBytes(e.size)}</span><button type="button" class="zip-dl" data-zi="${idx}" aria-label="Download ${esc(e.name)}" title="Download this file"><svg class="ic"><use href="#i-download"/></svg></button></div>`;
+    }).join('');
+  };
+  renderRows();
+  const srch = head.querySelector('.zip-search');
+  if (srch) srch.addEventListener('input', () => renderRows(srch.value));
+  list.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-zi]');
+    if (!b) return;
+    const entry = entries[Number(b.dataset.zi)];
+    if (!entry) return;
+    try {
+      const fb = await extractZipEntry(blob, entry);
+      const u = URL.createObjectURL(fb);
+      const a = document.createElement('a');
+      a.href = u;
+      a.download = entry.name.split('/').pop() || 'file';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(u), 30000);
+    } catch {
+      toast('Could not extract this file — use Download above to save the whole archive.');
+    }
+  });
+}
+
 async function collectDroppedFiles(dt) {
   if (!dt) return [];
   const items = dt.items ? [...dt.items] : [];
@@ -6458,27 +6628,21 @@ async function collectDroppedFiles(dt) {
   if (!entries.length || !entries.some((en) => en.isDirectory)) {
     return [...(dt.files || [])].filter((f) => f && (f.size > 0 || f.type));
   }
+  // Keep every dropped folder intact as a single lossless .zip archive — never flatten or auto-extract!
   const out = [];
-  const SKIP = /^(desktop\.ini|thumbs\.db|\.ds_store)$/i;
-  const walk = async (entry) => {
-    if (out.length >= 200) return;
-    if (entry.isFile) {
+  for (const en of entries) {
+    if (en.isDirectory) {
+      const packed = await packDirectoryEntry(en);
+      if (packed) out.push(packed);
+    } else if (en.isFile) {
       await new Promise((res) => {
-        entry.file((f) => {
-          if (f && !SKIP.test(f.name) && (f.size > 0 || f.type)) out.push(f);
+        en.file((f) => {
+          if (f && (f.size > 0 || f.type)) out.push(f);
           res();
         }, () => res());
       });
-    } else if (entry.isDirectory) {
-      const reader = entry.createReader();
-      while (out.length < 200) {
-        const batch = await new Promise((res) => reader.readEntries(res, () => res([])));
-        if (!batch.length) break;
-        for (const child of batch) await walk(child);
-      }
     }
-  };
-  for (const en of entries) await walk(en);
+  }
   return out;
 }
 
@@ -7590,6 +7754,7 @@ function newMenu(anchor) {
     { icon: 'task', label: 'New checklist', run: () => { newNote(); setTimeout(() => { makeChecklist(); onEditorInput(); }, 40); } },
     { icon: 'canvas', label: 'New canvas — draw and place anything', run: () => newNote({ canvas: true }) },
     { icon: 'clip', label: 'Add files to all devices…', run: () => el.fileInput.click() },
+    ...(el.folderInput && 'webkitdirectory' in el.folderInput ? [{ icon: 'folder', label: 'Upload folder intact…', run: () => el.folderInput.click() }] : []),
     { icon: 'doc', label: 'New document (Word or PDF)', run: newDocument },
     { icon: 'book', label: 'Import e-book or document as a note…', run: () => el.importInput.click() }
   ]);

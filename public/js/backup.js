@@ -61,6 +61,24 @@ export class ZipWriter {
     this.count++;
   }
 
+  async addDir(path, ts) {
+    const dir = path.endsWith('/') ? path : path + '/';
+    const name = enc.encode(dir);
+    const { time, date } = dosTime(ts);
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true);
+    h.setUint16(8, 0, true); h.setUint16(10, time, true); h.setUint16(12, date, true);
+    h.setUint16(26, name.length, true);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true);
+    c.setUint16(10, 0, true); c.setUint16(12, time, true); c.setUint16(14, date, true);
+    c.setUint16(28, name.length, true); c.setUint32(38, 0x10, true); c.setUint32(42, this.offset, true);
+    this.parts.push(h.buffer, name);
+    this.central.push(c.buffer, name);
+    this.offset += 30 + name.length;
+    this.count++;
+  }
+
   finish() {
     const cdSize = this.central.reduce((s, p) => s + (p.byteLength != null ? p.byteLength : p.length), 0);
     const e = new DataView(new ArrayBuffer(22));
@@ -69,6 +87,60 @@ export class ZipWriter {
     e.setUint32(12, cdSize, true); e.setUint32(16, this.offset, true);
     return new Blob([...this.parts, ...this.central, e.buffer], { type: 'application/zip' });
   }
+}
+
+const dec = new TextDecoder();
+
+/** Read the Central Directory of a .zip Blob without decompressing anything. */
+export async function readZipEntries(blob) {
+  const tailLen = Math.min(blob.size, 65557);
+  const tail = new Uint8Array(await blob.slice(blob.size - tailLen).arrayBuffer());
+  const tv = new DataView(tail.buffer);
+  let eocd = -1;
+  for (let i = tail.length - 22; i >= 0; i--) {
+    if (tv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a valid ZIP archive');
+  const total = tv.getUint16(eocd + 10, true);
+  const cdSize = tv.getUint32(eocd + 12, true);
+  const cdOff = tv.getUint32(eocd + 16, true);
+  if (cdOff + cdSize > blob.size) throw new Error('Unsupported ZIP64 archive');
+  const cd = new Uint8Array(await blob.slice(cdOff, cdOff + cdSize).arrayBuffer());
+  const cv = new DataView(cd.buffer);
+  const entries = [];
+  let p = 0;
+  for (let i = 0; i < total && p + 46 <= cd.length; i++) {
+    if (cv.getUint32(p, true) !== 0x02014b50) break;
+    const method = cv.getUint16(p + 10, true);
+    const compSize = cv.getUint32(p + 20, true);
+    const size = cv.getUint32(p + 24, true);
+    const nLen = cv.getUint16(p + 28, true);
+    const xLen = cv.getUint16(p + 30, true);
+    const cLen = cv.getUint16(p + 32, true);
+    const extAttr = cv.getUint32(p + 38, true);
+    const localOff = cv.getUint32(p + 42, true);
+    const name = dec.decode(cd.subarray(p + 46, p + 46 + nLen));
+    const isDir = name.endsWith('/') || ((extAttr & 0x10) !== 0 && size === 0);
+    entries.push({ name, isDir, method, compSize, size, localOff });
+    p += 46 + nLen + xLen + cLen;
+  }
+  return entries;
+}
+
+/** Extract a single file entry from a .zip Blob (stored or deflate) on demand. */
+export async function extractZipEntry(blob, entry) {
+  const lh = new DataView(await blob.slice(entry.localOff, entry.localOff + 30).arrayBuffer());
+  if (lh.getUint32(0, true) !== 0x04034b50) throw new Error('Bad ZIP entry header');
+  const nLen = lh.getUint16(26, true);
+  const xLen = lh.getUint16(28, true);
+  const start = entry.localOff + 30 + nLen + xLen;
+  const raw = blob.slice(start, start + entry.compSize);
+  if (entry.method === 0) return raw;
+  if (entry.method === 8 && typeof DecompressionStream !== 'undefined') {
+    const stream = raw.stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return await new Response(stream).blob();
+  }
+  throw new Error('Unsupported compression method');
 }
 
 /** Safe, unique file and folder names. */
